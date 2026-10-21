@@ -1,6 +1,6 @@
 # Project coding standards
 
-HatchZip extracts archives in place: it extracts ZIP entries from the last to the first and truncates the archive behind itself, so the user only needs free space for the output. `src/engine.rs` plans and runs the extraction, `src/journal.rs` holds the crash-safety state, `src/platform/` everything that differs per OS. Read [docs/how-it-works.md](docs/how-it-works.md) before touching either of the first two.
+HatchZip extracts archives in place: it extracts an archive's units (ZIP entries, 7z solid blocks, tar entries) from the last to the first and truncates the archive behind itself, so the user only needs free space for the output. `src/archive/` has one file per format plus `storage.rs`, the only code that shrinks archive bytes; `src/engine.rs` plans and runs the extraction for every format; `src/journal.rs` holds the crash-safety state; `src/platform/` everything that differs per OS; `src/cli.rs` the command line. Read [docs/how-it-works.md](docs/how-it-works.md) before touching the engine, the journal or storage.
 
 ## Communication
 
@@ -31,7 +31,9 @@ HatchZip extracts archives in place: it extracts ZIP entries from the last to th
 
 ## Traps already fallen into
 
-- The zip crate scans backwards over the whole archive looking for the end record. `PatchedArchive` must return zeros, not an error, for regions already truncated away, or every resume fails with "No CDFH found".
+- The zip crate scans backwards over the whole archive looking for the end record. `storage::Reader` must return zeros, not an error, for regions already truncated away, or every resume fails with "No CDFH found". Tar relies on the same zeros to stop at the truncation point.
+- Don't hardcode unit counts in tests. The 7z writer gives some empty files a block of their own, which shifted every count by one; assert invariants (volumes past `committed_len` are gone) instead.
+- 7-Zip's default settings can put a whole archive in one solid block, which in-place extraction can't free until the end. Test 7z with `-ms=<size>` archives as well as defaults.
 - On resume, files a crashed batch wrote but never committed still occupy space. They are deleted before the space check, or the check refuses a run that fits.
 
 ## Copy

@@ -82,13 +82,23 @@ mkdir -p /tmp/hz && unshare -rm sh -c '
 
 | Path | Contents |
 |---|---|
-| `src/main.rs` | Command line, the space report, confirmation and progress display |
-| `src/engine.rs` | Reading the archive, planning space, batch extraction and truncation |
-| `src/journal.rs` | The journal, the saved tail, and the `PatchedArchive` reader |
+| `src/cli.rs` | Command line definition, help text and exit codes; also the source of the completions and man page |
+| `src/main.rs` | Commands, the space report, confirmation and progress display |
+| `src/engine.rs` | Format-independent planning, batch extraction, commit and truncation |
+| `src/journal.rs` | The journal and the saved tail |
+| `src/archive/mod.rs` | The `Format`, `Worker` and `Sink` interface every format implements, format detection, path safety |
+| `src/archive/storage.rs` | One file or a split set, the reader that serves the saved tail, and the only code that shrinks or deletes archive bytes |
+| `src/archive/{zip,sevenz,tar}.rs` | One file per format: list its units, decode one |
 | `src/platform/` | Everything that differs between Linux, macOS and Windows |
 | `src/fsutil.rs` | Free space, atomic writes, timestamps |
-| `tests/extract.rs` | End to end tests that run the real binary, including the crash tests |
+| `tests/extract.rs` | ZIP end to end tests, including the crash tests |
+| `tests/formats.rs` | 7z, tar and split archives through the same checks |
+| `tests/cli.rs` | Exit codes, quiet mode, listing, completions and man page |
 | `docs/` | [How it works](docs/how-it-works.md), [format notes](docs/formats.md) |
+
+### Adding a format
+
+A format is one file in `src/archive/` that parses the archive into units (each with the offset it starts at and the files it holds) and decodes one unit on request. The engine does everything else: batching, the space check, the journal, crash safety, truncation. A new format needs its own section in `tests/formats.rs`, including `crash_and_resume`, and the archives it is tested with should come from the format's own tools as well as from a Rust writer.
 
 ## Engineering standards
 

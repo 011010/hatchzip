@@ -19,20 +19,31 @@
   <img src="https://img.shields.io/badge/platform-linux%20%7C%20windows%20%7C%20macos-blue.svg" alt="Linux, Windows and macOS" />
 </p>
 
-A 180 GB game download that unpacks to 200 GB needs 380 GB of disk with WinRAR, 7-Zip or `unzip`, because the archive and everything extracted from it have to exist at the same time. HatchZip needs 200 GB. It extracts the archive from the end and cuts each finished part off the archive file as it goes, so the space the archive gives back is reused for the next files.
+A 180 GB game download that unpacks to 200 GB needs 380 GB of disk with WinRAR, 7-Zip or `unzip`, because the archive and everything extracted from it have to exist at the same time. HatchZip needs a little over 200 GB. It extracts the archive from the end and cuts each finished part off the archive file as it goes, so the space the archive gives back is reused for the next files.
 
-It checks that the extraction will fit before it changes anything, keeps a safety margin of free space the whole way through, and can be stopped or crash at any moment and pick up where it left off.
+It checks that the extraction will fit before it changes anything, keeps a safety margin of free space the whole way through, and can be stopped or crash at any moment and pick up where it left off. It reads ZIP, 7z, tar and split archives.
 
 ## Highlights
 
+The same 200 MB of game data (21 files), packed by the real tools, extracted on a 220 MiB disk with about 50 MB free:
+
+| Archive | `unzip` / 7-Zip | HatchZip |
+|---|---|---|
+| ZIP, 180 MB | `unzip` ran out of space at file 6 of 21 | Finished, every file byte-identical |
+| 7z from 7-Zip 25.01, `-ms=20m` (10 solid blocks) | Needs 380 MB | Finished in 0.64 s, every file byte-identical |
+| 7z split into 5 volumes of 40 MB | Needs 380 MB | Finished; volumes deleted one at a time, peak 210 MB used |
+| tar from GNU tar, 200 MB | Needs 400 MB | Finished in 0.12 s, every file byte-identical |
+| 7z from 7-Zip with default settings (1 solid block) | Needs 380 MB | Refused before touching anything: one solid block can't be freed until all of it is out, so it needs 200 MB free |
+
 | | Result |
 |---|---|
-| Disk needed for a 180 MB archive that unpacks to 200 MB | `unzip` ran out of space on a 220 MiB disk at file 6 of 21. HatchZip finished, every file byte-identical. |
-| Extraction speed, same archive, 21 files | 0.25 to 0.35 s, against 1.48 to 1.50 s for `unzip` 6.00, including an fsync `unzip` skips |
-| Crash safety | Killed at both unsafe moments of a batch, at 8 different points of the run; every resume finished with identical output |
+| ZIP extraction speed, same data | 0.25 to 0.35 s, against 1.48 to 1.50 s for `unzip` 6.00, including an fsync `unzip` skips |
+| Crash safety | Killed at both unsafe moments of a batch at many points of each format's run; every resume finished with identical output |
 | Works on | Any filesystem that can shrink a file: ext4, btrfs, XFS, NTFS, APFS, and also exFAT and FAT32 USB drives |
 
-Measured on Fedora 43, Intel Core i7-14700HX, SK Hynix NVMe SSD, ext4, warm page cache. The disk-space test ran in a 220 MiB tmpfs to stand in for a full laptop disk. Speed comes from decompressing files in parallel, so an archive holding one giant file extracts at the speed of a single core.
+Measured on Fedora 43, Intel Core i7-14700HX, SK Hynix NVMe SSD, warm page cache; the disk-space runs used a 220 MiB tmpfs to stand in for a full laptop disk, the speed runs ext4. Speed comes from decompressing files in parallel, so an archive holding one giant file extracts at the speed of a single core.
+
+The extra space HatchZip needs beyond the output is about the size of the largest single unit it can free at once: one file for ZIP and tar, one solid block for 7z. `hatchzip check` computes the exact figure for any archive.
 
 ## Installation
 
@@ -45,6 +56,17 @@ cargo build --release
 ```
 
 The binary is `target/release/hatchzip` (`hatchzip.exe` on Windows). It is a single self-contained file; copy it anywhere on your `PATH`.
+
+### Shell completions and man page
+
+```sh
+hatchzip completions bash > ~/.local/share/bash-completion/completions/hatchzip
+hatchzip completions zsh > "${fpath[1]}/_hatchzip"
+hatchzip completions fish > ~/.config/fish/completions/hatchzip.fish
+hatchzip completions powershell >> $PROFILE
+
+hatchzip man > ~/.local/share/man/man1/hatchzip.1    # then: man hatchzip
+```
 
 ## Usage
 
@@ -69,9 +91,10 @@ game.zip  180.2 MB, unpacks to 200.0 MB in 22 entries
 ```sh
 hatchzip extract game.zip                 # into ./game/
 hatchzip extract game.zip -o D:\Games\Foo # somewhere else
+hatchzip x game.7z.001                    # split archive; any part's name works
 ```
 
-HatchZip prints the same space plan, asks for confirmation, then extracts. When it finishes, the archive is gone and the files are in the output folder.
+HatchZip prints the same space plan, asks for confirmation, then extracts. When it finishes, the archive is gone and the files are in the output folder. For a split archive, each volume is deleted as soon as everything in it is extracted.
 
 | Option | Effect |
 |---|---|
@@ -79,6 +102,7 @@ HatchZip prints the same space plan, asks for confirmation, then extracts. When 
 | `--keep-free <size>` | Free space HatchZip never uses, such as `500MB` or `10GB`. Default `2GB`, so the disk never fills to zero. |
 | `--verify-first` | Read the whole archive and check every file's checksum before deleting anything. Takes extra time, recommended for downloads you can't easily get again. |
 | `-y, --yes` | Skip the confirmation prompt. Required when not run from a terminal. |
+| `-q, --quiet` | Print only errors and prompts. |
 
 ### Stop and resume
 
@@ -90,13 +114,25 @@ hatchzip extract game.zip
 
 The same applies after a crash, a power cut, or running out of space because something else filled the disk. Progress lives in two small files next to the archive, `game.zip.hatchzip` and `game.zip.hatchzip-tail`. **Do not delete them while an extraction is unfinished**: they hold the archive's index, which is no longer inside the archive itself.
 
-### Check an archive for damage
+### List and test
 
 ```sh
-hatchzip test game.zip
+hatchzip list game.7z    # what's inside, with sizes
+hatchzip test game.7z    # read every file and verify its checksum, writing nothing
 ```
 
-Reads every file and verifies its checksum without writing anything.
+Plain tar has no checksums for file contents, so `test` on a tar only proves every file can be read in full.
+
+### Exit status
+
+| Code | Meaning |
+|---|---|
+| 0 | Success |
+| 1 | Failure. If extraction had started, progress is saved. |
+| 2 | Invalid command line |
+| 3 | Not enough free space. Nothing was changed. |
+| 4 | The archive is damaged. Nothing was deleted. |
+| 130 | Paused with Ctrl+C. Run the same command to continue. |
 
 ## Is it safe
 
@@ -111,18 +147,20 @@ What it cannot protect against: if the download itself is damaged, the files bef
 
 ## Supported formats
 
-| Format | Status |
-|---|---|
-| ZIP, ZIP64 and self-extracting `.exe` ZIPs | Supported. Stored, Deflate, Zstandard and bzip2 are covered by tests; Deflate64, LZMA, XZ and PPMd are decoded by the same library but not yet tested here. |
-| Password-protected ZIP | Refused before extraction, planned |
-| 7z, including solid archives | Planned next. 7z also keeps its index at the end, so the same technique applies folder by folder. |
-| Split archives (`.zip.001`, `.7z.001`, `.partN.rar`) | Planned. Each part is deleted once everything in it is extracted. |
-| `.tar.gz`, `.tar.zst`, `.tar.xz` | Planned. These are one continuous stream and need resumable checkpoints inside it; see [the format notes](docs/formats.md). |
-| RAR | Planned |
+| Format | Status | Freed in steps of |
+|---|---|---|
+| ZIP, ZIP64, self-extracting `.exe` ZIPs | Supported. Stored, Deflate, Zstandard and bzip2 are covered by tests; Deflate64, LZMA, XZ and PPMd are decoded by the same library but not yet tested here. | One file |
+| 7z, solid and non-solid | Supported. LZMA2, 7-Zip's default, is tested with archives from 7-Zip itself; LZMA, BCJ filters, bzip2, Deflate, PPMd and Zstandard are decoded by the same library but not yet tested here. | One solid block |
+| tar (uncompressed) | Supported, including long names, symlinks and hard links | One file |
+| Split archives (`.001`, `.002`, ...) of ZIP or 7z, as 7-Zip makes them | Supported | One file or block; each volume is deleted once emptied |
+| Password-protected ZIP or 7z | Refused before extraction, planned | |
+| `.tar.gz`, `.tar.zst`, `.tar.xz` | Refused before extraction, planned. One continuous stream, which needs resumable checkpoints inside it; see [the format notes](docs/formats.md). | |
+| One huge solid 7z block | Works, but needs free space for the whole block, as the table above shows. Freeing space inside a block is the same planned technique. | |
+| RAR, native split ZIP (`.z01`) | Planned | |
 
 ## How it works
 
-A ZIP compresses each file separately and keeps its index at the very end. HatchZip saves that index to a side file, then extracts files starting from the last one in the archive. After each batch it truncates the archive to where that batch began, which every operating system and filesystem supports. The full design, including the exact order of writes that makes a crash safe, is in [How it works](docs/how-it-works.md).
+ZIP, 7z and tar all store their contents as a sequence of independent pieces: files for ZIP and tar, solid blocks for 7z. ZIP and 7z keep their index at the very end. HatchZip saves that index to a side file, then extracts pieces starting from the last one in the archive. After each batch it truncates the archive to where that batch began, which every operating system and filesystem supports; for a split archive, that means deleting whole volumes and shortening one. The full design, including the exact order of writes that makes a crash safe, is in [How it works](docs/how-it-works.md).
 
 ## License
 
