@@ -1,0 +1,41 @@
+[package]
+name = "hatchzip"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+description = "Extract huge archives in place: the archive shrinks as your files hatch, so you only need room for the output."
+license = "FSL-1.1-ALv2"
+repository = "https://github.com/xevrion/hatchzip"
+readme = "README.md"
+keywords = ["zip", "extract", "archive", "unzip", "disk-space"]
+categories = ["command-line-utilities", "compression", "filesystem"]
+publish = false
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4", features = ["derive"] }
+crc32fast = "1.5.3"
+ctrlc = "3.5.2"
+fs4 = "1.1.0"
+indicatif = "0.18.6"
+rayon = "1.12.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+zip = "9"
+
+[target."cfg(unix)".dependencies]
+libc = "0.2.191"
+
+[dev-dependencies]
+tempfile = "3.27.0"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+
+# Decompression in an unoptimised build is slow enough to drag the test
+# suite, and nobody steps through zstd in a debugger.
+[profile.dev.package."*"]
+opt-level = 2
+debug = false
