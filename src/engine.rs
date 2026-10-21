@@ -1,12 +1,11 @@
-//! In-place ZIP extraction.
+//! In-place extraction, independent of the archive format.
 //!
-//! ZIP entries are compressed independently, so we can extract them from the
-//! last one to the first and shrink the archive with a plain truncate after
-//! each batch. Truncate works on every filesystem, FAT32 and exFAT included,
-//! which is why this path needs no hole punching at all.
+//! Units are processed from the highest offset down. After each batch the
+//! archive is truncated to where the batch began, which every filesystem
+//! supports, FAT32 and exFAT included, so this path needs no hole punching.
 
 use std::collections::HashSet;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -14,124 +13,143 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context, Result, anyhow, bail};
 use rayon::prelude::*;
-use zip::ZipArchive;
-use zip::read::ZipArchiveMetadata;
 
-use crate::journal::{Journal, PatchedArchive, Paths};
+use crate::archive::storage::{Storage, Tail};
+use crate::archive::{self, Format, Item, Kind, Sink, Unit};
+use crate::journal::{Journal, Link, Paths};
 use crate::{fsutil, platform};
 
 /// Larger batches extract in parallel better, smaller ones redo less work
 /// after a crash and keep the archive shrinking in fine steps.
-const BATCH_MAX_ENTRIES: usize = 512;
+const BATCH_MAX_UNITS: usize = 512;
 const BATCH_MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const BUF_SIZE: usize = 1024 * 1024;
+const MAX_SYMLINK: u64 = 64 * 1024;
 
-#[derive(Clone)]
-pub struct Entry {
-    pub index: usize,
-    pub path: PathBuf,
-    pub header_start: u64,
-    pub size: u64,
-    pub kind: Kind,
-    mode: Option<u32>,
-    mtime: Option<std::time::SystemTime>,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Kind {
-    File,
-    Dir,
-    Symlink,
-}
-
-pub struct Archive {
-    pub path: PathBuf,
-    pub file: File,
-    meta: Arc<ZipArchiveMetadata>,
-    /// Extraction order: highest offset first.
-    pub entries: Vec<Entry>,
-    pub len: u64,
+pub struct Job {
+    pub storage: Arc<Storage>,
+    pub format_name: &'static str,
+    format: Box<dyn Format>,
+    /// Units still to do, highest offset first.
+    pub units: Vec<Unit>,
     pub tail_start: u64,
+    /// Where the archive currently ends: its original length, or wherever
+    /// the last commit truncated it.
+    pub top: u64,
 }
 
-impl Archive {
-    pub fn open(path: &Path) -> Result<Self> {
-        let mut file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(path)
-            .with_context(|| format!("opening {} for reading and writing", path.display()))?;
-        file.try_lock()
-            .map_err(|_| anyhow!("{} is in use by another HatchZip run", path.display()))?;
-        let len = file.metadata()?.len();
-        let mut zip = ZipArchive::new(&mut file)
-            .with_context(|| format!("{} is not a ZIP archive we can read", path.display()))?;
-        if zip.has_overlapping_entries()? {
+impl Job {
+    pub fn open(path: &Path, writable: bool) -> Result<Self> {
+        let storage = Arc::new(Storage::open(path, writable)?);
+        let opened = archive::open(&storage, None)?;
+        let top = storage.len();
+        Self::build(storage, opened, top)
+    }
+
+    /// Reopens an archive a previous run already started on. A read-only
+    /// open leaves a pending truncation for the next writable one.
+    pub fn resume(journal: &Journal, tail: Arc<Tail>, writable: bool) -> Result<Self> {
+        let storage = Arc::new(Storage::from_parts(&journal.parts, writable)?);
+        let current = storage.current_len()?;
+        if current < journal.committed_len {
             bail!(
-                "entries in this archive overlap each other, which in-place extraction cannot handle safely"
+                "{} is shorter than HatchZip left it; refusing to touch it",
+                storage.primary().display()
             );
         }
-        let meta = zip.metadata();
-        let mut tail_start = 0;
-        for i in 0..zip.len() {
-            let f = zip.by_index_raw(i)?;
-            let end = f.data_start().unwrap_or(f.header_start()) + f.compressed_size();
-            tail_start = tail_start.max(end);
+        if current > journal.committed_len && writable {
+            // The last run committed a batch but stopped before truncating.
+            storage.set_len(journal.committed_len)?;
         }
-        let entries = collect_entries(&meta)?;
+        let opened = archive::open(&storage, Some((&journal.format, tail)))?;
+        Self::build(storage, opened, journal.committed_len)
+    }
+
+    fn build(storage: Arc<Storage>, opened: archive::Opened, top: u64) -> Result<Self> {
+        let mut units = opened.units;
+        units.retain(|u| u.start < top);
+        units.sort_by_key(|u| std::cmp::Reverse(u.start));
+
+        let mut seen = HashSet::new();
+        for item in units.iter().flat_map(|u| &u.items) {
+            // Case-insensitive filesystems would let two items race for one
+            // file inside a parallel batch.
+            if item.kind != Kind::Dir && !seen.insert(item.path.to_string_lossy().to_lowercase()) {
+                bail!(
+                    "'{}' appears twice in the archive (ignoring case); refusing to guess which one wins",
+                    item.path.display()
+                );
+            }
+        }
         Ok(Self {
-            path: path.to_path_buf(),
-            file,
-            meta,
-            entries,
-            len,
-            tail_start,
+            storage,
+            format_name: opened.name,
+            format: opened.format,
+            units,
+            tail_start: opened.tail_start,
+            top,
         })
     }
 
-    /// Reopen an archive we already started on, using the saved tail.
-    pub fn reopen(path: &Path, journal: &Journal, tail: Vec<u8>) -> Result<Self> {
-        let file = OpenOptions::new().read(true).write(true).open(path)?;
-        file.try_lock()
-            .map_err(|_| anyhow!("{} is in use by another HatchZip run", path.display()))?;
-        let len = file.metadata()?.len();
-        if len < journal.committed_len || len > journal.archive_len {
-            bail!(
-                "{} changed since the last run; refusing to touch it",
-                path.display()
-            );
-        }
-        if len > journal.committed_len {
-            // We crashed after committing a batch but before truncating.
-            file.set_len(journal.committed_len)?;
-        }
-        let patched = PatchedArchive::new(file.try_clone()?, journal.tail_start, tail);
-        let zip = ZipArchive::new(patched)
-            .with_context(|| format!("re-reading the saved index of {}", path.display()))?;
-        let meta = zip.metadata();
-        let entries = collect_entries(&meta)?;
-        Ok(Self {
-            path: path.to_path_buf(),
-            file,
-            meta,
-            entries,
-            len: journal.archive_len,
-            tail_start: journal.tail_start,
-        })
+    pub fn item_count(&self) -> usize {
+        self.units.iter().map(|u| u.items.len()).sum()
     }
 
-    /// Output a crashed run wrote for entries it never committed. The output
+    pub fn remaining_size(&self) -> u64 {
+        self.units.iter().map(Unit::size).sum()
+    }
+
+    /// Bytes freed once `units[i]` is committed: everything from its start up
+    /// to whatever came after it.
+    fn span(&self, i: usize) -> u64 {
+        let end = if i == 0 {
+            self.top
+        } else {
+            self.units[i - 1].start
+        };
+        end - self.units[i].start
+    }
+
+    /// Replays the extraction one unit at a time and returns `(peak, end)`:
+    /// the most free space it ever consumes beyond what is free now, and how
+    /// much it consumes once finished. `fresh` means the tail hasn't been
+    /// saved yet; `reclaims` that freed archive space lands on the output's
+    /// disk.
+    pub fn space_needed(&self, fresh: bool, reclaims: bool) -> (u64, i128) {
+        let tail = (self.storage.len() - self.tail_start) as i128;
+        let mut extra: i128 = if fresh { tail } else { 0 };
+        let mut peak = extra;
+        for (i, u) in self.units.iter().enumerate() {
+            let on_disk: u64 = u
+                .items
+                .iter()
+                .map(|it| it.size.next_multiple_of(4096))
+                .sum();
+            peak = peak.max(extra + on_disk as i128);
+            extra += on_disk as i128;
+            if reclaims {
+                extra -= self.span(i) as i128;
+            }
+        }
+        if reclaims {
+            // Whatever precedes the first unit is deleted at the very end,
+            // along with the saved tail.
+            let stub = self.units.last().map_or(self.top, |u| u.start);
+            extra -= stub as i128 + tail;
+        }
+        (peak.max(0) as u64, extra)
+    }
+
+    /// Output a crashed run wrote for units it never committed. The output
     /// folder started empty, so anything at those paths is ours.
-    pub fn uncommitted(&self, from: usize, out: &Path) -> Vec<(PathBuf, u64)> {
+    pub fn uncommitted(&self, out: &Path) -> Vec<(PathBuf, u64)> {
         let mut found = Vec::new();
-        for e in &self.entries[from..] {
-            if e.kind != Kind::File {
+        for item in self.units.iter().flat_map(|u| &u.items) {
+            if item.kind != Kind::File {
                 continue;
             }
-            let dest = out.join(&e.path);
-            let mut part = dest.as_os_str().to_owned();
-            part.push(".hatchzip-part");
-            for p in [dest, PathBuf::from(part)] {
+            let dest = out.join(&item.path);
+            for p in [part_path(&dest), dest] {
                 if let Ok(m) = fs::symlink_metadata(&p)
                     && m.is_file()
                 {
@@ -142,97 +160,54 @@ impl Archive {
         found
     }
 
-    pub fn total_size(&self) -> u64 {
-        self.entries.iter().map(|e| e.size).sum()
-    }
-
-    /// Bytes freed once `entries[i]` is committed: everything from its local
-    /// header up to whatever came after it.
-    fn span(&self, i: usize) -> u64 {
-        let end = if i == 0 {
-            self.len
-        } else {
-            self.entries[i - 1].header_start
-        };
-        end - self.entries[i].header_start
-    }
-
-    /// Replays the whole extraction one entry at a time and returns
-    /// `(peak, end)`: the most free space it ever consumes beyond what is free
-    /// now, and how much it consumes once finished. `reclaims` says whether
-    /// bytes freed from the archive land on the same disk as the output.
-    pub fn space_needed(&self, from: usize, reclaims: bool) -> (u64, i128) {
-        // The saved index is written before anything is reclaimed.
-        let mut extra: i128 = if from == 0 {
-            (self.len - self.tail_start) as i128
-        } else {
-            0
-        };
-        let mut peak = extra;
-        for i in from..self.entries.len() {
-            let on_disk = self.entries[i].size.next_multiple_of(4096) as i128;
-            peak = peak.max(extra + on_disk);
-            extra += on_disk;
-            if reclaims {
-                extra -= self.span(i) as i128;
-            }
+    /// Reads every unit and lets the decoders check their checksums,
+    /// writing nothing.
+    pub fn verify(&self, on_bytes: &(dyn Fn(u64) + Sync)) -> Result<()> {
+        let threads = threads_per_unit(self.units.len());
+        let failures: Vec<String> = self
+            .units
+            .par_iter()
+            .map_init(
+                || {
+                    (
+                        self.format.worker(threads),
+                        VerifySink {
+                            on_bytes,
+                            buf: vec![0; BUF_SIZE],
+                        },
+                    )
+                },
+                |(worker, sink), unit| {
+                    let mut run = || -> Result<()> {
+                        let w = worker.as_mut().map_err(|e| anyhow!("{e:#}"))?;
+                        w.extract(unit, sink)
+                    };
+                    run().err().map(|e| format!("{e:#}"))
+                },
+            )
+            .flatten()
+            .collect();
+        if failures.is_empty() {
+            return Ok(());
         }
-        if reclaims {
-            // Whatever precedes the first entry is deleted along with the
-            // side files at the very end.
-            let stub = self.entries.last().map_or(self.len, |e| e.header_start);
-            extra -= (stub + self.len - self.tail_start) as i128;
+        let mut msg = format!("{} damaged:", failures.len());
+        for f in failures.iter().take(10) {
+            msg.push_str("\n  ");
+            msg.push_str(f);
         }
-        (peak.max(0) as u64, extra)
-    }
-
-    fn reader(&self) -> io::Result<ZipArchive<File>> {
-        let file = File::open(&self.path)?;
-        // Safety: `meta` was parsed from this same file (or from its saved
-        // tail, which is byte-identical), and we only read entries that sit
-        // below the current truncation point.
-        Ok(unsafe { ZipArchive::unsafe_new_with_metadata(file, self.meta.clone()) })
+        Err(anyhow!(msg))
     }
 }
 
-fn collect_entries(meta: &ZipArchiveMetadata) -> Result<Vec<Entry>> {
-    let mut entries = Vec::with_capacity(meta.len());
-    let mut seen = HashSet::new();
-    for index in 0..meta.len() {
-        let e = meta.entry(index)?;
-        let name = e.name().map(|n| n.into_owned()).unwrap_or_default();
-        if e.encrypted() {
-            bail!("'{name}' is password protected, which HatchZip does not support yet");
-        }
-        let path = e.enclosed_name().ok_or_else(|| {
-            anyhow!("'{name}' would be written outside the output folder; refusing")
-        })?;
-        let kind = if e.is_dir() {
-            Kind::Dir
-        } else if e.is_symlink() {
-            Kind::Symlink
-        } else {
-            Kind::File
-        };
-        // Case-insensitive filesystems would let two entries race for one
-        // file inside a parallel batch.
-        if kind != Kind::Dir && !seen.insert(path.to_string_lossy().to_lowercase()) {
-            bail!(
-                "'{name}' appears twice in the archive (ignoring case); refusing to guess which one wins"
-            );
-        }
-        entries.push(Entry {
-            index,
-            path,
-            header_start: e.header_start(),
-            size: e.size(),
-            kind,
-            mode: e.unix_mode(),
-            mtime: e.last_modified().and_then(fsutil::zip_time),
-        });
-    }
-    entries.sort_by_key(|e| std::cmp::Reverse(e.header_start));
-    Ok(entries)
+fn threads_per_unit(units: usize) -> u32 {
+    let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+    (cores / units.max(1)).max(1) as u32
+}
+
+fn part_path(dest: &Path) -> PathBuf {
+    let mut part = dest.as_os_str().to_owned();
+    part.push(".hatchzip-part");
+    PathBuf::from(part)
 }
 
 pub struct Progress {
@@ -246,7 +221,7 @@ pub enum Outcome {
 }
 
 pub struct Run<'a> {
-    pub archive: Archive,
+    pub job: Job,
     pub journal: Journal,
     pub paths: Paths,
     pub stop: &'a AtomicBool,
@@ -261,19 +236,17 @@ impl Run<'_> {
         fs::create_dir_all(&out)
             .with_context(|| format!("creating output folder {}", out.display()))?;
 
-        while self.journal.done < self.archive.entries.len() {
+        let mut next = 0;
+        while next < self.job.units.len() {
             if self.stop.load(Ordering::Relaxed) {
                 return Ok(Outcome::Paused);
             }
-            let start = self.journal.done;
-            let end = self.next_batch(start, &out)?;
-            let batch = &self.archive.entries[start..end];
+            let end = self.next_batch(next, &out)?;
+            let batch = &self.job.units[next..end];
 
-            let links = self.extract_batch(batch, &out)?;
-            if self.stop.load(Ordering::Relaxed) && links.is_none() {
+            let Some(links) = self.extract_batch(batch, &out)? else {
                 return Ok(Outcome::Paused);
-            }
-            let links = links.expect("batch completed");
+            };
 
             // The journal must never claim a file that a power cut could still
             // take back, since its archive bytes are about to be truncated.
@@ -281,7 +254,8 @@ impl Run<'_> {
             if platform::SYNC_EACH_FILE {
                 let dirs: HashSet<PathBuf> = batch
                     .iter()
-                    .filter_map(|e| out.join(&e.path).parent().map(Path::to_path_buf))
+                    .flat_map(|u| &u.items)
+                    .filter_map(|it| out.join(&it.path).parent().map(Path::to_path_buf))
                     .collect();
                 for d in &dirs {
                     fsutil::sync_dir(d)?;
@@ -289,51 +263,58 @@ impl Run<'_> {
             }
             crash_point("after-extract");
 
-            let new_len = batch.last().map(|e| e.header_start).unwrap();
-            self.journal.done = end;
+            let new_len = batch.last().expect("batches are never empty").start;
             self.journal.committed_len = new_len;
-            self.journal.symlinks.extend(links);
+            self.journal.links.extend(links);
             self.journal.save(&self.paths)?;
             crash_point("after-journal");
 
-            self.archive
-                .file
+            self.job
+                .storage
                 .set_len(new_len)
                 .context("shrinking the archive")?;
             (self.progress.on_commit)(new_len);
+            next = end;
         }
 
         self.finish(&out)?;
         Ok(Outcome::Finished)
     }
 
-    /// Pick entries starting at `start` whose output fits in the space we
-    /// have right now. Always takes at least one, or explains why it can't.
+    /// Pick units starting at `start` whose output fits in the space there is
+    /// right now. Always takes at least one, or explains why it can't.
     fn next_batch(&self, start: usize, out: &Path) -> Result<usize> {
         let avail = fsutil::available_space(out)?.saturating_sub(self.keep_free);
-        let entries = &self.archive.entries;
-        let first = &entries[start];
-        let first_size = first.size.next_multiple_of(4096);
-        if first_size > avail {
+        let units = &self.job.units;
+        let need = |u: &Unit| {
+            u.items
+                .iter()
+                .map(|i| i.size.next_multiple_of(4096))
+                .sum::<u64>()
+        };
+        let first = need(&units[start]);
+        if first > avail {
             // The upfront check makes this rare: it takes something else on
             // the machine filling the disk while we run.
+            let what = match units[start].items.as_slice() {
+                [one] => format!("'{}'", one.path.display()),
+                many => format!("the next block of {} files", many.len()),
+            };
             bail!(
-                "stopped before '{}': it needs {} and only {} is free (keeping {} spare).\n\
+                "stopped before {what}: it needs {} and only {} is free (keeping {} spare).\n\
                  Nothing is lost. Free up {} and run the same command again to continue.",
-                first.path.display(),
-                human(first_size),
+                human(first),
                 human(avail),
                 human(self.keep_free),
-                human(first_size - avail),
+                human(first - avail),
             );
         }
-        let budget = avail.min(BATCH_MAX_BYTES.max(first_size));
-        let max_entries =
-            test_knob("HATCHZIP_BATCH_ENTRIES").map_or(BATCH_MAX_ENTRIES, |n| n as usize);
+        let budget = avail.min(BATCH_MAX_BYTES.max(first));
+        let max_units = test_knob("HATCHZIP_BATCH_ENTRIES").map_or(BATCH_MAX_UNITS, |n| n as usize);
         let mut used = 0;
         let mut end = start;
-        while end < entries.len() && end - start < max_entries {
-            let size = entries[end].size.next_multiple_of(4096);
+        while end < units.len() && end - start < max_units {
+            let size = need(&units[end]);
             if end > start && used + size > budget {
                 break;
             }
@@ -345,21 +326,28 @@ impl Run<'_> {
 
     /// Returns `None` if a stop request interrupted the batch. Nothing in the
     /// archive has been touched at that point, so the batch simply reruns.
-    fn extract_batch(
-        &self,
-        batch: &[Entry],
-        out: &Path,
-    ) -> Result<Option<Vec<(PathBuf, PathBuf)>>> {
-        let results: Vec<Result<Option<(PathBuf, PathBuf)>>> = batch
+    fn extract_batch(&self, batch: &[Unit], out: &Path) -> Result<Option<Vec<Link>>> {
+        let threads = threads_per_unit(batch.len());
+        let on_bytes = &*self.progress.on_bytes;
+        let results: Vec<Result<Vec<Link>>> = batch
             .par_iter()
             .map_init(
-                || (self.archive.reader(), vec![0u8; BUF_SIZE]),
-                |(reader, buf), entry| {
-                    let reader = reader
+                || {
+                    let sink = DiskSink {
+                        out,
+                        stop: self.stop,
+                        on_bytes,
+                        buf: vec![0; BUF_SIZE],
+                        links: Vec::new(),
+                    };
+                    (self.job.format.worker(threads), sink)
+                },
+                |(worker, sink), unit| {
+                    let w = worker
                         .as_mut()
-                        .map_err(|e| anyhow!("reopening archive: {e}"))?;
-                    self.extract_one(reader, buf, entry, out)
-                        .with_context(|| format!("extracting '{}'", entry.path.display()))
+                        .map_err(|e| anyhow!("opening the archive: {e:#}"))?;
+                    w.extract(unit, sink)?;
+                    Ok(std::mem::take(&mut sink.links))
                 },
             )
             .collect();
@@ -368,33 +356,98 @@ impl Run<'_> {
         let mut interrupted = false;
         for r in results {
             match r {
-                Ok(Some(link)) => links.push(link),
-                Ok(None) => {}
+                Ok(l) => links.extend(l),
                 Err(e) if is_interrupt(&e) => interrupted = true,
                 Err(e) => return Err(e),
             }
         }
-        Ok(if interrupted { None } else { Some(links) })
+        Ok((!interrupted).then_some(links))
     }
 
-    fn extract_one(
-        &self,
-        zip: &mut ZipArchive<File>,
-        buf: &mut [u8],
-        entry: &Entry,
-        out: &Path,
-    ) -> Result<Option<(PathBuf, PathBuf)>> {
-        let dest = out.join(&entry.path);
-        match entry.kind {
+    fn finish(self, out: &Path) -> Result<()> {
+        make_links(&self.journal.links, out)?;
+        let Self { job, paths, .. } = self;
+        let Job {
+            storage, format, ..
+        } = job;
+        // The format holds its own handle on the storage; it has to go first.
+        drop(format);
+        let storage = Arc::try_unwrap(storage)
+            .map_err(|_| anyhow!("archive still in use at the end of extraction"))?;
+        // What is left is at most a self-extractor stub in front of the
+        // first entry. The saved index goes with it.
+        storage.remove()?;
+        paths.remove()
+    }
+}
+
+/// A run that crashed after deleting the archive but before cleaning up only
+/// has its links and side files left to deal with.
+pub fn finish_orphaned(journal: &Journal, paths: &Paths) -> Result<()> {
+    make_links(&journal.links, &journal.output)?;
+    paths.remove()
+}
+
+fn make_links(links: &[Link], out: &Path) -> Result<()> {
+    for link in links {
+        let path = out.join(&link.path);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let made = if link.hard {
+            let target = out.join(&link.target);
+            let _ = fs::remove_file(&path);
+            // FAT32 and exFAT have no hard links; a copy is the next best thing.
+            fs::hard_link(&target, &path).or_else(|_| fs::copy(&target, &path).map(|_| ()))
+        } else {
+            platform::create_symlink(&path, &link.target)
+        };
+        made.with_context(|| format!("creating link '{}'", link.path.display()))?;
+    }
+    Ok(())
+}
+
+struct DiskSink<'a> {
+    out: &'a Path,
+    stop: &'a AtomicBool,
+    on_bytes: &'a (dyn Fn(u64) + Sync),
+    buf: Vec<u8>,
+    links: Vec<Link>,
+}
+
+impl Sink for DiskSink<'_> {
+    fn item(&mut self, item: &Item, data: &mut dyn Read) -> Result<()> {
+        self.write(item, data)
+            .with_context(|| format!("extracting '{}'", item.path.display()))
+    }
+}
+
+impl DiskSink<'_> {
+    fn write(&mut self, item: &Item, data: &mut dyn Read) -> Result<()> {
+        let dest = self.out.join(&item.path);
+        match &item.kind {
             Kind::Dir => {
                 fs::create_dir_all(&dest)?;
-                return Ok(None);
+                return Ok(());
             }
             Kind::Symlink => {
                 let mut target = Vec::new();
-                zip.by_index(entry.index)?.read_to_end(&mut target)?;
+                data.take(MAX_SYMLINK).read_to_end(&mut target)?;
                 let target = PathBuf::from(String::from_utf8(target)?);
-                return Ok(Some((entry.path.clone(), target)));
+                self.links.push(Link {
+                    path: item.path.clone(),
+                    target,
+                    hard: false,
+                });
+                return Ok(());
+            }
+            Kind::HardLink(target) => {
+                self.links.push(Link {
+                    path: item.path.clone(),
+                    target: target.clone(),
+                    hard: true,
+                });
+                return Ok(());
             }
             Kind::File => {}
         }
@@ -402,66 +455,75 @@ impl Run<'_> {
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent)?;
         }
-        let mut part = dest.as_os_str().to_owned();
-        part.push(".hatchzip-part");
-        let part = PathBuf::from(part);
-
-        let result = (|| -> Result<()> {
-            let mut src = zip.by_index(entry.index)?;
-            let mut dst = File::create(&part)?;
-            let mut written = 0u64;
-            loop {
-                if self.stop.load(Ordering::Relaxed) {
-                    return Err(io::Error::from(io::ErrorKind::Interrupted).into());
-                }
-                // The zip crate checks the CRC when the stream ends, so a
-                // read error here is how corruption surfaces.
-                let n = src.read(buf)?;
-                if n == 0 {
-                    break;
-                }
-                written += n as u64;
-                if written > entry.size {
-                    bail!("entry is larger than the archive says it is");
-                }
-                dst.write_all(&buf[..n])?;
-                (self.progress.on_bytes)(n as u64);
-            }
-            if written != entry.size {
-                bail!("entry is smaller than the archive says it is");
-            }
-            if let Some(t) = entry.mtime {
-                dst.set_modified(t)?;
-            }
-            platform::apply_mode(&dst, entry.mode)?;
-            if platform::SYNC_EACH_FILE {
-                dst.sync_all()?;
-            }
-            Ok(())
-        })();
-
-        if let Err(e) = result {
+        let part = part_path(&dest);
+        let result = self.copy(item, data, &part);
+        if result.is_err() {
             let _ = fs::remove_file(&part);
-            return Err(e);
+            return result;
         }
         fs::rename(&part, &dest)?;
-        Ok(None)
+        Ok(())
     }
 
-    fn finish(&mut self, out: &Path) -> Result<()> {
-        for (link, target) in &self.journal.symlinks {
-            let link = out.join(link);
-            if let Some(parent) = link.parent() {
-                fs::create_dir_all(parent)?;
+    fn copy(&mut self, item: &Item, data: &mut dyn Read, part: &Path) -> Result<()> {
+        let mut dst = File::create(part)?;
+        let mut written = 0u64;
+        loop {
+            if self.stop.load(Ordering::Relaxed) {
+                return Err(io::Error::from(io::ErrorKind::Interrupted).into());
             }
-            platform::create_symlink(&link, target)
-                .with_context(|| format!("creating symlink '{}'", link.display()))?;
+            // Decoders check their CRC when the stream ends, so a read error
+            // here is how corruption surfaces.
+            let n = data.read(&mut self.buf)?;
+            if n == 0 {
+                break;
+            }
+            written += n as u64;
+            if written > item.size {
+                bail!("it is larger than the archive says it is");
+            }
+            dst.write_all(&self.buf[..n])?;
+            (self.on_bytes)(n as u64);
         }
-        // What is left is at most a self-extractor stub in front of the
-        // first entry. Our copy of the index goes with it.
-        fs::remove_file(&self.archive.path)
-            .with_context(|| format!("removing the empty {}", self.archive.path.display()))?;
-        self.paths.remove()
+        if written != item.size {
+            bail!("it is smaller than the archive says it is");
+        }
+        if let Some(t) = item.mtime {
+            dst.set_modified(t)?;
+        }
+        platform::apply_mode(&dst, item.mode)?;
+        if platform::SYNC_EACH_FILE {
+            dst.sync_all()?;
+        }
+        Ok(())
+    }
+}
+
+struct VerifySink<'a> {
+    on_bytes: &'a (dyn Fn(u64) + Sync),
+    buf: Vec<u8>,
+}
+
+impl Sink for VerifySink<'_> {
+    fn item(&mut self, item: &Item, data: &mut dyn Read) -> Result<()> {
+        let mut read = 0;
+        loop {
+            let n = data
+                .read(&mut self.buf)
+                .with_context(|| format!("'{}'", item.path.display()))?;
+            if n == 0 {
+                break;
+            }
+            read += n as u64;
+            (self.on_bytes)(n as u64);
+        }
+        if item.kind == Kind::File && read != item.size {
+            bail!(
+                "'{}' is shorter than the archive says it is",
+                item.path.display()
+            );
+        }
+        Ok(())
     }
 }
 
@@ -504,42 +566,4 @@ pub fn human(bytes: u64) -> String {
     } else {
         format!("{v:.1} {}", UNITS[unit])
     }
-}
-
-/// Read every entry and check its CRC without writing anything.
-pub fn verify(archive: &Archive, on_bytes: &(dyn Fn(u64) + Sync)) -> Result<()> {
-    let failures: Vec<String> = archive
-        .entries
-        .par_iter()
-        .filter(|e| e.kind == Kind::File)
-        .map_init(
-            || (archive.reader(), vec![0u8; BUF_SIZE]),
-            |(reader, buf), entry| -> Option<String> {
-                let mut check = || -> Result<()> {
-                    let zip = reader.as_mut().map_err(|e| anyhow!("{e}"))?;
-                    let mut src = zip.by_index(entry.index)?;
-                    loop {
-                        let n = src.read(buf)?;
-                        if n == 0 {
-                            return Ok(());
-                        }
-                        on_bytes(n as u64);
-                    }
-                };
-                check()
-                    .err()
-                    .map(|e| format!("{}: {e}", entry.path.display()))
-            },
-        )
-        .flatten()
-        .collect();
-    if failures.is_empty() {
-        return Ok(());
-    }
-    let mut msg = format!("{} damaged entries:", failures.len());
-    for f in failures.iter().take(10) {
-        msg.push_str("\n  ");
-        msg.push_str(f);
-    }
-    Err(anyhow!(msg))
 }

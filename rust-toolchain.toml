@@ -1,5 +1,5 @@
 [toolchain]
-# File::try_lock needs 1.89. Pinned so CI and every machine build with the
+# sevenz-rust2 needs 1.93. Pinned so CI and every machine build with the
 # same compiler and clippy lints.
 channel = "1.95.0"
 components = ["rustfmt", "clippy"]

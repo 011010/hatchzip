@@ -1,36 +1,46 @@
 //! Progress record that makes an interrupted extraction resumable.
 //!
-//! The archive is destroyed from the end as we go, and the end is where a ZIP
-//! keeps its central directory. So before the first byte is reclaimed we copy
-//! everything after the last entry's data (the "tail") into a side file, and
-//! from then on we parse the archive through [`PatchedArchive`], which serves
-//! the saved tail at its original offsets.
+//! ZIP and 7z keep their index at the end of the archive, which is the first
+//! thing truncation destroys. So before the first byte is reclaimed the tail
+//! of the archive is copied to a side file, and from then on the archive is
+//! parsed through a reader that serves the saved tail at its old offsets.
 
-use std::fs::{self, File};
+use std::fs;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
+use crate::archive::storage::{Storage, Tail};
 use crate::fsutil;
 
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct Link {
+    pub path: PathBuf,
+    pub target: PathBuf,
+    pub hard: bool,
+}
 
 #[derive(Serialize, Deserialize)]
 pub struct Journal {
     pub version: u32,
-    pub archive_len: u64,
+    pub format: String,
+    /// Every part of the archive with its original length.
+    pub parts: Vec<(PathBuf, u64)>,
     pub tail_start: u64,
     pub tail_crc: u32,
     pub output: PathBuf,
-    /// Entries already committed, counted in extraction order.
-    pub done: usize,
-    /// What the archive is truncated to once `done` entries are committed.
+    pub total_size: u64,
+    /// The archive is truncated to this once the latest batch is committed.
+    /// Every unit starting at or after it is done.
     pub committed_len: u64,
-    /// Symlinks are created last, so nothing we extract can be written
-    /// through one.
-    pub symlinks: Vec<(PathBuf, PathBuf)>,
+    /// Links are made last, so nothing extracted can be written through one
+    /// and every hard link's target already exists.
+    pub links: Vec<Link>,
 }
 
 pub struct Paths {
@@ -68,115 +78,62 @@ impl Paths {
     }
 }
 
+pub struct Plan {
+    pub format: &'static str,
+    pub tail_start: u64,
+    pub output: PathBuf,
+    pub total_size: u64,
+}
+
 impl Journal {
-    pub fn create(
-        paths: &Paths,
-        archive: &mut File,
-        tail_start: u64,
-        output: PathBuf,
-    ) -> Result<Self> {
-        let archive_len = archive.metadata()?.len();
+    pub fn create(paths: &Paths, storage: &Storage, plan: Plan) -> Result<Self> {
         let mut tail = Vec::new();
-        archive.seek(SeekFrom::Start(tail_start))?;
-        archive.read_to_end(&mut tail)?;
+        let mut r = storage.reader(None);
+        r.seek(SeekFrom::Start(plan.tail_start))?;
+        r.read_to_end(&mut tail)?;
         fsutil::write_atomic(&paths.tail, &tail)?;
         let journal = Self {
             version: VERSION,
-            archive_len,
-            tail_start,
+            format: plan.format.to_string(),
+            parts: storage.record(),
+            tail_start: plan.tail_start,
             tail_crc: crc32fast::hash(&tail),
-            output,
-            done: 0,
-            committed_len: archive_len,
-            symlinks: Vec::new(),
+            output: plan.output,
+            total_size: plan.total_size,
+            committed_len: storage.len(),
+            links: Vec::new(),
         };
         journal.save(paths)?;
         Ok(journal)
     }
 
-    pub fn load(paths: &Paths) -> Result<(Self, Vec<u8>)> {
+    pub fn load(paths: &Paths) -> Result<(Self, Arc<Tail>)> {
         let bytes = fs::read(&paths.journal)
             .with_context(|| format!("reading {}", paths.journal.display()))?;
         let journal: Self = serde_json::from_slice(&bytes)
             .with_context(|| format!("{} is damaged", paths.journal.display()))?;
         if journal.version != VERSION {
             bail!(
-                "{} was written by a different HatchZip version",
+                "{} was written by a different HatchZip version; finish it with that version",
                 paths.journal.display()
             );
         }
         let tail =
             fs::read(&paths.tail).with_context(|| format!("reading {}", paths.tail.display()))?;
+        let len: u64 = journal.parts.iter().map(|(_, l)| l).sum();
         if crc32fast::hash(&tail) != journal.tail_crc
-            || journal.tail_start + tail.len() as u64 != journal.archive_len
+            || journal.tail_start + tail.len() as u64 != len
         {
             bail!("{} does not match its journal", paths.tail.display());
         }
+        let tail = Arc::new(Tail {
+            start: journal.tail_start,
+            bytes: tail,
+        });
         Ok((journal, tail))
     }
 
     pub fn save(&self, paths: &Paths) -> Result<()> {
         fsutil::write_atomic(&paths.journal, &serde_json::to_vec(self)?)
-    }
-}
-
-/// The archive as it was before we started eating it: the live file for
-/// everything below `tail_start`, the saved tail for everything above.
-pub struct PatchedArchive {
-    file: File,
-    tail_start: u64,
-    tail: Vec<u8>,
-    pos: u64,
-}
-
-impl PatchedArchive {
-    pub fn new(file: File, tail_start: u64, tail: Vec<u8>) -> Self {
-        Self {
-            file,
-            tail_start,
-            tail,
-            pos: 0,
-        }
-    }
-
-    fn len(&self) -> u64 {
-        self.tail_start + self.tail.len() as u64
-    }
-}
-
-impl Read for PatchedArchive {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        if self.pos >= self.tail_start {
-            let at = (self.pos - self.tail_start) as usize;
-            let src = self.tail.get(at..).unwrap_or(&[]);
-            let n = src.len().min(buf.len());
-            buf[..n].copy_from_slice(&src[..n]);
-            self.pos += n as u64;
-            return Ok(n);
-        }
-        let room = (self.tail_start - self.pos).min(buf.len() as u64) as usize;
-        self.file.seek(SeekFrom::Start(self.pos))?;
-        let mut n = self.file.read(&mut buf[..room])?;
-        if n == 0 {
-            // Already truncated away. The zip crate scans backwards over this
-            // region while looking for the end record, so it must read as
-            // something; zeros never match a signature.
-            buf[..room].fill(0);
-            n = room;
-        }
-        self.pos += n as u64;
-        Ok(n)
-    }
-}
-
-impl Seek for PatchedArchive {
-    fn seek(&mut self, to: SeekFrom) -> io::Result<u64> {
-        let pos = match to {
-            SeekFrom::Start(p) => Some(p),
-            SeekFrom::End(d) => self.len().checked_add_signed(d),
-            SeekFrom::Current(d) => self.pos.checked_add_signed(d),
-        };
-        self.pos = pos.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "bad seek"))?;
-        Ok(self.pos)
     }
 }
