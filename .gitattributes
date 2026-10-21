@@ -1,0 +1,10 @@
+# Normalise line endings so a Windows checkout doesn't produce a diff in every
+# file, and rustfmt's check doesn't fail on CRLF.
+* text=auto eol=lf
+
+# Binary, never diffed or line-ending normalised. A zip fixture with its line
+# endings rewritten is a corrupt archive.
+*.zip binary
+
+# Generated. Collapsed in pull request diffs and excluded from language stats.
+Cargo.lock linguist-generated=true -diff
