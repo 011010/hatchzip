@@ -1,0 +1,85 @@
+name: ci
+
+on:
+  # main only. Every other branch is checked through its pull request, so
+  # listening to all pushes would run dependabot's branches twice.
+  push:
+    branches: [main]
+    # Pushes that only touch docs don't start a runner at all. Pull requests
+    # still always run, since `ci result` is a required check there and a
+    # skipped workflow would leave it waiting.
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+# Reading the code is all any job here needs.
+permissions:
+  contents: read
+
+# A new push to the same branch makes the running checks for the old one moot.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: fmt, clippy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # rustup is on the runner, rust-toolchain.toml picks the version
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+
+  # Truncation, free space checks and file renames all behave differently per
+  # OS and filesystem, so the tests run on all three. It waits for the quick
+  # check: on a private repo macOS minutes bill at ten times the Linux rate,
+  # and a formatting slip shouldn't pay for them.
+  test:
+    name: test (${{ matrix.os }})
+    needs: check
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      # One OS failing says nothing about the others, so let them all finish.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      # The crash tests abort a child process midway on purpose and then
+      # resume it, so an abort message in the log is expected, not a failure.
+      - run: cargo test --locked
+
+  # The one check branch protection requires, so adding or renaming a job
+  # above never means editing the protection rules. This passes when
+  # everything that ran passed, and treats skipped as fine.
+  result:
+    name: ci result
+    if: always()
+    needs: [check, test]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "$RESULTS"
+          for r in $RESULTS; do
+            case "$r" in
+              success|skipped) ;;
+              *) exit 1 ;;
+            esac
+          done

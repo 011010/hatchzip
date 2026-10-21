@@ -1,0 +1,31 @@
+version: 2
+
+updates:
+  # Grouped so a week of patch bumps arrives as one PR instead of a dozen.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: build
+      include: scope
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  # Actions are pinned to commit SHAs, so this is what keeps those pins current.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: ci
+    groups:
+      actions:
+        patterns:
+          - '*'

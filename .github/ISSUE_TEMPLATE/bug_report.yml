@@ -1,0 +1,105 @@
+name: Bug report
+description: Report a crash, a failed or wrong extraction, or a resume that didn't work
+labels: ['bug', 'triage']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > [!IMPORTANT]
+        > If an extraction failed or was interrupted midway, do **not** delete the
+        > `.hatchzip` and `.hatchzip-tail` files next to the archive. The archive has
+        > already been partly truncated, and those two files are what lets HatchZip
+        > resume and finish it. Rerunning the same command resumes.
+
+        Do not attach archives that contain private information. A small archive
+        that shows the same problem is equally useful.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: Description
+      description: What you did, what you expected to happen, and what happened instead.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: HatchZip version
+      description: Output of `hatchzip --version`.
+      placeholder: hatchzip 0.1.0
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system and version
+      placeholder: Ubuntu 24.04, Windows 11 24H2, macOS 15.3
+    validations:
+      required: true
+
+  - type: dropdown
+    id: filesystem
+    attributes:
+      label: Filesystem of the disk the archive is on
+      description: On Linux, `df -T path/to/archive.zip` prints it.
+      options:
+        - ext4
+        - btrfs
+        - NTFS
+        - APFS
+        - exFAT
+        - FAT32
+        - Other (say which in additional context)
+    validations:
+      required: true
+
+  - type: input
+    id: format
+    attributes:
+      label: Archive format
+      description: Plain zip, zip64, split or multi-part, encrypted, and the tool that made it if known.
+      placeholder: zip64, made by 7-Zip
+    validations:
+      required: true
+
+  - type: input
+    id: size
+    attributes:
+      label: Approximate archive size and file count
+      placeholder: 120 GB, about 40000 files
+
+  - type: input
+    id: command
+    attributes:
+      label: The exact command
+      placeholder: hatchzip extract backup.zip -o /mnt/data/backup
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Full output
+      description: Everything the command printed, from the start of the run.
+      render: text
+    validations:
+      required: true
+
+  - type: dropdown
+    id: interrupted
+    attributes:
+      label: Was the run interrupted or resumed?
+      options:
+        - No, it ran in one go
+        - It was interrupted (crash, Ctrl+C, power loss, disk full) and not resumed yet
+        - It was interrupted and then resumed
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Additional context
+      description: Anything else, such as how much free space the disk had before starting.

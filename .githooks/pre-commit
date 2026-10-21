@@ -1,0 +1,10 @@
+#!/bin/sh
+# Fast checks only. A commit happens dozens of times a day, so anything slow
+# here gets bypassed with --no-verify and then protects nothing.
+#
+# Formatting is the one CI failure that's pure friction, so catch it here.
+cargo fmt --all --check || {
+  echo ""
+  echo "Formatting is off. Run: cargo fmt --all"
+  exit 1
+}

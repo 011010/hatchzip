@@ -1,0 +1,23 @@
+#!/bin/sh
+# The checks from CI, run before the push leaves your machine. Push is rare
+# enough to afford the wait, and a failure here is far cheaper than a red
+# build on main.
+#
+# This mirrors the `check` and `test` jobs in .github/workflows/ci.yml. If you
+# change one, change the other. The macOS and Windows test runs only happen
+# in CI.
+
+echo "Checking formatting..."
+cargo fmt --all --check || {
+  echo ""
+  echo "Formatting is off. Run: cargo fmt --all"
+  exit 1
+}
+
+echo "Running clippy..."
+cargo clippy --all-targets --locked -- -D warnings || exit 1
+
+echo "Running tests..."
+cargo test --locked || exit 1
+
+echo "All checks passed."

@@ -1,0 +1,25 @@
+name: Feature request
+description: Propose a new feature or an improvement
+labels: ['enhancement']
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: |
+        The task you were trying to accomplish and where HatchZip fell short.
+        A concrete example is more useful than a general description.
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: Proposed solution
+      description: How you would expect the feature to work.
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds or other approaches you have tried.
