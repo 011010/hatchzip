@@ -1,52 +1,16 @@
-//! End to end tests: build real archives, run the real binary, compare what
-//! lands on disk with what went into the archive.
+//! End to end tests for ZIP, the reference format: build real archives, run
+//! the real binary, compare what lands on disk with what went in.
 
-use std::collections::BTreeMap;
+mod common;
+
 use std::fs;
 use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
 
+use common::*;
 use tempfile::TempDir;
 use zip::CompressionMethod;
 use zip::write::{SimpleFileOptions, ZipWriter};
-
-type Files = BTreeMap<String, Vec<u8>>;
-
-fn noise(len: usize, seed: u64) -> Vec<u8> {
-    // xorshift, so the data doesn't compress and tests stay deterministic.
-    let mut x = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
-    (0..len)
-        .map(|_| {
-            x ^= x << 13;
-            x ^= x >> 7;
-            x ^= x << 17;
-            x as u8
-        })
-        .collect()
-}
-
-fn sample_files() -> Files {
-    let mut files = Files::new();
-    files.insert("game/data/big.pak".into(), noise(3_000_000, 1));
-    files.insert("game/data/small.pak".into(), noise(70_000, 2));
-    files.insert(
-        "game/config/settings.ini".into(),
-        b"volume=7\n".repeat(20_000),
-    );
-    files.insert("game/empty.txt".into(), Vec::new());
-    files.insert(
-        "game/naïve résumé/日本語.txt".into(),
-        "unicode names survive\n".into(),
-    );
-    for i in 0..40 {
-        files.insert(
-            format!("game/many/file{i:02}.txt"),
-            format!("file number {i}\n").into(),
-        );
-    }
-    files
-}
 
 fn build_zip(dir: &Path, files: &Files) -> PathBuf {
     build_zip_with(dir, files, false)
@@ -75,76 +39,6 @@ fn build_zip_with(dir: &Path, files: &Files, zip64: bool) -> PathBuf {
     let path = dir.join("game.zip");
     fs::write(&path, zip.finish().unwrap().into_inner()).unwrap();
     path
-}
-
-fn hatchzip(args: &[&str], env: &[(&str, &str)]) -> Output {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_hatchzip"));
-    cmd.args(args);
-    for (k, v) in env {
-        cmd.env(k, v);
-    }
-    cmd.output().unwrap()
-}
-
-fn extract(archive: &Path, out: &Path, env: &[(&str, &str)]) -> Output {
-    let (a, o) = (archive.to_str().unwrap(), out.to_str().unwrap());
-    hatchzip(&["extract", a, "-o", o, "--keep-free", "0", "--yes"], env)
-}
-
-fn assert_ok(out: &Output) {
-    assert!(
-        out.status.success(),
-        "hatchzip failed\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
-fn assert_tree(out: &Path, files: &Files) {
-    for (name, data) in files {
-        let got = fs::read(out.join(name)).unwrap_or_else(|e| panic!("{name}: {e}"));
-        assert!(got == *data, "{name} differs from the archive");
-    }
-    assert!(out.join("game/saves").is_dir());
-    let mut stray = Vec::new();
-    for entry in walk(out) {
-        let rel = entry
-            .strip_prefix(out)
-            .unwrap()
-            .to_string_lossy()
-            .replace('\\', "/");
-        if entry.is_file() && !files.contains_key(&rel) {
-            stray.push(rel);
-        }
-    }
-    assert!(stray.is_empty(), "unexpected files left behind: {stray:?}");
-}
-
-fn walk(dir: &Path) -> Vec<PathBuf> {
-    let mut all = Vec::new();
-    for e in fs::read_dir(dir).unwrap() {
-        let p = e.unwrap().path();
-        if p.is_dir() {
-            all.extend(walk(&p));
-        }
-        all.push(p);
-    }
-    all
-}
-
-fn side_files(archive: &Path) -> [PathBuf; 2] {
-    let s = archive.as_os_str().to_string_lossy();
-    [
-        PathBuf::from(format!("{s}.hatchzip")),
-        PathBuf::from(format!("{s}.hatchzip-tail")),
-    ]
-}
-
-fn assert_consumed(archive: &Path) {
-    assert!(!archive.exists(), "the archive should be gone");
-    for p in side_files(archive) {
-        assert!(!p.exists(), "{} should be cleaned up", p.display());
-    }
 }
 
 #[test]
