@@ -1,5 +1,4 @@
 User-agent: *
 Allow: /
 
-# Uncomment once the domain is decided, with the real domain in place of DOMAIN:
-# Sitemap: https://DOMAIN/sitemap.xml
+Sitemap: https://xevrion.github.io/hatchzip/sitemap.xml

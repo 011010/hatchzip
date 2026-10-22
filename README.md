@@ -19,6 +19,10 @@
   <img src="https://img.shields.io/badge/platform-linux%20%7C%20windows%20%7C%20macos-blue.svg" alt="Linux, Windows and macOS" />
 </p>
 
+<p align="center">
+  <img src="docs/media/hatchzip.gif" width="720" alt="HatchZip extracts the last part of the archive, then cuts it off the archive file, so the disk never holds the archive and all the files at once" />
+</p>
+
 A 180 GB game download that unpacks to 200 GB needs 380 GB of disk with WinRAR, 7-Zip or `unzip`, because the archive and everything extracted from it have to exist at the same time. HatchZip needs a little over 200 GB. It extracts the archive from the end and cuts each finished part off the archive file as it goes, so the space the archive gives back is reused for the next files.
 
 It checks that the extraction will fit before it changes anything, keeps a safety margin of free space the whole way through, and can be stopped or crash at any moment and pick up where it left off. It reads ZIP, 7z, tar and split archives.
