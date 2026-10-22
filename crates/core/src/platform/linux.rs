@@ -4,7 +4,8 @@ use std::os::fd::AsRawFd;
 use std::path::Path;
 
 pub use super::unix::{
-    allocated_bytes, apply_mode, create_symlink, open_exclusive, same_filesystem, sync_dir,
+    allocated_bytes, apply_mode, create_symlink, name_problem, open_exclusive, same_filesystem,
+    sync_dir,
 };
 
 /// One `syncfs` per batch replaces an fsync per file, which matters when a

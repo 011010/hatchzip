@@ -66,6 +66,12 @@ pub struct Journal {
     /// one is in progress. It always belongs to the highest uncommitted unit.
     #[serde(default)]
     pub resume: Option<Resume>,
+    /// Set while `restore` turns the archive back into a normal one: the
+    /// bytes it overwrites below `committed_len`, so that an interrupted
+    /// restore can be undone by putting them back and cutting off whatever it
+    /// appended.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restoring: Option<Vec<(u64, Vec<u8>)>>,
 }
 
 pub struct Paths {
@@ -128,6 +134,7 @@ impl Journal {
             committed_len: storage.original_len(),
             links: Vec::new(),
             resume: None,
+            restoring: None,
         };
         journal.save(paths)?;
         Ok(journal)

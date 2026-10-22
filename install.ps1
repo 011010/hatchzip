@@ -69,10 +69,18 @@ try {
         Write-Host "Added $Dir to your PATH. New terminals pick it up automatically."
     }
 
+    # `hz` is the short name, unless some other program already answers to it.
+    $otherHz = Get-Command hz -ErrorAction SilentlyContinue | Where-Object { $_.Source -ne (Join-Path $Dir 'hz.exe') }
+    if ($otherHz) {
+        Write-Host "Skipping the short name hz: $($otherHz.Source) already uses it."
+    } else {
+        Copy-Item -Force (Join-Path $Dir 'hatchzip.exe') (Join-Path $Dir 'hz.exe')
+    }
+
     $version = & (Join-Path $Dir 'hatchzip.exe') --version
     Write-Host ''
     Write-Host "$version installed." -ForegroundColor Green
-    Write-Host 'Try: hatchzip check some-archive.zip'
+    Write-Host 'Try: hatchzip check some-archive.zip (or the short name: hz check some-archive.zip)'
     Write-Host "Tab completion: add '. $Dir\hatchzip-completion.ps1' to your `$PROFILE."
 } finally {
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue

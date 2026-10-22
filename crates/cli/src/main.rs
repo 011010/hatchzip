@@ -12,11 +12,14 @@ use anyhow::{Context, Result, bail};
 use clap::{CommandFactory, Parser};
 use indicatif::{ProgressBar, ProgressStyle};
 
-use cli::{Cli, Command, EXIT_DAMAGED, EXIT_FAILURE, EXIT_NO_SPACE, EXIT_PAUSED, Space, Target};
-use hatchzip_core::archive::Kind;
+use cli::{
+    Cli, Command, EXIT_DAMAGED, EXIT_FAILURE, EXIT_NO_SPACE, EXIT_PASSWORD, EXIT_PAUSED, Secret,
+    Space, Target,
+};
+use hatchzip_core::archive::{Kind, PasswordNeeded, WrongPassword};
 use hatchzip_core::engine::{self, Job, Outcome, Progress, Run};
 use hatchzip_core::human;
-use hatchzip_core::journal::Journal;
+use hatchzip_core::journal::{Journal, Paths};
 use hatchzip_core::session::{self, State, display_name, locate};
 
 const ERROR: Style = AnsiColor::Red.on_default().bold();
@@ -41,11 +44,51 @@ fn main() -> ExitCode {
     QUIET.store(cli.quiet, Ordering::Relaxed);
     match run(cli.command) {
         Ok(code) => code,
+        Err(e) if e.is::<PasswordNeeded>() || e.is::<WrongPassword>() => {
+            eprintln!("{ERROR}error:{ERROR:#} {e:#}");
+            if !io::stdin().is_terminal() {
+                eprintln!(
+                    "Pass --password or set HATCHZIP_PASSWORD when not running in a terminal."
+                );
+            }
+            ExitCode::from(EXIT_PASSWORD)
+        }
         Err(e) => {
             eprintln!("{ERROR}error:{ERROR:#} {e:#}");
             ExitCode::from(EXIT_FAILURE)
         }
     }
+}
+
+/// Opens the archive, asking for a password when it is encrypted and none
+/// was given, and again (up to three times) when one was wrong. Nothing is
+/// touched until the password is proven.
+fn open(
+    archive: &Path,
+    output: Option<std::path::PathBuf>,
+    writable: bool,
+    secret: Secret,
+) -> Result<(State, Paths)> {
+    let (primary, paths) = locate(archive)?;
+    let mut tries = 0;
+    let (state, _) = session::open_encrypted(
+        &primary,
+        &paths,
+        output,
+        writable,
+        secret.password,
+        |wrong| {
+            if wrong {
+                eprintln!("{ERROR}Wrong password.{ERROR:#}");
+            }
+            tries += 1;
+            if tries > 3 || !io::stdin().is_terminal() {
+                return None;
+            }
+            rpassword::prompt_password("Password: ").ok()
+        },
+    )?;
+    Ok((state, paths))
 }
 
 fn run(command: Command) -> Result<ExitCode> {
@@ -57,10 +100,22 @@ fn run(command: Command) -> Result<ExitCode> {
             yes,
         } => extract(target, verify_first, space, yes),
         Command::Check { target, space } => check(target, space),
-        Command::List { archive } => list(&archive),
-        Command::Test { archive } => test_command(&archive),
+        Command::List { archive, secret } => list(&archive, secret),
+        Command::Test { archive, secret } => test_command(&archive, secret),
+        Command::Restore { archive } => restore(&archive),
         Command::Completions { shell } => {
-            clap_complete::generate(shell, &mut Cli::command(), "hatchzip", &mut io::stdout());
+            // Named after however we were called, so `hz completions bash`
+            // completes the `hz` alias.
+            let name = std::env::args_os()
+                .next()
+                .and_then(|a| {
+                    Path::new(&a)
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().into_owned())
+                })
+                .filter(|n| n == "hz")
+                .unwrap_or_else(|| "hatchzip".into());
+            clap_complete::generate(shell, &mut Cli::command(), name, &mut io::stdout());
             Ok(ExitCode::SUCCESS)
         }
         Command::Man => {
@@ -77,12 +132,12 @@ fn report(job: &Job, out: &Path, journal: Option<&Journal>, keep_free: u64) -> R
     let left = job.remaining_size();
 
     say!(
-        "{BOLD}{}{BOLD:#}  {} {}, unpacks to {} in {} entries",
+        "{BOLD}{}{BOLD:#}  {} {}, unpacks to {} in {}",
         display_name(job),
         human(job.storage.original_len()),
         job.format_name,
         human(journal.map_or(left, |j| j.total_size)),
-        job.item_count()
+        entries(job.item_count())
     );
     if let Some(j) = journal {
         say!(
@@ -119,8 +174,8 @@ fn report(job: &Job, out: &Path, journal: Option<&Journal>, keep_free: u64) -> R
 }
 
 fn check(target: Target, space: Space) -> Result<ExitCode> {
-    let (primary, paths) = locate(&target.archive)?;
-    let fits = match session::open(&primary, &paths, target.output, false)? {
+    let (state, _) = open(&target.archive, target.output, false, target.secret)?;
+    let fits = match state {
         State::Fresh(job, out) => report(&job, &out, None, space.keep_free)?,
         State::Resume(job, journal) => {
             report(&job, &journal.output, Some(&journal), space.keep_free)?
@@ -137,9 +192,8 @@ fn check(target: Target, space: Space) -> Result<ExitCode> {
     })
 }
 
-fn list(archive: &Path) -> Result<ExitCode> {
-    let (primary, paths) = locate(archive)?;
-    let job = match session::open(&primary, &paths, None, false)? {
+fn list(archive: &Path, secret: Secret) -> Result<ExitCode> {
+    let job = match open(archive, None, false, secret)?.0 {
         State::Fresh(job, _) | State::Resume(job, _) => job,
         State::Orphan(_) => bail!("nothing is left in this archive"),
     };
@@ -156,8 +210,8 @@ fn list(archive: &Path) -> Result<ExitCode> {
         }
     }
     say!(
-        "{DIM}{} entries, {} unpacked, {} {} archive{DIM:#}",
-        job.item_count(),
+        "{DIM}{}, {} unpacked, {} {} archive{DIM:#}",
+        entries(job.item_count()),
         human(job.remaining_size()),
         human(job.storage.original_len()),
         job.format_name
@@ -165,24 +219,50 @@ fn list(archive: &Path) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn test_command(archive: &Path) -> Result<ExitCode> {
-    let (primary, paths) = locate(archive)?;
-    if paths.exists() {
-        bail!("this archive is half extracted; run extract to continue it");
-    }
-    let job = Job::open(&primary, false)?;
+fn test_command(archive: &Path, secret: Secret) -> Result<ExitCode> {
+    let job = match open(archive, None, false, secret)?.0 {
+        State::Fresh(job, _) => job,
+        _ => bail!("this archive is half extracted; run extract to continue it"),
+    };
     if let Err(e) = verify(&job) {
         eprintln!("{ERROR}error:{ERROR:#} {e:#}");
         return Ok(ExitCode::from(EXIT_DAMAGED));
     }
-    say!("{GOOD}All {} entries are intact.{GOOD:#}", job.item_count());
+    match job.item_count() {
+        1 => say!("{GOOD}The one entry is intact.{GOOD:#}"),
+        n => say!("{GOOD}All {n} entries are intact.{GOOD:#}"),
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn entries(n: usize) -> String {
+    if n == 1 {
+        "1 entry".into()
+    } else {
+        format!("{n} entries")
+    }
+}
+
+fn restore(archive: &Path) -> Result<ExitCode> {
+    let r = hatchzip_core::restore::restore(archive)?;
+    let name = r.archive.file_name().unwrap_or_default().to_string_lossy();
+    say!(
+        "{GOOD}Restored.{GOOD:#} {name} is a normal {} archive again, holding the {} not yet \
+         extracted.",
+        r.format,
+        entries(r.entries)
+    );
+    say!(
+        "The entries already extracted stay in {}.",
+        r.output.display()
+    );
     Ok(ExitCode::SUCCESS)
 }
 
 fn extract(target: Target, verify_first: bool, space: Space, yes: bool) -> Result<ExitCode> {
     let keep_free = space.keep_free;
-    let (primary, paths) = locate(&target.archive)?;
-    let (job, journal) = match session::open(&primary, &paths, target.output, true)? {
+    let (state, paths) = open(&target.archive, target.output, true, target.secret)?;
+    let (job, journal) = match state {
         State::Orphan(journal) => {
             engine::finish_orphaned(&journal, &paths)?;
             say!(

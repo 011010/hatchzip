@@ -1,0 +1,465 @@
+//! The main window: open an archive, see what is in it and whether it fits,
+//! then extract or test it.
+
+use std::cell::{Cell, RefCell};
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::sync::{Arc, Mutex};
+
+use anyhow::Result;
+use hatchzip_core::engine::Job;
+use hatchzip_core::human;
+use hatchzip_core::session::{self, State, display_name};
+use slint::{CloseRequestResponse, ComponentHandle, ModelRc};
+
+use crate::backend::Drops;
+use crate::entries::{self, Entries, Entry};
+use crate::runner::Runner;
+use crate::task::Task;
+use crate::text::{self, gb_text, parse_gb, plan_view};
+use crate::work::{Request, sentence};
+use crate::{AboutWindow, MainWindow, Mode, PlanView, Screen, TaskView};
+
+pub const DEFAULT_KEEP_FREE: u64 = 2_000_000_000;
+const REPO: &str = "https://github.com/xevrion/hatchzip";
+
+/// An archive opened read-only for looking at. It takes no lock, so another
+/// HatchZip can still extract it; extraction reopens it for writing.
+struct Loaded {
+    name: String,
+    summary: String,
+    entries: Vec<Entry>,
+    mode: Mode,
+    output: PathBuf,
+    job: Option<Job>,
+}
+
+fn load(archive: &Path) -> Result<Loaded> {
+    let (primary, paths) = session::locate(archive)?;
+    let state = session::open(&primary, &paths, None, false, None)?;
+    let (job, mode, output, total, left) = match state {
+        State::Fresh(job, out) => {
+            let total = job.remaining_size();
+            (Some(job), Mode::Fresh, out, total, None)
+        }
+        State::Resume(job, journal) => {
+            let left = job.remaining_size();
+            (
+                Some(job),
+                Mode::Resume,
+                journal.output,
+                journal.total_size,
+                Some(left),
+            )
+        }
+        State::Orphan(journal) => (None, Mode::Orphan, journal.output, journal.total_size, None),
+    };
+    let name = match &job {
+        Some(j) => display_name(j),
+        None => primary
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned(),
+    };
+    let mut summary = Vec::new();
+    if let Some(j) = &job {
+        summary.push(format!("{} archive", j.format_name.to_uppercase()));
+        // Half extracted, the list only holds what is left to do.
+        match left {
+            None => {
+                summary.push(human(j.storage.original_len()));
+                summary.push(text::plural(j.item_count(), "entry", "entries"));
+            }
+            Some(left) => summary.push(format!(
+                "{} in {} left",
+                human(left),
+                text::plural(j.item_count(), "entry", "entries")
+            )),
+        }
+    }
+    summary.push(format!("unpacks to {}", human(total)));
+    Ok(Loaded {
+        name,
+        summary: summary.join(" \u{b7} "),
+        entries: job.as_ref().map(entries::collect).unwrap_or_default(),
+        mode,
+        output,
+        job,
+    })
+}
+
+/// Plan threads lock it while they work; the UI thread only swaps in a new
+/// one, so it never waits on them.
+type SharedJob = Arc<Mutex<Option<Job>>>;
+
+struct App {
+    ui: slint::Weak<MainWindow>,
+    runner: Rc<Runner>,
+    archive: RefCell<Option<PathBuf>>,
+    name: RefCell<String>,
+    mode: Cell<Mode>,
+    output: RefCell<PathBuf>,
+    keep_free: Cell<u64>,
+    /// Shared with the threads that work out the space plan.
+    job: RefCell<SharedJob>,
+    /// Bumped by every open and every plan request, so a slow answer to an
+    /// old question never overwrites a newer one.
+    generation: Cell<u64>,
+    about: RefCell<Option<AboutWindow>>,
+}
+
+thread_local! {
+    static APP: RefCell<Option<Rc<App>>> = const { RefCell::new(None) };
+}
+
+/// Runs `f` on the UI thread with the app, from any thread.
+fn post(f: impl FnOnce(&Rc<App>) + Send + 'static) {
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(app) = APP.with(|a| a.borrow().clone()) {
+            f(&app);
+        }
+    });
+}
+
+pub fn run(archive: Option<PathBuf>, drops: Rc<Drops>) -> Result<()> {
+    let ui = build(archive, &drops)?;
+    // Opening only reads, so it needn't wait for the first frame like a
+    // task does; this only arms the switch to software drawing.
+    crate::backend::when_drawn(ui.window(), || {});
+    ui.run()?;
+    APP.with(|a| a.borrow_mut().take());
+    Ok(())
+}
+
+/// The window with everything wired up, and `archive` opening in the
+/// background. Shown but not run, so a test can drive it.
+pub fn build(archive: Option<PathBuf>, drops: &Drops) -> Result<MainWindow> {
+    let ui = MainWindow::new()?;
+    ui.set_keep_free(gb_text(DEFAULT_KEEP_FREE).into());
+
+    let weak = ui.as_weak();
+    let runner = Runner::install(move |task: &Task| {
+        if let Some(ui) = weak.upgrade() {
+            ui.set_task(task.view.clone());
+        }
+    });
+    let app = Rc::new(App {
+        ui: ui.as_weak(),
+        runner,
+        archive: RefCell::new(None),
+        name: RefCell::new(String::new()),
+        mode: Cell::new(Mode::Fresh),
+        output: RefCell::new(PathBuf::new()),
+        keep_free: Cell::new(DEFAULT_KEEP_FREE),
+        job: RefCell::default(),
+        generation: Cell::new(0),
+        about: RefCell::new(None),
+    });
+    APP.with(|a| *a.borrow_mut() = Some(app.clone()));
+
+    wire(&ui, &app);
+    *drops.on_drop.borrow_mut() = Some(Box::new(|path| {
+        if let Some(app) = APP.with(|a| a.borrow().clone()) {
+            app.open(path);
+        }
+    }));
+    let weak = ui.as_weak();
+    *drops.on_hover.borrow_mut() = Some(Box::new(move |on| {
+        if let Some(ui) = weak.upgrade() {
+            ui.set_drop_hover(on);
+        }
+    }));
+
+    if let Some(path) = archive {
+        app.open(path);
+    }
+    ui.show()?;
+    Ok(ui)
+}
+
+/// The About window, once it has been opened.
+pub fn about_window() -> Option<AboutWindow> {
+    APP.with(|a| {
+        a.borrow()
+            .as_ref()
+            .and_then(|app| app.about.borrow().as_ref().map(|w| w.clone_strong()))
+    })
+}
+
+fn wire(ui: &MainWindow, app: &Rc<App>) {
+    let a = app.clone();
+    ui.on_open_archive(move || a.pick_archive());
+    let a = app.clone();
+    ui.on_change_output(move || a.pick_output());
+    let a = app.clone();
+    ui.on_keep_free_edited(move |text| a.keep_free_edited(&text));
+    let a = app.clone();
+    ui.on_extract(move || a.extract());
+    let a = app.clone();
+    ui.on_test(move || a.test());
+    let a = app.clone();
+    ui.on_pause(move || a.runner.pause());
+    let a = app.clone();
+    ui.on_resume(move || a.runner.retry());
+    let a = app.clone();
+    ui.on_open_folder(move || a.open_folder());
+    let a = app.clone();
+    ui.on_back(move || a.back());
+    let a = app.clone();
+    ui.on_about(move || a.show_about());
+    let a = app.clone();
+    ui.on_quit(move || {
+        if a.runner.may_close() {
+            let _ = slint::quit_event_loop();
+        }
+    });
+    let a = app.clone();
+    ui.window().on_close_requested(move || {
+        if a.runner.may_close() {
+            let _ = slint::quit_event_loop();
+            CloseRequestResponse::HideWindow
+        } else {
+            CloseRequestResponse::KeepWindowShown
+        }
+    });
+}
+
+impl App {
+    fn ui(&self) -> MainWindow {
+        self.ui.upgrade().expect("the main window outlives its app")
+    }
+
+    fn next_generation(&self) -> u64 {
+        self.generation.set(self.generation.get() + 1);
+        self.generation.get()
+    }
+
+    fn open(&self, path: PathBuf) {
+        if self.runner.running() {
+            return;
+        }
+        let ui = self.ui();
+        let generation = self.next_generation();
+        *self.runner.task.borrow_mut() = None;
+        ui.set_task(TaskView::default());
+        ui.set_plan(PlanView::default());
+        ui.set_entries(ModelRc::default());
+        ui.set_archive_name(
+            path.file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .as_ref()
+                .into(),
+        );
+        ui.set_screen(Screen::Loading);
+        *self.archive.borrow_mut() = Some(path.clone());
+        *self.job.borrow_mut() = SharedJob::default();
+
+        std::thread::spawn(move || {
+            let result = load(&path);
+            post(move |app| app.loaded(generation, result));
+        });
+    }
+
+    fn loaded(&self, generation: u64, result: Result<Loaded>) {
+        if generation != self.generation.get() {
+            return;
+        }
+        let ui = self.ui();
+        let loaded = match result {
+            Ok(l) => l,
+            Err(e) => {
+                ui.set_error_text(sentence(&format!("{e:#}")).into());
+                ui.set_screen(Screen::Error);
+                return;
+            }
+        };
+        ui.set_archive_name(loaded.name.as_str().into());
+        ui.set_summary(loaded.summary.into());
+        ui.set_entries(ModelRc::new(Entries(loaded.entries)));
+        ui.set_mode(loaded.mode);
+        ui.set_output(loaded.output.display().to_string().into());
+        ui.set_screen(Screen::Opened);
+        *self.name.borrow_mut() = loaded.name;
+        self.mode.set(loaded.mode);
+        *self.output.borrow_mut() = loaded.output;
+        *self.job.borrow_mut() = Arc::new(Mutex::new(loaded.job));
+        self.refresh_plan();
+    }
+
+    fn refresh_plan(&self) {
+        let ui = self.ui();
+        if self.mode.get() == Mode::Orphan {
+            ui.set_plan(PlanView {
+                ready: true,
+                fits: true,
+                verdict: "Nothing is left to extract.".into(),
+                ..Default::default()
+            });
+            return;
+        }
+        let generation = self.next_generation();
+        let job = self.job.borrow().clone();
+        let out = self.output.borrow().clone();
+        let resuming = self.mode.get() == Mode::Resume;
+        let keep_free = self.keep_free.get();
+        std::thread::spawn(move || {
+            let job = job.lock().expect("plan thread panicked");
+            let Some(job) = job.as_ref() else { return };
+            let view = match session::plan(job, &out, resuming, keep_free) {
+                Ok(plan) => plan_view(&plan),
+                Err(e) => PlanView {
+                    ready: true,
+                    verdict: sentence(&format!("{e:#}")).into(),
+                    ..Default::default()
+                },
+            };
+            post(move |app| {
+                if generation == app.generation.get() {
+                    app.ui().set_plan(view);
+                }
+            });
+        });
+    }
+
+    fn keep_free_edited(&self, text: &str) {
+        let ui = self.ui();
+        match parse_gb(text) {
+            Some(bytes) => {
+                ui.set_keep_free_valid(true);
+                self.keep_free.set(bytes);
+                self.refresh_plan();
+            }
+            None => ui.set_keep_free_valid(false),
+        }
+    }
+
+    fn pick_archive(&self) {
+        if self.runner.running() {
+            return;
+        }
+        let ui = self.ui();
+        let mut dialog = rfd::AsyncFileDialog::new()
+            .set_title("Open an archive")
+            .add_filter("Archives", &["zip", "7z", "tar", "exe", "001"])
+            .add_filter("All files", &["*"])
+            .set_parent(&ui.window().window_handle());
+        if let Some(dir) = self.archive.borrow().as_ref().and_then(|a| a.parent()) {
+            dialog = dialog.set_directory(dir);
+        }
+        let _ = slint::spawn_local(async move {
+            if let Some(file) = dialog.pick_file().await
+                && let Some(app) = APP.with(|a| a.borrow().clone())
+            {
+                app.open(file.path().to_path_buf());
+            }
+        });
+    }
+
+    fn pick_output(&self) {
+        let ui = self.ui();
+        let current = self.output.borrow().clone();
+        // The default output doesn't exist yet; its parent always does, and
+        // looking that up needs no disk access on this thread.
+        let start = current.parent();
+        let mut dialog = rfd::AsyncFileDialog::new()
+            .set_title("Extract to")
+            .set_parent(&ui.window().window_handle());
+        if let Some(dir) = start {
+            dialog = dialog.set_directory(dir);
+        }
+        let _ = slint::spawn_local(async move {
+            if let Some(dir) = dialog.pick_folder().await
+                && let Some(app) = APP.with(|a| a.borrow().clone())
+            {
+                app.set_output(dir.path().to_path_buf());
+            }
+        });
+    }
+
+    fn set_output(&self, dir: PathBuf) {
+        self.ui().set_output(dir.display().to_string().into());
+        *self.output.borrow_mut() = dir;
+        self.refresh_plan();
+    }
+
+    fn extract(&self) {
+        let Some(archive) = self.archive.borrow().clone() else {
+            return;
+        };
+        let ui = self.ui();
+        let output = self.output.borrow().clone();
+        let request = Request::Extract {
+            archive,
+            // A resume must go where it started; the journal knows where.
+            output: (self.mode.get() == Mode::Fresh).then(|| output.clone()),
+            keep_free: self.keep_free.get(),
+            verify_first: ui.get_verify_first(),
+        };
+        // On Windows our read handle would block the exclusive one the
+        // extraction takes, so the worker closes it first, waiting out any
+        // plan still being worked out.
+        let job = self.job.replace(SharedJob::default());
+        self.runner.start_after(
+            move || drop(job.lock().map(|mut j| j.take())),
+            Task::extract(&self.name.borrow(), Some(&output)),
+            request,
+        );
+    }
+
+    fn test(&self) {
+        let Some(archive) = self.archive.borrow().clone() else {
+            return;
+        };
+        self.runner
+            .start(Task::test(&self.name.borrow()), Request::Test { archive });
+    }
+
+    fn back(&self) {
+        let was_test = self
+            .runner
+            .task
+            .borrow()
+            .as_ref()
+            .is_some_and(|t| t.view.is_test);
+        // A test only reads, so the archive is as it was.
+        if was_test {
+            *self.runner.task.borrow_mut() = None;
+            self.ui().set_task(TaskView::default());
+            return;
+        }
+        // Anything else may have changed the archive: look again.
+        if let Some(path) = self.archive.borrow().clone() {
+            self.open(path);
+        }
+    }
+
+    fn open_folder(&self) {
+        let task = self.runner.task.borrow();
+        if let Some(out) = task.as_ref().and_then(|t| t.output.clone()) {
+            let _ = open::that_detached(out);
+        }
+    }
+
+    fn show_about(&self) {
+        let mut about = self.about.borrow_mut();
+        if about.is_none() {
+            let Ok(w) = AboutWindow::new() else { return };
+            w.set_version(env!("CARGO_PKG_VERSION").into());
+            w.on_open_link(|| {
+                let _ = open::that_detached(REPO);
+            });
+            let weak = w.as_weak();
+            w.on_dismiss(move || {
+                if let Some(w) = weak.upgrade() {
+                    let _ = w.hide();
+                }
+            });
+            *about = Some(w);
+        }
+        if let Some(w) = about.as_ref() {
+            let _ = w.show();
+        }
+    }
+}

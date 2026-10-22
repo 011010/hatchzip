@@ -385,3 +385,46 @@ fn a_half_streamed_entry_is_finished_even_if_punching_stops_working() {
     assert_tree(&out, &files);
     assert_consumed(&archive);
 }
+
+/// An entry with holes punched in it can't go back into an archive, so
+/// restore refuses before changing anything, and extraction still finishes.
+/// Before the first punch there is nothing to refuse.
+#[test]
+fn restore_refuses_an_archive_with_a_partly_freed_entry() {
+    let files = files();
+    for (point, after, refused) in [
+        ("stream-after-punch", "1", true),
+        ("stream-after-journal", "0", true),
+        ("stream-after-sync", "0", false),
+    ] {
+        let tmp = TempDir::new().unwrap();
+        let archive = build_zip(tmp.path(), &files, CompressionMethod::Stored);
+        let out = tmp.path().join("out");
+        let crash = stream_env(&[
+            ("HATCHZIP_CRASH_AT", point),
+            ("HATCHZIP_CRASH_AFTER", after),
+        ]);
+        assert!(!extract(&archive, &out, &crash).status.success());
+
+        let before = fs::read(&archive).unwrap();
+        let journal = fs::read(&side_files(&archive)[0]).unwrap();
+        let run = hatchzip(&["restore", archive.to_str().unwrap()], &[]);
+        if !refused {
+            assert_ok(&run);
+            continue;
+        }
+        assert!(!run.status.success(), "{point}: restore should refuse");
+        let stderr = String::from_utf8_lossy(&run.stderr);
+        assert!(stderr.contains("can't be restored"), "{point}: {stderr}");
+        assert_eq!(
+            fs::read(&archive).unwrap(),
+            before,
+            "{point}: archive changed"
+        );
+        assert_eq!(fs::read(&side_files(&archive)[0]).unwrap(), journal);
+
+        assert_ok(&extract(&archive, &out, &stream_env(&[])));
+        assert_tree(&out, &files);
+        assert_consumed(&archive);
+    }
+}

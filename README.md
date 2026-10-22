@@ -114,6 +114,16 @@ hatchzip extract game.zip
 
 The same applies after a crash, a power cut, or running out of space because something else filled the disk. Progress lives in two small files next to the archive, `game.zip.hatchzip` and `game.zip.hatchzip-tail`. **Do not delete them while an extraction is unfinished**: they hold the archive's index, which is no longer inside the archive itself.
 
+### Stop for good
+
+To give up on an unfinished extraction instead, restore the archive:
+
+```sh
+hatchzip restore game.zip
+```
+
+What is left of the archive becomes a normal archive again, holding exactly the entries not yet extracted, which 7-Zip, WinRAR, `unzip` or `tar` open as usual. The files already extracted stay in the output folder. Restore only appends a new index, so it needs only the free space that index takes, and if it is interrupted, running it again finishes it.
+
 ### List and test
 
 ```sh
@@ -149,11 +159,11 @@ What it cannot protect against: if the download itself is damaged, the files bef
 
 | Format | Status | Freed in steps of |
 |---|---|---|
-| ZIP, ZIP64, self-extracting `.exe` ZIPs | Supported. Stored, Deflate, Zstandard and bzip2 are covered by tests; Deflate64, LZMA, XZ and PPMd are decoded by the same library but not yet tested here. | One file |
-| 7z, solid and non-solid | Supported. LZMA2, 7-Zip's default, is tested with archives from 7-Zip itself; LZMA, BCJ filters, bzip2, Deflate, PPMd and Zstandard are decoded by the same library but not yet tested here. | One solid block |
+| ZIP, ZIP64, self-extracting `.exe` ZIPs | Supported. Tested: Stored, Deflate, Deflate64, bzip2, LZMA, PPMd and Zstandard, including archives made by 7-Zip itself, and entries past the 4 GiB mark. XZ is decoded by the same library but not yet tested here. | One file |
+| 7z, solid and non-solid | Supported. Tested with archives made by 7-Zip 25.01: LZMA2 (its default), LZMA, BCJ with LZMA2, bzip2, Deflate and PPMd. Zstandard is decoded by the same library but not yet tested here. | One solid block |
 | tar (uncompressed) | Supported, including long names, symlinks and hard links | One file |
 | Split archives (`.001`, `.002`, ...) of ZIP or 7z, as 7-Zip makes them | Supported | One file or block; each volume is deleted once emptied |
-| Password-protected ZIP or 7z | Refused before extraction, planned | |
+| Password-protected ZIP (ZipCrypto and AES) and 7z (AES, including encrypted file lists) | Supported. HatchZip asks for the password, or takes `--password` or `HATCHZIP_PASSWORD`, and proves it on one file before anything is deleted. It is never saved, so a resumed run asks again. | Same as unencrypted |
 | `.tar.gz`, `.tar.zst`, `.tar.xz` | Refused before extraction, planned. One continuous stream, which needs resumable checkpoints inside it; see [the format notes](docs/formats.md). | |
 | One huge solid 7z block | Works, but needs free space for the whole block, as the table above shows. Freeing space inside a block is the same planned technique. | |
 | RAR, native split ZIP (`.z01`) | Planned | |

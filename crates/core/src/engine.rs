@@ -79,16 +79,25 @@ pub struct Job {
 }
 
 impl Job {
-    pub fn open(path: &Path, writable: bool) -> Result<Self> {
+    /// `password` is only needed for encrypted archives. A missing one shows
+    /// up as [`archive::PasswordNeeded`], from here or from
+    /// [`Job::check_password`].
+    pub fn open(path: &Path, writable: bool, password: Option<&str>) -> Result<Self> {
         let storage = Arc::new(Storage::open(path, writable)?);
-        let opened = archive::open(&storage, None)?;
+        let opened = archive::open(&storage, None, password)?;
         let top = storage.original_len();
         Self::build(storage, opened, top)
     }
 
     /// Reopens an archive a previous run already started on. A read-only
-    /// open leaves a pending truncation for the next writable one.
-    pub fn resume(journal: &Journal, tail: Arc<Tail>, writable: bool) -> Result<Self> {
+    /// open leaves a pending truncation for the next writable one. The
+    /// password is never stored, so an encrypted archive needs it again.
+    pub fn resume(
+        journal: &Journal,
+        tail: Arc<Tail>,
+        writable: bool,
+        password: Option<&str>,
+    ) -> Result<Self> {
         let storage = Arc::new(Storage::from_parts(&journal.parts, writable)?);
         let current = storage.current_len()?;
         if current < journal.committed_len {
@@ -101,7 +110,7 @@ impl Job {
             // The last run committed a batch but stopped before truncating.
             storage.set_len(journal.committed_len)?;
         }
-        let opened = archive::open(&storage, Some((&journal.format, tail)))?;
+        let opened = archive::open(&storage, Some((&journal.format, tail)), password)?;
         let mut job = Self::build(storage, opened, journal.committed_len)?;
         if let Some(r) = &journal.resume {
             // Only the highest uncommitted unit is ever streamed, so a point
@@ -125,6 +134,14 @@ impl Job {
 
         let mut seen = HashSet::new();
         for item in units.iter().flat_map(|u| &u.items) {
+            for part in item.path.iter() {
+                if let Some(why) = platform::name_problem(&part.to_string_lossy()) {
+                    bail!(
+                        "'{}' can't be created here: {why}. Nothing was changed",
+                        item.path.display()
+                    );
+                }
+            }
             // Case-insensitive filesystems would let two items race for one
             // file inside a parallel batch.
             if item.kind != Kind::Dir && !seen.insert(item.path.to_string_lossy().to_lowercase()) {
@@ -163,6 +180,37 @@ impl Job {
         })
     }
 
+    pub fn encrypted(&self) -> bool {
+        self.units.iter().any(|u| u.encrypted)
+    }
+
+    /// Proves the password before anything is deleted: decrypts the smallest
+    /// encrypted unit, which checks its CRC, up to a limit so a huge solid
+    /// block doesn't stall. ZipCrypto accepts about one wrong password in 256
+    /// at first sight; reading the data catches those.
+    pub fn check_password(&self) -> Result<()> {
+        const ENOUGH: u64 = 64 * 1024 * 1024;
+        let Some(unit) = self
+            .units
+            .iter()
+            .filter(|u| u.encrypted)
+            .min_by_key(|u| u.size())
+        else {
+            return Ok(());
+        };
+        let mut worker = self.format.worker(1)?;
+        let mut sink = ProbeSink {
+            left: ENOUGH,
+            buf: vec![0; BUF_SIZE],
+        };
+        match worker.extract(unit, &mut sink) {
+            Ok(()) => Ok(()),
+            Err(e) if e.chain().any(|c| c.is::<ProbeDone>()) => Ok(()),
+            Err(e) if e.chain().any(|c| c.is::<archive::PasswordNeeded>()) => Err(e),
+            Err(_) => Err(archive::WrongPassword.into()),
+        }
+    }
+
     pub fn item_count(&self) -> usize {
         self.units.iter().map(|u| u.items.len()).sum()
     }
@@ -184,7 +232,9 @@ impl Job {
     fn stream_of(&self, i: usize) -> Option<Stream> {
         let unit = &self.units[i];
         match unit.items.as_slice() {
-            [item] if item.kind == Kind::File => self.format.stream(unit).ok().flatten(),
+            [item] if item.kind == Kind::File && !unit.encrypted => {
+                self.format.stream(unit).ok().flatten()
+            }
             _ => None,
         }
     }
@@ -865,7 +915,7 @@ pub fn finish_orphaned(journal: &Journal, paths: &Paths) -> Result<()> {
     paths.remove()
 }
 
-fn make_links(links: &[Link], out: &Path) -> Result<()> {
+pub(crate) fn make_links(links: &[Link], out: &Path) -> Result<()> {
     for link in links {
         let path = out.join(&link.path);
         if let Some(parent) = path.parent() {
@@ -976,6 +1026,38 @@ impl DiskSink<'_> {
     }
 }
 
+/// Reads at most `left` bytes, then stops the decoder with [`ProbeDone`].
+struct ProbeSink {
+    left: u64,
+    buf: Vec<u8>,
+}
+
+#[derive(Debug)]
+struct ProbeDone;
+
+impl std::fmt::Display for ProbeDone {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("read enough to prove the password")
+    }
+}
+
+impl std::error::Error for ProbeDone {}
+
+impl Sink for ProbeSink {
+    fn item(&mut self, _item: &Item, data: &mut dyn Read) -> Result<()> {
+        loop {
+            let n = data.read(&mut self.buf)?;
+            if n == 0 {
+                return Ok(());
+            }
+            self.left = self.left.saturating_sub(n as u64);
+            if self.left == 0 {
+                return Err(ProbeDone.into());
+            }
+        }
+    }
+}
+
 struct VerifySink<'a> {
     on_bytes: &'a (dyn Fn(u64) + Sync),
     buf: Vec<u8>,
@@ -1020,7 +1102,7 @@ fn test_knob(name: &str) -> Option<u32> {
 
 /// Lets the test suite kill the process at the two moments that matter for
 /// crash safety: after a batch is on disk, and after it is journaled.
-fn crash_point(name: &str) {
+pub(crate) fn crash_point(name: &str) {
     if !cfg!(debug_assertions) || std::env::var("HATCHZIP_CRASH_AT").map_or(true, |v| v != name) {
         return;
     }

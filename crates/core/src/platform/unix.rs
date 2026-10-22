@@ -29,6 +29,12 @@ pub fn allocated_bytes(path: &Path) -> io::Result<u64> {
     Ok(fs::metadata(path)?.blocks() * 512)
 }
 
+/// Unix filesystems take any name without `/` or NUL, which path parsing
+/// already rules out.
+pub fn name_problem(_name: &str) -> Option<&'static str> {
+    None
+}
+
 pub fn sync_dir(dir: &Path) -> io::Result<()> {
     File::open(dir)?.sync_all()
 }

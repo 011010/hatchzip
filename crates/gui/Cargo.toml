@@ -1,0 +1,43 @@
+[package]
+name = "hatchzip-gui"
+description = "The HatchZip desktop app: extract huge archives in place, freeing the archive as it goes."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+[dependencies]
+hatchzip-core.workspace = true
+anyhow.workspace = true
+clap = { version = "4", features = ["derive"] }
+open = "5.4.5"
+rfd = "0.17.2"
+# No Qt backend: winit with FemtoVG (OpenGL) first and the software renderer
+# as the fallback for machines without a working GPU driver. `~1.18` because
+# `unstable-winit-030`, needed for files dropped on the window, may change in
+# any minor release.
+slint = { version = "~1.18.1", default-features = false, features = [
+    "std",
+    "compat-1-2",
+    "accessibility",
+    "backend-winit",
+    "renderer-femtovg",
+    "renderer-software",
+    "software-renderer-path",
+    "raw-window-handle-06",
+    "unstable-winit-030",
+] }
+
+[build-dependencies]
+slint-build = "~1.18.1"
+
+[dev-dependencies]
+# Drives the real windows headlessly, drawn by the software renderer. Must
+# match the version `slint` pins its internals to.
+i-slint-backend-testing = { version = "=1.18.1", features = ["renderer-software"] }
+png = "0.18.1"
+tempfile.workspace = true
+zip.workspace = true

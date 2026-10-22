@@ -1,0 +1,64 @@
+import { AboutSlint, Button, Palette } from "std-widgets.slint";
+import { Theme, Line } from "theme.slint";
+
+export component AboutWindow inherits Window {
+    in property <string> version;
+    callback open-link();
+    callback dismiss();
+
+    title: "About HatchZip";
+    preferred-width: 420px;
+    min-width: 380px;
+    background: Palette.background;
+
+    VerticalLayout {
+        padding: 24px;
+        spacing: 10px;
+        alignment: start;
+
+        Text {
+            text: "HatchZip";
+            font-size: 20px;
+            font-weight: 600;
+        }
+        Text {
+            text: "Version " + root.version;
+            color: Theme.muted;
+        }
+        Text {
+            text: "Extracts huge archives in place. The archive shrinks as your files come out, so you only need room for the files.";
+            wrap: word-wrap;
+        }
+        Text {
+            text: "Free software, under the MIT or Apache-2.0 license.";
+            color: Theme.muted;
+            wrap: word-wrap;
+        }
+        link := Text {
+            text: "github.com/xevrion/hatchzip";
+            color: Palette.accent-background;
+            TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    root.open-link();
+                }
+            }
+        }
+        Rectangle {
+            height: 6px;
+        }
+        Line { }
+        AboutSlint {
+            max-height: 160px;
+        }
+        HorizontalLayout {
+            alignment: end;
+            Button {
+                text: "Close";
+                clicked => {
+                    root.dismiss();
+                }
+            }
+        }
+    }
+}

@@ -83,6 +83,29 @@ The rule behind the table: **the journal never claims a file before it is durabl
 
 The test suites kill the process at steps 3 and 5 at many positions for every format, including split archives with volume boundaries inside entries, and check that the resumed run produces identical output (`crates/cli/tests/extract.rs`, `crates/cli/tests/formats.rs`).
 
+## Restore
+
+`hatchzip restore` turns a half-extracted archive back into a normal one, for when an extraction should stop for good. What is left of the archive is the first `committed_len` bytes of the original, and those hold exactly the units not yet extracted, untouched. Only the index is missing, so restore appends a new one after them. Nothing below `committed_len` moves, so it needs only the free space the new index takes. Files already extracted stay in the output folder.
+
+| Format | What restore writes |
+|---|---|
+| ZIP | A central directory holding the saved records of the entries left, copied as they are (their local header offsets still point at the same bytes), then the end records, with ZIP64 records when the original had them or the counts or offsets need them. A self-extractor stub stays in front, and the offsets keep whatever convention the original used. |
+| 7z | A new header for the blocks left, which are the first ones, right after the signature header, and their files. It is encoded by sevenz-rust2's writer, which is handed each block raw and writes nothing for it, since the block already sits where the writer would put it. The signature header is rewritten to point at the new header. |
+| tar | Entries for hard links already cut off whose targets are still in the archive, then the two zero blocks that end a tar archive. |
+
+The steps, in order:
+
+1. Undo any earlier restore that was interrupted (below), and finish a truncation a crashed run left pending, so the archive is exactly `committed_len` bytes.
+2. Build the new index in memory. Anything restore refuses, it refuses here, before writing.
+3. Delete output a crashed batch wrote but never committed, as a resume does, since those entries are still in the archive. Create the links the journal holds for entries already cut off.
+4. Save the journal with a `restoring` field holding the bytes step 6 will overwrite.
+5. Append the new index at `committed_len` and flush it.
+6. Overwrite the bytes below `committed_len` that change (only the 7z signature header) and flush them.
+7. Open the result as a fresh archive with the same parsers extraction uses and check that it lists exactly the entries left. If it doesn't, undo and stop.
+8. Delete the journal, then the saved tail.
+
+Any run that opens an archive whose journal has `restoring` set, `restore` and `extract` alike, first cuts the archive back to `committed_len`, including a volume the new index made longer than it was, and puts back the bytes the field holds. So an interrupted restore can be run again, or the extraction continued instead. The journal goes before the tail because a journal without its tail can't be loaded; a tail left behind by a crash between the two is never read again. The test suite kills restore after steps 5 and 6 for every format and checks both ways on (`crates/cli/tests/restore.rs`).
+
 ## The space check
 
 Before anything is written, HatchZip replays the whole extraction one unit at a time, counting what each step adds (the unit's files, each rounded up to a 4 KiB block) and what it frees (the unit's span in the archive), plus the saved tail written at the start. The highest point of that running total is the free space the run needs. HatchZip refuses to start unless the disk has that much free plus `--keep-free`.
