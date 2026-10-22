@@ -16,8 +16,9 @@ hatchzip-core = { path = "crates/core", version = "0.1.0" }
 anyhow = "1.0.104"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
-# Decoders only, plus AES for password-protected archives.
-sevenz-rust2 = { version = "0.24.1", default-features = false, features = ["aes256", "bzip2", "deflate", "ppmd", "zstd"] }
+# Decoders, AES for password-protected archives, and `compress` for the
+# writer that `restore` builds a new header with.
+sevenz-rust2 = { version = "0.24.1", default-features = false, features = ["aes256", "bzip2", "compress", "deflate", "ppmd", "zstd"] }
 tar = "0.4.46"
 tempfile = "3.27.0"
 zip = "9"

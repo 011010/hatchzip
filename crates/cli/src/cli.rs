@@ -33,10 +33,12 @@ Examples:
   hatchzip x game.7z.001 -o D:\\Games   Split archive, any part name works
   hatchzip extract big.zip --verify-first --keep-free 10GB
   hatchzip test game.7z                Check every file for damage, write nothing
+  hatchzip restore game.zip            Stopped halfway? Make what is left a normal archive
 
 Interrupted? Run the exact same command again. Progress lives in two files next \
 to the archive (<archive>.hatchzip and <archive>.hatchzip-tail); don't delete them \
-while an extraction is unfinished.
+while an extraction is unfinished. To stop for good instead, run restore: the \
+entries not yet extracted become a normal archive again.
 
 Exit status:
   0    success
@@ -114,6 +116,20 @@ pub enum Command {
         archive: PathBuf,
         #[command(flatten)]
         secret: Secret,
+    },
+    /// Turn a half-extracted archive back into a normal one other tools open
+    #[command(
+        long_about = "Turn a half-extracted archive back into a normal one other tools open.\n\n\
+            An interrupted extraction leaves the archive holding only the entries not yet \
+            extracted, with its index saved next to it, so only HatchZip can open it. restore \
+            appends a new index for those entries, so 7-Zip, WinRAR, unzip or tar open it \
+            again. Nothing is moved: it needs only the space the new index takes. Files \
+            already extracted stay in the output folder. If restore is interrupted, run it \
+            again, or run extract to continue extracting instead."
+    )]
+    Restore {
+        /// The half-extracted archive, or any part of a split archive
+        archive: PathBuf,
     },
     /// Print a shell completion script
     #[command(long_about = "Print a shell completion script.\n\n\

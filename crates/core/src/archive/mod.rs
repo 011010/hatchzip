@@ -8,7 +8,7 @@ mod tar;
 mod zip;
 
 use std::io::Read;
-use std::path::{Component, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -120,6 +120,38 @@ pub fn open(
         "tar" => tar::open(storage, tail),
         other => bail!("unknown archive format '{other}' in the journal"),
     }
+}
+
+/// What turns the first `keep` bytes of a half-extracted archive back into an
+/// archive any tool opens.
+pub struct NewIndex {
+    /// Written at `keep`.
+    pub append: Vec<u8>,
+    /// Written over bytes below `keep`: the 7z start header, which has to
+    /// point at the new header.
+    pub patches: Vec<(u64, Vec<u8>)>,
+}
+
+/// Builds the [`NewIndex`] for the entries that start below `keep`, from
+/// the tail an earlier run saved. `hard_links` are tar links already cut off
+/// whose targets are still in the archive.
+pub fn rebuild_index(
+    format: &str,
+    storage: &Storage,
+    tail: Arc<Tail>,
+    keep: u64,
+    hard_links: &[(&Path, &Path)],
+) -> Result<NewIndex> {
+    let (append, patches) = match format {
+        "zip" => (zip::rebuild_index(&tail, keep)?, Vec::new()),
+        "tar" => (tar::closing(hard_links)?, Vec::new()),
+        "7z" => {
+            let (header, start) = sevenz::rebuild_header(storage, tail, keep)?;
+            (header, vec![(0, start)])
+        }
+        other => bail!("unknown archive format '{other}' in the journal"),
+    };
+    Ok(NewIndex { append, patches })
 }
 
 fn sniff(storage: &Storage) -> Result<&'static str> {

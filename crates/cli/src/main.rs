@@ -102,6 +102,7 @@ fn run(command: Command) -> Result<ExitCode> {
         Command::Check { target, space } => check(target, space),
         Command::List { archive, secret } => list(&archive, secret),
         Command::Test { archive, secret } => test_command(&archive, secret),
+        Command::Restore { archive } => restore(&archive),
         Command::Completions { shell } => {
             // Named after however we were called, so `hz completions bash`
             // completes the `hz` alias.
@@ -240,6 +241,22 @@ fn entries(n: usize) -> String {
     } else {
         format!("{n} entries")
     }
+}
+
+fn restore(archive: &Path) -> Result<ExitCode> {
+    let r = hatchzip_core::restore::restore(archive)?;
+    let name = r.archive.file_name().unwrap_or_default().to_string_lossy();
+    say!(
+        "{GOOD}Restored.{GOOD:#} {name} is a normal {} archive again, holding the {} not yet \
+         extracted.",
+        r.format,
+        entries(r.entries)
+    );
+    say!(
+        "The entries already extracted stay in {}.",
+        r.output.display()
+    );
+    Ok(ExitCode::SUCCESS)
 }
 
 fn extract(target: Target, verify_first: bool, space: Space, yes: bool) -> Result<ExitCode> {

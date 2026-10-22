@@ -42,7 +42,7 @@ pub fn open(
     password: Option<&str>,
 ) -> Result<State> {
     if paths.exists() {
-        let (journal, tail) = Journal::load(paths)?;
+        let (mut journal, tail) = Journal::load(paths)?;
         if let Some(o) = &output
             && std::path::absolute(o)? != journal.output
         {
@@ -50,6 +50,15 @@ pub fn open(
                 "this archive is already half extracted into {}; finish it there first",
                 journal.output.display()
             );
+        }
+        if journal.restoring.is_some() {
+            if !writable {
+                bail!(
+                    "a restore of this archive was interrupted; run restore again to finish \
+                     it, or extract to continue extracting"
+                );
+            }
+            crate::restore::recover(&mut journal, paths)?;
         }
         if !journal.parts[0].0.exists() {
             return Ok(State::Orphan(journal));

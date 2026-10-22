@@ -12,7 +12,7 @@ Ticked when it is merged and tested, not when it is started.
 - [x] CI green on Linux, macOS and Windows (the full suite, crash tests included, on real Windows and macOS runners)
 - [x] Ctrl+C message tells the truth: it stops mid-file and redoes that batch on resume
 - [x] Extract into a folder that already has other files ("Extract here"), never overwriting one
-- [ ] `hatchzip restore`: turn a half-extracted archive back into a normal ZIP or 7z any tool can open
+- [x] `hatchzip restore`: turn a half-extracted archive back into a normal ZIP, 7z or tar any tool can open (tested with `unzip`, `7z` and GNU `tar`, including interrupted restores)
 - [ ] Decide whether `--verify-first` becomes the default
 - [x] Release workflow: static binaries for Windows x64, macOS arm64 and x64, Linux x64 and arm64, smoke tested, with SHA-256 checksums (dry run passed on all five)
 - [ ] First tagged release (`git tag v0.1.0 && git push --tags`)

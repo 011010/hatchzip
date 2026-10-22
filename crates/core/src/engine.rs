@@ -431,7 +431,7 @@ pub fn finish_orphaned(journal: &Journal, paths: &Paths) -> Result<()> {
     paths.remove()
 }
 
-fn make_links(links: &[Link], out: &Path) -> Result<()> {
+pub(crate) fn make_links(links: &[Link], out: &Path) -> Result<()> {
     for link in links {
         let path = out.join(&link.path);
         if let Some(parent) = path.parent() {
@@ -618,7 +618,7 @@ fn test_knob(name: &str) -> Option<u32> {
 
 /// Lets the test suite kill the process at the two moments that matter for
 /// crash safety: after a batch is on disk, and after it is journaled.
-fn crash_point(name: &str) {
+pub(crate) fn crash_point(name: &str) {
     if !cfg!(debug_assertions) || std::env::var("HATCHZIP_CRASH_AT").map_or(true, |v| v != name) {
         return;
     }
