@@ -153,7 +153,7 @@ What it cannot protect against: if the download itself is damaged, the files bef
 | 7z, solid and non-solid | Supported. LZMA2, 7-Zip's default, is tested with archives from 7-Zip itself; LZMA, BCJ filters, bzip2, Deflate, PPMd and Zstandard are decoded by the same library but not yet tested here. | One solid block |
 | tar (uncompressed) | Supported, including long names, symlinks and hard links | One file |
 | Split archives (`.001`, `.002`, ...) of ZIP or 7z, as 7-Zip makes them | Supported | One file or block; each volume is deleted once emptied |
-| Password-protected ZIP or 7z | Refused before extraction, planned | |
+| Password-protected ZIP (ZipCrypto and AES) and 7z (AES, including encrypted file lists) | Supported. HatchZip asks for the password, or takes `--password` or `HATCHZIP_PASSWORD`, and proves it on one file before anything is deleted. It is never saved, so a resumed run asks again. | Same as unencrypted |
 | `.tar.gz`, `.tar.zst`, `.tar.xz` | Refused before extraction, planned. One continuous stream, which needs resumable checkpoints inside it; see [the format notes](docs/formats.md). | |
 | One huge solid 7z block | Works, but needs free space for the whole block, as the table above shows. Freeing space inside a block is the same planned technique. | |
 | RAR, native split ZIP (`.z01`) | Planned | |

@@ -63,7 +63,8 @@ Ticked when it is merged and tested, not when it is started.
 - [ ] `.tar.zst`
 - [ ] RAR, starting with deleting finished volumes of `.partN.rar` sets
 - [ ] Native split ZIP (`.z01`, `.z02`, ..., `.zip`)
-- [ ] Password-protected ZIP and 7z
+- [x] Password-protected ZIP (ZipCrypto, AES) and 7z (AES, encrypted headers too), proven before anything is deleted, never saved (CLI; tested including a real `zip -P` archive through a terminal prompt)
+- [ ] Password dialog in the GUI
 - [ ] Tests for the codecs decoded but not yet tested: Deflate64, LZMA, XZ, PPMd in ZIP; LZMA, BCJ, bzip2, Deflate, PPMd, Zstandard in 7z
 
 ## Website

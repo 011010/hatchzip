@@ -93,6 +93,7 @@
 <li>Can be stopped with Ctrl+C, or crash, at any moment. Run the same command again and it picks up where it left off.</li>
 <li>Checks each file's CRC-32 as it extracts. A damaged file stops the run, and it stays in the archive.</li>
 <li>Never overwrites a file that is already there, so "extract here" is safe.</li>
+<li>Opens password-protected ZIP and 7z archives. It checks the password on one file before anything is deleted, and never saves it.</li>
 <li>Works on any filesystem that can shrink a file: ext4, btrfs, XFS, NTFS, APFS, and exFAT and FAT32 USB drives.</li>
 </ul>
 </section>
@@ -120,7 +121,7 @@
 <h2 id="limits">Limits</h2>
 <ul>
 <li>A 7z made with 7-Zip's default settings can be one solid block. HatchZip can only free it once all of it is out, so it needs free space for the whole block. <code>hatchzip check</code> tells you before anything changes.</li>
-<li>Compressed tar (<code>.tar.gz</code>, <code>.tar.zst</code>, <code>.tar.xz</code>), RAR and password-protected archives are not supported yet. They are refused before extraction.</li>
+<li>Compressed tar (<code>.tar.gz</code>, <code>.tar.zst</code>, <code>.tar.xz</code>) and RAR are not supported yet. They are refused before extraction.</li>
 <li>The archive is used up as it extracts. If the download itself is damaged, the files before the damage come out and the archive is partly gone. Use <code>--verify-first</code> when you can't download it again.</li>
 </ul>
 </section>
