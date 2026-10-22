@@ -1,0 +1,397 @@
+import { Button, CheckBox, LineEdit, ListView, Palette } from "std-widgets.slint";
+import { Theme, Line, VLine, FolderIcon, FileIcon, DropIcon } from "theme.slint";
+import { Phase, PlanView, TaskView, SpacePanel, Progress, Outcome, Busy, TaskButtons } from "parts.slint";
+
+export enum Screen { empty, loading, opened, error }
+
+// Fresh: nothing extracted yet. Resume: a run stopped halfway. Orphan: every
+// file is out and only the side files are left to clean up.
+export enum Mode { fresh, resume, orphan }
+
+export struct EntryRow {
+    name: string,
+    size: string,
+    dir: bool,
+}
+
+component EntryList inherits VerticalLayout {
+    in property <[EntryRow]> entries;
+    in property <string> empty-text;
+
+    Rectangle {
+        height: 30px;
+        background: Theme.panel;
+        HorizontalLayout {
+            padding-left: Theme.gutter;
+            padding-right: Theme.gutter;
+            spacing: 8px;
+            Text {
+                text: "Name";
+                color: Theme.muted;
+                font-size: Theme.small-size;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+            }
+            Text {
+                text: "Size";
+                color: Theme.muted;
+                font-size: Theme.small-size;
+                vertical-alignment: center;
+                horizontal-alignment: right;
+                width: 90px;
+            }
+        }
+    }
+    Line { }
+    if root.entries.length == 0: Rectangle {
+        Text {
+            text: root.empty-text;
+            color: Theme.muted;
+        }
+    }
+    if root.entries.length > 0: ListView {
+        for row in root.entries: Rectangle {
+            height: 26px;
+            HorizontalLayout {
+                padding-left: Theme.gutter;
+                padding-right: Theme.gutter;
+                spacing: 8px;
+                if row.dir: FolderIcon {
+                    y: (parent.height - self.height) / 2;
+                }
+                if !row.dir: FileIcon {
+                    y: (parent.height - self.height) / 2;
+                }
+                Text {
+                    text: row.name;
+                    overflow: elide;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+                Text {
+                    text: row.size;
+                    color: Theme.muted;
+                    vertical-alignment: center;
+                    horizontal-alignment: right;
+                    width: 90px;
+                }
+            }
+        }
+    }
+}
+
+export component MainWindow inherits Window {
+    in property <Screen> screen: Screen.empty;
+    in property <Mode> mode: Mode.fresh;
+    in property <bool> drop-hover;
+    in property <string> archive-name;
+    in property <string> summary;
+    in property <string> error-text;
+    in property <[EntryRow]> entries;
+    in property <PlanView> plan;
+    in property <string> output;
+    in-out property <string> keep-free: "2";
+    in property <bool> keep-free-valid: true;
+    in-out property <bool> verify-first;
+    in property <TaskView> task;
+
+    callback open-archive();
+    callback change-output();
+    callback keep-free-edited(string);
+    callback extract();
+    callback test();
+    callback pause();
+    callback resume();
+    callback open-folder();
+    callback back();
+    callback about();
+    callback quit();
+
+    title: root.screen == Screen.opened ? root.archive-name + " - HatchZip" : "HatchZip";
+    preferred-width: 980px;
+    preferred-height: 660px;
+    min-width: 640px;
+    min-height: 440px;
+    background: Palette.background;
+
+    MenuBar {
+        Menu {
+            title: "File";
+            MenuItem {
+                title: "Open...";
+                shortcut: @keys(Control + O);
+                enabled: root.task.phase == Phase.idle || root.task.phase == Phase.done;
+                activated => {
+                    root.open-archive();
+                }
+            }
+            MenuSeparator { }
+            MenuItem {
+                title: "Quit";
+                shortcut: @keys(Control + Q);
+                activated => {
+                    root.quit();
+                }
+            }
+        }
+        Menu {
+            title: "Help";
+            MenuItem {
+                title: "About HatchZip";
+                activated => {
+                    root.about();
+                }
+            }
+        }
+    }
+
+    if root.screen == Screen.empty: Rectangle {
+        background: root.drop-hover ? Theme.panel : transparent;
+        VerticalLayout {
+            alignment: center;
+            spacing: 14px;
+            HorizontalLayout {
+                alignment: center;
+                DropIcon { }
+            }
+            Text {
+                text: root.drop-hover ? "Drop to open" : "Open an archive to extract it in place";
+                font-size: 16px;
+                font-weight: 600;
+                horizontal-alignment: center;
+            }
+            Text {
+                text: "The archive shrinks as your files come out, so you only need room for the files.";
+                color: Theme.muted;
+                horizontal-alignment: center;
+                wrap: word-wrap;
+            }
+            HorizontalLayout {
+                alignment: center;
+                padding-top: 6px;
+                Button {
+                    text: "Open archive";
+                    primary: true;
+                    clicked => {
+                        root.open-archive();
+                    }
+                }
+            }
+            Text {
+                text: "Or drop it on this window. ZIP, 7z and tar, split or not.";
+                color: Theme.faint;
+                font-size: Theme.small-size;
+                horizontal-alignment: center;
+            }
+        }
+    }
+
+    if root.screen == Screen.loading: VerticalLayout {
+        alignment: center;
+        HorizontalLayout {
+            alignment: center;
+            Busy {
+                text: "Opening " + root.archive-name;
+            }
+        }
+    }
+
+    if root.screen == Screen.error: VerticalLayout {
+        alignment: center;
+        spacing: 12px;
+        padding: 40px;
+        Text {
+            text: "Could not open " + root.archive-name;
+            font-size: 16px;
+            font-weight: 600;
+            horizontal-alignment: center;
+        }
+        Text {
+            text: root.error-text;
+            color: Theme.muted;
+            wrap: word-wrap;
+            horizontal-alignment: center;
+        }
+        HorizontalLayout {
+            alignment: center;
+            padding-top: 6px;
+            Button {
+                text: "Open another";
+                clicked => {
+                    root.open-archive();
+                }
+            }
+        }
+    }
+
+    if root.screen == Screen.opened: VerticalLayout {
+        // Header: what this archive is.
+        VerticalLayout {
+            padding-left: Theme.gutter;
+            padding-right: Theme.gutter;
+            padding-top: 16px;
+            padding-bottom: 14px;
+            spacing: 4px;
+            Text {
+                text: root.archive-name;
+                font-size: Theme.title-size;
+                font-weight: 600;
+                overflow: elide;
+            }
+            Text {
+                text: root.summary;
+                color: Theme.muted;
+                overflow: elide;
+            }
+        }
+        Line { }
+
+        HorizontalLayout {
+            vertical-stretch: 1;
+            EntryList {
+                horizontal-stretch: 1;
+                entries: root.entries;
+                empty-text: root.mode == Mode.orphan ? "Every file is already out." : "This archive is empty.";
+            }
+            VLine { }
+            SpacePanel {
+                width: 260px;
+                plan: root.plan;
+            }
+        }
+        Line { }
+
+        // Footer: settings and the buttons, or the run in progress.
+        if root.task.phase == Phase.idle: VerticalLayout {
+            padding: Theme.gutter;
+            padding-top: 14px;
+            spacing: 12px;
+
+            if root.mode == Mode.resume || root.mode == Mode.orphan: Text {
+                text: root.mode == Mode.resume ? "This archive is partly extracted into " + root.output + ". Continue?" : "Every file is already in " + root.output + ". Only cleanup is left.";
+                wrap: word-wrap;
+                font-weight: 600;
+            }
+
+            if root.mode == Mode.fresh: HorizontalLayout {
+                spacing: 8px;
+                Text {
+                    text: "Extract to";
+                    vertical-alignment: center;
+                    width: 80px;
+                }
+                LineEdit {
+                    text: root.output;
+                    read-only: true;
+                    horizontal-stretch: 1;
+                }
+                Button {
+                    text: "Change";
+                    clicked => {
+                        root.change-output();
+                    }
+                }
+            }
+
+            if root.mode != Mode.orphan: HorizontalLayout {
+                spacing: 8px;
+                Text {
+                    text: "Keep free";
+                    vertical-alignment: center;
+                    width: 80px;
+                }
+                LineEdit {
+                    width: 72px;
+                    text <=> root.keep-free;
+                    input-type: decimal;
+                    horizontal-alignment: right;
+                    edited(text) => {
+                        root.keep-free-edited(text);
+                    }
+                }
+                Text {
+                    text: root.keep-free-valid ? "GB" : "GB, as a number like 2 or 0.5";
+                    vertical-alignment: center;
+                    color: root.keep-free-valid ? Palette.foreground : Theme.danger;
+                }
+                Rectangle {
+                    width: 16px;
+                }
+                if root.mode == Mode.fresh: CheckBox {
+                    text: "Check every file before deleting anything";
+                    checked <=> root.verify-first;
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 8px;
+                Text {
+                    text: root.mode == Mode.fresh ? "HatchZip deletes " + root.archive-name + " as it extracts. If it stops, open it again to continue." : "";
+                    color: Theme.muted;
+                    font-size: Theme.small-size;
+                    wrap: word-wrap;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+                if root.mode == Mode.fresh: Button {
+                    text: "Test";
+                    clicked => {
+                        root.test();
+                    }
+                }
+                Button {
+                    text: root.mode == Mode.fresh ? "Extract" : (root.mode == Mode.resume ? "Continue" : "Finish");
+                    primary: true;
+                    enabled: root.mode == Mode.orphan || (root.plan.ready && root.plan.fits && root.keep-free-valid);
+                    clicked => {
+                        root.extract();
+                    }
+                }
+            }
+        }
+
+        if root.task.phase != Phase.idle: VerticalLayout {
+            padding: Theme.gutter;
+            padding-top: 14px;
+            spacing: 10px;
+            Text {
+                text: root.task.heading;
+                font-weight: 600;
+                overflow: elide;
+            }
+            if root.task.phase == Phase.checking: Busy {
+                text: "Checking";
+            }
+            if root.task.phase == Phase.verifying || root.task.phase == Phase.working || root.task.phase == Phase.pausing || root.task.phase == Phase.paused: Progress {
+                task: root.task;
+            }
+            HorizontalLayout {
+                spacing: 12px;
+                Outcome {
+                    task: root.task;
+                    horizontal-stretch: 1;
+                    vertical-alignment: center;
+                }
+                TaskButtons {
+                    task: root.task;
+                    closable: false;
+                    pause => {
+                        root.pause();
+                    }
+                    resume => {
+                        root.resume();
+                    }
+                    open-folder => {
+                        root.open-folder();
+                    }
+                    back => {
+                        root.back();
+                    }
+                }
+            }
+        }
+    }
+}

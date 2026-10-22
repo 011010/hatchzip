@@ -1,0 +1,260 @@
+//! Drives the real windows without a display, through Slint's testing
+//! backend and its software renderer: open an archive by dropping it, watch
+//! the space plan react, test it, extract it, and run a right-click task.
+//!
+//! With `HATCHZIP_GUI_SHOTS=<dir>` every state is also saved as a PNG, in
+//! light and dark, for checking the look by eye.
+//!
+//! The backend can be installed once per process, so this is one test.
+
+use std::cell::Cell;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::time::{Duration, Instant};
+
+use hatchzip_gui::args::TaskKind;
+use hatchzip_gui::backend::Drops;
+use hatchzip_gui::{
+    Palette, Phase, PlanView, Screen, TaskView, TaskWindow, main_window, task_window,
+};
+use i_slint_backend_testing::{TestingBackend, TestingBackendOptions};
+use slint::language::ColorScheme;
+use slint::{ComponentHandle, LogicalSize, Timer, TimerMode};
+
+fn make_zip(dir: &Path) -> PathBuf {
+    let path = dir.join("northwind.zip");
+    let mut w = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+    let opts = zip::write::SimpleFileOptions::default();
+    for d in ["Northwind/", "Northwind/bin/", "Northwind/data/"] {
+        w.add_directory(d, opts).unwrap();
+    }
+    w.start_file("Northwind/README.txt", opts).unwrap();
+    w.write_all(b"Northwind demo build.\n").unwrap();
+    w.start_file("Northwind/bin/northwind", opts).unwrap();
+    w.write_all(&vec![7u8; 300_000]).unwrap();
+    for i in 0..30 {
+        w.start_file(format!("Northwind/data/level{i:02}.pak"), opts)
+            .unwrap();
+        w.write_all(&vec![i as u8; 40_000 + i * 1000]).unwrap();
+    }
+    w.finish().unwrap();
+    path
+}
+
+/// Runs the event loop until `done` holds, so worker threads can report in.
+fn wait_until(what: &str, done: impl Fn() -> bool + 'static) {
+    let ok = Rc::new(Cell::new(false));
+    let start = Instant::now();
+    let timer = Timer::default();
+    let o = ok.clone();
+    timer.start(TimerMode::Repeated, Duration::from_millis(5), move || {
+        if done() {
+            o.set(true);
+            let _ = slint::quit_event_loop();
+        } else if start.elapsed() > Duration::from_secs(30) {
+            let _ = slint::quit_event_loop();
+        }
+    });
+    // Hiding the last window also asks the loop to quit, so a stale quit can
+    // end a run early; go round again until the condition or the deadline.
+    while !ok.get() && start.elapsed() <= Duration::from_secs(30) {
+        slint::run_event_loop().unwrap();
+    }
+    assert!(ok.get(), "timed out waiting for {what}");
+}
+
+fn shot(window: &slint::Window, name: &str) {
+    let Some(dir) = std::env::var_os("HATCHZIP_GUI_SHOTS") else {
+        return;
+    };
+    // Let state changes finish animating, as a person would see them.
+    let start = Instant::now();
+    wait_until("a moment", move || {
+        start.elapsed() > Duration::from_millis(400)
+    });
+    let image = window.take_snapshot().expect("rendering a snapshot");
+    let path = Path::new(&dir).join(format!("{name}.png"));
+    let file = std::io::BufWriter::new(std::fs::File::create(&path).unwrap());
+    let mut png = png::Encoder::new(file, image.width(), image.height());
+    png.set_color(png::ColorType::Rgba);
+    png.set_depth(png::BitDepth::Eight);
+    png.write_header()
+        .unwrap()
+        .write_image_data(image.as_bytes())
+        .unwrap();
+}
+
+fn main_window_flow(scheme: ColorScheme, tag: &str) {
+    let dir = tempfile::tempdir().unwrap();
+    let archive = make_zip(dir.path());
+    let drops = Drops::default();
+    let ui = main_window::build(None, &drops).unwrap();
+    ui.global::<Palette>().set_color_scheme(scheme);
+    ui.window().set_size(LogicalSize::new(980.0, 660.0));
+    assert_eq!(ui.get_screen(), Screen::Empty);
+    shot(ui.window(), &format!("{tag}-1-empty"));
+
+    // A file dropped on the window opens it.
+    (drops.on_drop.borrow().as_ref().unwrap())(archive.clone());
+    let w = ui.as_weak();
+    wait_until("the archive to open", move || {
+        let ui = w.unwrap();
+        ui.get_screen() == Screen::Opened && ui.get_plan().ready
+    });
+    assert!(ui.get_plan().fits, "{:?}", ui.get_plan().verdict);
+    assert!(
+        ui.get_summary().contains("35 entries"),
+        "{}",
+        ui.get_summary()
+    );
+    assert_eq!(
+        ui.get_output(),
+        dir.path().join("northwind").display().to_string()
+    );
+    shot(ui.window(), &format!("{tag}-2-opened"));
+
+    // Asking to keep 100 TB free makes it not fit, and says by how much.
+    ui.set_keep_free("100000".into());
+    ui.invoke_keep_free_edited("100000".into());
+    let w = ui.as_weak();
+    wait_until("the plan to say no", move || !w.unwrap().get_plan().fits);
+    assert!(
+        ui.get_plan()
+            .verdict
+            .starts_with("Not enough space. Free up ")
+    );
+    shot(ui.window(), &format!("{tag}-3-no-fit"));
+
+    ui.invoke_keep_free_edited("not a number".into());
+    assert!(!ui.get_keep_free_valid());
+    ui.set_keep_free("0".into());
+    ui.invoke_keep_free_edited("0".into());
+    assert!(ui.get_keep_free_valid());
+    let w = ui.as_weak();
+    wait_until("the plan to fit again", move || w.unwrap().get_plan().fits);
+
+    ui.invoke_test();
+    let w = ui.as_weak();
+    wait_until("the test", move || {
+        w.unwrap().get_task().phase == Phase::Done
+    });
+    assert!(ui.get_task().message.contains("All 35 entries are intact"));
+    shot(ui.window(), &format!("{tag}-4-tested"));
+    ui.invoke_back();
+    assert_eq!(ui.get_task().phase, Phase::Idle);
+
+    ui.set_verify_first(true);
+    ui.invoke_extract();
+    let w = ui.as_weak();
+    wait_until("the extraction", move || {
+        w.unwrap().get_task().phase == Phase::Done
+    });
+    let out = dir.path().join("northwind");
+    assert!(!archive.exists(), "the archive is gone once extracted");
+    assert_eq!(
+        std::fs::read(out.join("Northwind/data/level03.pak")).unwrap(),
+        vec![3u8; 43_000]
+    );
+    assert_eq!(
+        ui.get_task().message,
+        format!("Done. Everything is in {}.", out.display())
+    );
+    shot(ui.window(), &format!("{tag}-5-done"));
+
+    ui.invoke_about();
+    let about = main_window::about_window().expect("About opens from the menu");
+    about.global::<Palette>().set_color_scheme(scheme);
+    about.window().set_size(LogicalSize::new(420.0, 470.0));
+    shot(about.window(), &format!("{tag}-6-about"));
+    about.hide().unwrap();
+    ui.hide().unwrap();
+}
+
+fn task_window_flow(scheme: ColorScheme, tag: &str) {
+    let dir = tempfile::tempdir().unwrap();
+    let archive = make_zip(dir.path());
+    let (ui, start) = task_window::build(TaskKind::ExtractTo, archive.clone()).unwrap();
+    ui.global::<Palette>().set_color_scheme(scheme);
+    ui.window().set_size(LogicalSize::new(480.0, 230.0));
+    // Nothing happens before the window says go.
+    assert_eq!(ui.get_task().phase, Phase::Checking);
+    assert!(archive.exists());
+    start();
+    let w = ui.as_weak();
+    wait_until("the task", move || {
+        w.unwrap().get_task().phase == Phase::Done
+    });
+    assert!(dir.path().join("northwind/Northwind/README.txt").exists());
+    assert!(!archive.exists());
+    shot(ui.window(), &format!("{tag}-7-task-done"));
+    ui.hide().unwrap();
+}
+
+/// States a real run passes through too quickly to catch, drawn from the
+/// values they would hold, only for looking at.
+fn task_window_states(scheme: ColorScheme, tag: &str) {
+    if std::env::var_os("HATCHZIP_GUI_SHOTS").is_none() {
+        return;
+    }
+    let ui = TaskWindow::new().unwrap();
+    ui.global::<Palette>().set_color_scheme(scheme);
+    ui.window().set_size(LogicalSize::new(480.0, 230.0));
+    ui.show().unwrap();
+    let base = TaskView {
+        heading: "Extracting Northwind-1.4.7z".into(),
+        detail: "Into /home/sam/Games/Northwind-1.4".into(),
+        fraction: 0.42,
+        amounts: "Extracted 12.6 GB of 30.0 GB".into(),
+        archive_left: "Archive left on disk: 17.1 GB".into(),
+        ..Default::default()
+    };
+    ui.set_task(TaskView {
+        phase: Phase::Working,
+        rate: "182.4 MB/s, 2 min left".into(),
+        ..base.clone()
+    });
+    shot(ui.window(), &format!("{tag}-8-task-working"));
+    ui.set_task(TaskView {
+        phase: Phase::Paused,
+        message: "Paused. Nothing is lost: resume now or later, and it picks up where it stopped."
+            .into(),
+        ..base.clone()
+    });
+    shot(ui.window(), &format!("{tag}-9-task-paused"));
+    ui.set_plan(PlanView {
+        ready: true,
+        free: "21.3 GB".into(),
+        needed: "30.4 GB".into(),
+        keep: "2.0 GB".into(),
+        note: "Most of this is one solid block, which can only be freed once all of it is out. \
+               Archives packed with smaller blocks need far less."
+            .into(),
+        ..Default::default()
+    });
+    ui.set_task(TaskView {
+        phase: Phase::NoSpace,
+        heading: "Not enough space for Northwind-1.4.7z".into(),
+        can_retry: true,
+        message: "Not enough space. Free up 11.1 GB more.".into(),
+        ..base
+    });
+    shot(ui.window(), &format!("{tag}-10-task-no-space"));
+    ui.hide().unwrap();
+}
+
+#[test]
+fn windows_end_to_end() {
+    slint::platform::set_platform(Box::new(TestingBackend::new(TestingBackendOptions {
+        mock_time: false,
+        threading: true,
+        renderer_name: Some("software".into()),
+    })))
+    .unwrap();
+
+    for (scheme, tag) in [(ColorScheme::Light, "light"), (ColorScheme::Dark, "dark")] {
+        main_window_flow(scheme, tag);
+        task_window_flow(scheme, tag);
+        task_window_states(scheme, tag);
+    }
+}

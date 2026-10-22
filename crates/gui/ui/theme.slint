@@ -1,0 +1,78 @@
+import { Palette } from "std-widgets.slint";
+
+// The few colors the style's palette doesn't have. Everything else comes from
+// `Palette`, so the app follows the system's light or dark setting.
+export global Theme {
+    out property <bool> dark: Palette.color-scheme == ColorScheme.dark;
+    out property <brush> line: dark ? #ffffff1f : #0000001a;
+    out property <brush> muted: dark ? #ffffffa6 : #000000a0;
+    out property <brush> faint: dark ? #ffffff66 : #00000066;
+    out property <brush> danger: dark ? #ff99a4 : #c42b1c;
+    out property <brush> panel: dark ? #ffffff08 : #00000005;
+    out property <brush> track: dark ? #ffffff1f : #00000014;
+    out property <length> gutter: 20px;
+    out property <length> title-size: 18px;
+    out property <length> small-size: 12px;
+}
+
+export component Line inherits Rectangle {
+    height: 1px;
+    background: Theme.line;
+}
+
+export component VLine inherits Rectangle {
+    width: 1px;
+    background: Theme.line;
+}
+
+// A thin bar: how much of what is free the run uses.
+export component Meter inherits Rectangle {
+    in property <float> value;
+    in property <bool> bad;
+    height: 6px;
+    border-radius: 3px;
+    background: Theme.track;
+    Rectangle {
+        x: 0;
+        // A sliver stays visible for runs too small to show at scale.
+        width: root.value > 0 ? max(root.height, parent.width * clamp(root.value, 0, 1)) : 0;
+        border-radius: 3px;
+        background: root.bad ? Theme.danger : Palette.accent-background;
+    }
+}
+
+// Outline icons drawn as paths, so they stay sharp at any scale and render
+// the same in the software renderer.
+export component FolderIcon inherits Path {
+    width: 16px;
+    height: 16px;
+    viewbox-width: 16;
+    viewbox-height: 16;
+    stroke: Theme.muted;
+    stroke-width: 1.1px;
+    fill: transparent;
+    commands: "M 1.5 3.5 L 6 3.5 L 7.5 5 L 14.5 5 L 14.5 13 L 1.5 13 Z";
+}
+
+export component FileIcon inherits Path {
+    width: 16px;
+    height: 16px;
+    viewbox-width: 16;
+    viewbox-height: 16;
+    stroke: Theme.faint;
+    stroke-width: 1.1px;
+    fill: transparent;
+    commands: "M 3.5 1.5 L 9.5 1.5 L 12.5 4.5 L 12.5 14.5 L 3.5 14.5 Z M 9.5 1.5 L 9.5 4.5 L 12.5 4.5";
+}
+
+// A tray with a downward arrow: the empty state's drop target.
+export component DropIcon inherits Path {
+    width: 40px;
+    height: 40px;
+    viewbox-width: 40;
+    viewbox-height: 40;
+    stroke: Theme.faint;
+    stroke-width: 1.5px;
+    fill: transparent;
+    commands: "M 20 6 L 20 24 M 13 17 L 20 24 L 27 17 M 6 24 L 6 33 L 34 33 L 34 24";
+}
