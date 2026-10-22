@@ -20,11 +20,9 @@ Ticked when it is merged and tested, not when it is started.
 - [ ] Test `install.ps1` on a real Windows machine against a published release
 - [x] Archive over 4 GB with 64-bit offsets, including a crash and resume past 4 GiB (sparse test archive)
 - [ ] Real run on a big real-world archive and on a real Windows machine
-- [ ] Demo video: `unzip` fails on a nearly full disk, HatchZip finishes (1920x1080, 60 fps, for X)
-- [ ] Demo GIF at the top of the README
+- [ ] Demo GIF at the top of the README: `unzip` fails on a nearly full disk, HatchZip finishes
 - [ ] Publish to crates.io so `cargo install hatchzip` works
 - [ ] Open a handful of `good first issue` issues from the lists below
-- [ ] Launch posts: X thread, Show HN, r/rust, r/DataHoarder, r/linux
 
 ## GUI, like WinRAR and 7-Zip
 
