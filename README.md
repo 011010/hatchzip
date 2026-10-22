@@ -159,8 +159,8 @@ What it cannot protect against: if the download itself is damaged, the files bef
 
 | Format | Status | Freed in steps of |
 |---|---|---|
-| ZIP, ZIP64, self-extracting `.exe` ZIPs | Supported. Stored, Deflate, Zstandard and bzip2 are covered by tests; Deflate64, LZMA, XZ and PPMd are decoded by the same library but not yet tested here. | One file |
-| 7z, solid and non-solid | Supported. LZMA2, 7-Zip's default, is tested with archives from 7-Zip itself; LZMA, BCJ filters, bzip2, Deflate, PPMd and Zstandard are decoded by the same library but not yet tested here. | One solid block |
+| ZIP, ZIP64, self-extracting `.exe` ZIPs | Supported. Tested: Stored, Deflate, Deflate64, bzip2, LZMA, PPMd and Zstandard, including archives made by 7-Zip itself, and entries past the 4 GiB mark. XZ is decoded by the same library but not yet tested here. | One file |
+| 7z, solid and non-solid | Supported. Tested with archives made by 7-Zip 25.01: LZMA2 (its default), LZMA, BCJ with LZMA2, bzip2, Deflate and PPMd. Zstandard is decoded by the same library but not yet tested here. | One solid block |
 | tar (uncompressed) | Supported, including long names, symlinks and hard links | One file |
 | Split archives (`.001`, `.002`, ...) of ZIP or 7z, as 7-Zip makes them | Supported | One file or block; each volume is deleted once emptied |
 | Password-protected ZIP (ZipCrypto and AES) and 7z (AES, including encrypted file lists) | Supported. HatchZip asks for the password, or takes `--password` or `HATCHZIP_PASSWORD`, and proves it on one file before anything is deleted. It is never saved, so a resumed run asks again. | Same as unencrypted |

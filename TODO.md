@@ -18,7 +18,8 @@ Ticked when it is merged and tested, not when it is started.
 - [ ] First tagged release (`git tag v0.1.0 && git push --tags`)
 - [x] One-line install: `install.sh` for Linux and macOS (tested locally, including a tampered checksum and uninstall), `install.ps1` for Windows
 - [ ] Test `install.ps1` on a real Windows machine against a published release
-- [ ] Real run on an archive over 4 GB (64-bit ZIP offsets) and on a real Windows machine
+- [x] Archive over 4 GB with 64-bit offsets, including a crash and resume past 4 GiB (sparse test archive)
+- [ ] Real run on a big real-world archive and on a real Windows machine
 - [ ] Demo video: `unzip` fails on a nearly full disk, HatchZip finishes (1920x1080, 60 fps, for X)
 - [ ] Demo GIF at the top of the README
 - [ ] Publish to crates.io so `cargo install hatchzip` works
@@ -27,15 +28,19 @@ Ticked when it is merged and tested, not when it is started.
 
 ## GUI, like WinRAR and 7-Zip
 
-- [ ] Split the code into a workspace: `core` library, `cli`, `gui`
-- [ ] Choose the GUI framework
-- [ ] Open an archive and browse its contents as a tree, with sizes
-- [ ] Show the space plan before extracting: fits or not, how much is needed, free after
-- [ ] Extraction window with progress, pause, resume and cancel
-- [ ] Detect half-extracted archives and offer to continue
-- [ ] Drag and drop archives onto the window
-- [ ] Settings: kept-free space, verify first, default output folder
-- [ ] Light and dark theme following the system
+- [x] Split the code into a workspace: `core` library, `cli`, `shell`, `gui`
+- [x] Choose the GUI framework: Slint (native, no web view, software renderer when there is no GPU)
+- [x] Open an archive and browse its contents (a flat list with sizes; a folder tree is still to do)
+- [x] Show the space plan before extracting: fits or not, how much is needed, free after
+- [x] Task windows for right-click jobs with progress, speed, time left, pause and resume
+- [x] Detect half-extracted archives and offer to continue
+- [x] Drag and drop archives onto the window (Windows, macOS, X11; Wayland has no file drops in winit yet)
+- [x] Settings in the window: kept-free space, verify first, output folder
+- [ ] Remember settings between runs
+- [ ] Contents as a folder tree
+- [x] Light and dark theme following the system
+- [x] Falls back to the software renderer when OpenGL won't start (tested with a broken EGL on Linux)
+- [ ] Run and click through the GUI on real Windows and macOS
 - [ ] Optional file association: open `.zip`, `.7z` and `.tar` in HatchZip
 
 ## Right-click menu and OS integration
@@ -65,7 +70,9 @@ Ticked when it is merged and tested, not when it is started.
 - [ ] Native split ZIP (`.z01`, `.z02`, ..., `.zip`)
 - [x] Password-protected ZIP (ZipCrypto, AES) and 7z (AES, encrypted headers too), proven before anything is deleted, never saved (CLI; tested including a real `zip -P` archive through a terminal prompt)
 - [ ] Password dialog in the GUI
-- [ ] Tests for the codecs decoded but not yet tested: Deflate64, LZMA, XZ, PPMd in ZIP; LZMA, BCJ, bzip2, Deflate, PPMd, Zstandard in 7z
+- [x] Codec tests with archives from 7-Zip 25.01: Deflate64, bzip2, LZMA, PPMd in ZIP; LZMA, BCJ+LZMA2, bzip2, Deflate, PPMd in 7z
+- [x] Archives over 4 GiB: entries past the 4 GiB mark, crashed and resumed there (sparse test archive, Linux and macOS)
+- [ ] Tests for XZ in ZIP and Zstandard in 7z (7-Zip itself can't write those)
 
 ## Website
 
@@ -78,5 +85,6 @@ Ticked when it is merged and tested, not when it is started.
 
 - [ ] `--skip-damaged`: save what can be saved as `name.damaged` and keep going
 - [ ] Read each file back before cutting its bytes from the archive, to catch antivirus quarantine and bad writes
-- [ ] Windows: reserved names (`CON`, `NUL`, ...), trailing dots and spaces, paths over 260 characters
+- [x] Windows: reserved names (`CON`, `NUL`, ...), trailing dots and spaces, and forbidden characters are refused before anything is touched
+- [ ] Windows: a test for paths over 260 characters (Rust's standard library handles them, unverified here)
 - [ ] Benchmarks on more hardware, including a hard drive and a USB stick
