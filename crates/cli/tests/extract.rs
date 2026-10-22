@@ -427,3 +427,43 @@ fn windows_only_names_are_refused_up_front_on_windows() {
         );
     }
 }
+
+/// Game folders nest deep. Windows' old 260 character limit must not stop an
+/// extraction partway, including the part files and the crash cleanup.
+#[test]
+fn paths_longer_than_260_characters_extract_and_resume() {
+    let tmp = TempDir::new().unwrap();
+    let deep = (0..12)
+        .map(|i| format!("folder-number-{i:02}-with-a-long-name"))
+        .collect::<Vec<_>>()
+        .join("/");
+    let mut files = Files::new();
+    for i in 0..6 {
+        files.insert(format!("{deep}/asset-{i}.bin"), noise(50_000, i));
+    }
+    let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+    zip.add_directory(format!("{EMPTY_DIR}/"), SimpleFileOptions::default())
+        .unwrap();
+    for (name, data) in &files {
+        zip.start_file(name, SimpleFileOptions::default()).unwrap();
+        zip.write_all(data).unwrap();
+    }
+    let archive = tmp.path().join("deep.zip");
+    fs::write(&archive, zip.finish().unwrap().into_inner()).unwrap();
+    let out = tmp.path().join("out");
+    let longest = out.join(files.keys().next().unwrap());
+    assert!(
+        longest.as_os_str().len() > 300,
+        "the test path must be long"
+    );
+
+    let crash = [
+        ("HATCHZIP_BATCH_ENTRIES", "1"),
+        ("HATCHZIP_CRASH_AT", "after-extract"),
+        ("HATCHZIP_CRASH_AFTER", "2"),
+    ];
+    assert!(!extract(&archive, &out, &crash).status.success());
+    assert_ok(&extract(&archive, &out, &[]));
+    assert_tree(&out, &files);
+    assert_consumed(&archive);
+}
