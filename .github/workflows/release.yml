@@ -88,7 +88,7 @@ jobs:
           ref: ${{ inputs.tag || github.ref }}
       # .cargo/config.toml links the C runtime in, so no redistributable is needed.
       - name: build
-        run: cargo build --release --locked -p hatchzip
+        run: cargo build --release --locked -p hatchzip -p hatchzip-gui
       - name: smoke test
         run: python .github/scripts/smoke.py target/release/hatchzip.exe
       - name: package
@@ -102,10 +102,27 @@ jobs:
           target/release/hatchzip.exe completions powershell > "dist/$name/hatchzip-completion.ps1"
           (cd "dist/$name" && 7z a -tzip "../$name.zip" . > /dev/null)
           (cd dist && sha256sum "$name.zip" > "$name.zip.sha256")
+      # The setup holds what the zip holds, plus the desktop app.
+      - name: stage the setup
+        run: |
+          mkdir -p dist/payload
+          cp -r dist/hatchzip-x86_64-windows/. dist/payload/
+          cp target/release/hatchzip-gui.exe dist/payload/
+          echo "HATCHZIP_VERSION=$(target/release/hatchzip.exe --version | awk '{print $2}')" >> "$GITHUB_ENV"
+      - name: build the setup
+        shell: pwsh
+        run: packaging/windows/build-setup.ps1 dist/payload $env:HATCHZIP_VERSION
+      - name: install, run and uninstall the setup
+        shell: pwsh
+        run: packaging/windows/test-setup.ps1 dist/HatchZip-x64-setup.exe
+      - name: checksum the setup
+        run: (cd dist && sha256sum HatchZip-x64-setup.exe > HatchZip-x64-setup.exe.sha256)
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-x86_64
-          path: dist/*.zip*
+          path: |
+            dist/*.zip*
+            dist/HatchZip-x64-setup.exe*
           if-no-files-found: error
 
   # Both Mac architectures from one Apple Silicon runner. Only the native one
@@ -122,9 +139,10 @@ jobs:
       - name: build
         run: |
           rustup target add aarch64-apple-darwin x86_64-apple-darwin
-          cargo build --release --locked -p hatchzip --target aarch64-apple-darwin
-          cargo build --release --locked -p hatchzip --target x86_64-apple-darwin
+          cargo build --release --locked -p hatchzip -p hatchzip-gui --target aarch64-apple-darwin
+          cargo build --release --locked -p hatchzip -p hatchzip-gui --target x86_64-apple-darwin
           file target/x86_64-apple-darwin/release/hatchzip | grep -q x86_64
+          file target/x86_64-apple-darwin/release/hatchzip-gui | grep -q x86_64
       - name: smoke test
         run: python3 .github/scripts/smoke.py target/aarch64-apple-darwin/release/hatchzip
       - name: package
@@ -141,14 +159,99 @@ jobs:
             tar -C dist -czf "dist/$name.tar.gz" "$name"
             (cd dist && shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256")
           done
+      # HatchZip.app in a dmg per architecture, with the CLI from the folder
+      # the tarball was made from inside it.
+      - name: dmg
+        run: |
+          for arch in aarch64 x86_64; do
+            sh packaging/macos/build-dmg.sh "$arch" "target/$arch-apple-darwin/release/hatchzip-gui" "dist/hatchzip-$arch-macos"
+          done
+      - name: open the dmg and run the app
+        run: sh packaging/macos/test-dmg.sh dist/HatchZip-aarch64.dmg
+      - name: checksum the dmgs
+        run: |
+          cd dist
+          for arch in aarch64 x86_64; do
+            shasum -a 256 "HatchZip-$arch.dmg" > "HatchZip-$arch.dmg.sha256"
+          done
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: macos
-          path: dist/*.tar.gz*
+          path: |
+            dist/*.tar.gz*
+            dist/HatchZip-*.dmg*
+          if-no-files-found: error
+
+  # .deb, .rpm and AppImage of the desktop app, x86_64 only for now. A job of
+  # its own because the app can't be a static musl build like the CLI: it
+  # links the C library and fontconfig of the system it's built on and runs
+  # on that version or newer, so this uses the oldest Ubuntu runner. The CLI
+  # in the packages is the static one from the linux job.
+  linux-packages:
+    name: linux packages
+    needs: linux
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    env:
+      NFPM_VERSION: 2.48.0
+      NFPM_SHA256: 6d7f9a28b2f397934403950fcbba83f598b08d02edbe79a0815b3b4897341750
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.tag || github.ref }}
+      # The app links fontconfig; everything else Slint needs is loaded at
+      # run time.
+      - name: packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libfontconfig1-dev
+      - name: build
+        run: cargo build --release --locked -p hatchzip-gui
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: linux-x86_64
+          path: cli
+      - name: stage
+        run: |
+          tar -xzf cli/hatchzip-x86_64-linux.tar.gz -C cli
+          cli=cli/hatchzip-x86_64-linux/hatchzip
+          mkdir -p dist/pkg/completions
+          cp "$cli" target/release/hatchzip-gui dist/pkg/
+          "$cli" man | gzip -9n > dist/pkg/hatchzip.1.gz
+          "$cli" completions bash > dist/pkg/completions/hatchzip.bash
+          "$cli" completions zsh > dist/pkg/completions/_hatchzip
+          "$cli" completions fish > dist/pkg/completions/hatchzip.fish
+          echo "HATCHZIP_VERSION=$("$cli" --version | awk '{print $2}')" >> "$GITHUB_ENV"
+      - name: deb and rpm
+        run: |
+          curl -fsSL --proto '=https' -o nfpm.tar.gz \
+            "https://github.com/goreleaser/nfpm/releases/download/v$NFPM_VERSION/nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz"
+          echo "$NFPM_SHA256  nfpm.tar.gz" | sha256sum -c -
+          tar -xzf nfpm.tar.gz nfpm
+          ./nfpm package -f packaging/linux/nfpm.yaml -p deb -t dist/hatchzip_amd64.deb
+          ./nfpm package -f packaging/linux/nfpm.yaml -p rpm -t dist/hatchzip-x86_64.rpm
+      - name: AppImage
+        run: sh packaging/linux/build-appimage.sh target/release/hatchzip-gui
+      - name: install and run each package
+        run: sh packaging/linux/test-packages.sh
+      - name: checksums
+        run: |
+          cd dist
+          for f in hatchzip_amd64.deb hatchzip-x86_64.rpm HatchZip-x86_64.AppImage; do
+            sha256sum "$f" > "$f.sha256"
+          done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: linux-packages
+          path: |
+            dist/hatchzip_amd64.deb*
+            dist/hatchzip-x86_64.rpm*
+            dist/HatchZip-x86_64.AppImage*
           if-no-files-found: error
 
   publish:
-    needs: [linux, windows, macos]
+    needs: [linux, windows, macos, linux-packages]
     if: startsWith(github.ref, 'refs/tags/') || inputs.tag != ''
     runs-on: ubuntu-24.04
     timeout-minutes: 10

@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- AppStream metadata: what software centres (GNOME Software, Discover)
+     show for HatchZip. packaging/README.md has the command that checks it. -->
+<component type="desktop-application">
+  <id>io.github.xevrion.hatchzip</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT OR Apache-2.0</project_license>
+
+  <name>HatchZip</name>
+  <summary>Extract huge archives in place</summary>
+  <developer id="io.github.xevrion">
+    <name>Yash Bavadiya</name>
+  </developer>
+
+  <description>
+    <p>
+      A 180 GB archive that unpacks to 200 GB normally needs 380 GB of free
+      disk, because the archive and everything extracted from it have to exist
+      at the same time. HatchZip needs a little over 200 GB: it extracts the
+      archive from the end and cuts each finished part off the archive as it
+      goes, so the space the archive gives back is reused for the next files.
+    </p>
+    <ul>
+      <li>Checks that the extraction fits before it changes anything</li>
+      <li>Keeps a margin of free space the whole way through</li>
+      <li>Can be stopped or crash at any moment and continues where it left off</li>
+      <li>Reads ZIP, 7z, tar and split archives</li>
+    </ul>
+    <p>
+      The archive is gone when the extraction finishes. For an archive that
+      cannot be downloaded again, HatchZip can verify every file first.
+    </p>
+  </description>
+
+  <!-- The icon comes from the desktop file; appstream-util, which
+       appimagetool runs, rejects an <icon> here. -->
+  <launchable type="desktop-id">io.github.xevrion.hatchzip.desktop</launchable>
+
+  <url type="homepage">https://github.com/xevrion/hatchzip</url>
+  <url type="bugtracker">https://github.com/xevrion/hatchzip/issues</url>
+  <url type="vcs-browser">https://github.com/xevrion/hatchzip</url>
+  <url type="contribute">https://github.com/xevrion/hatchzip/blob/main/CONTRIBUTING.md</url>
+
+  <categories>
+    <category>Utility</category>
+    <category>Archiving</category>
+    <category>Compression</category>
+  </categories>
+  <keywords>
+    <keyword>zip</keyword>
+    <keyword>7z</keyword>
+    <keyword>tar</keyword>
+    <keyword>unzip</keyword>
+    <keyword>extract</keyword>
+    <keyword>archive</keyword>
+  </keywords>
+
+  <provides>
+    <binary>hatchzip</binary>
+    <binary>hatchzip-gui</binary>
+    <mediatype>application/zip</mediatype>
+    <mediatype>application/x-7z-compressed</mediatype>
+    <mediatype>application/x-tar</mediatype>
+  </provides>
+
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+
+  <branding>
+    <color type="primary" scheme_preference="light">#f2b705</color>
+    <color type="primary" scheme_preference="dark">#1a1a1a</color>
+  </branding>
+
+  <content_rating type="oars-1.1"/>
+
+  <!-- Before each tagged release, add its line here, newest first:
+         <release version="0.1.0" date="2026-11-01"/>
+       inside a <releases> element, and screenshots once the GUI has a
+       window worth showing. Nothing is released yet, and a release without
+       a date is an error. -->
+</component>

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <title>HatchZip</title>
+  <!-- hatchzip.svg redrawn on a 24 px grid: scaling the 16 px drawing by 1.5
+       puts every edge on half a pixel and blurs it. -->
+  <path fill="#f2b705" d="M0 0h24v5h-2V3H2v2H0z"/>
+  <path fill="#1a1a1a" d="M2 6h20v18H2z"/>
+  <path fill="#ffffff" d="M3 9h3v4h3V9h3v12H9v-5H6v5H3zM13 9h8v3l-5 6h5v3h-8v-3l5-6h-5z"/>
+</svg>

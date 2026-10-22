@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=HatchZip
+GenericName=Archive Extractor
+Comment=Extract huge archives in place, with free space only for the files inside
+Exec=hatchzip-gui %f
+Icon=io.github.xevrion.hatchzip
+Terminal=false
+Categories=Utility;Archiving;Compression;
+MimeType=application/zip;application/x-zip-compressed;application/x-7z-compressed;application/x-tar;
+Keywords=zip;7z;tar;unzip;extract;archive;split;
