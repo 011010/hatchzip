@@ -1,0 +1,164 @@
+# hatchzip_amd64.deb and hatchzip-x86_64.rpm, built by nfpm from a staging
+# folder the release workflow fills (see packaging/README.md):
+#
+#   dist/pkg/hatchzip          the static CLI from the release tarball
+#   dist/pkg/hatchzip-gui      the desktop app
+#   dist/pkg/hatchzip.1.gz     `hatchzip man | gzip -9n`
+#   dist/pkg/completions/      `hatchzip completions bash|zsh|fish`
+#
+# Then, from the repository root:
+#
+#   HATCHZIP_VERSION=0.1.0 nfpm package -f packaging/linux/nfpm.yaml -p deb -t dist/hatchzip_amd64.deb
+#   HATCHZIP_VERSION=0.1.0 nfpm package -f packaging/linux/nfpm.yaml -p rpm -t dist/hatchzip-x86_64.rpm
+name: hatchzip
+version: ${HATCHZIP_VERSION}
+# Go's name for it; nfpm writes amd64 into the .deb and x86_64 into the .rpm.
+arch: amd64
+platform: linux
+section: utils
+priority: optional
+maintainer: Yash Bavadiya <krbavadiya11@gmail.com>
+# The first line is the one-line summary, which Debian wants without a period.
+description: |-
+  Extract huge archives in place
+  HatchZip extracts an archive from the end and cuts each finished part off
+  the archive file as it goes, so it needs free space only for the files
+  inside, not for the files and the archive. It checks that the extraction
+  fits before changing anything and resumes after a crash. ZIP, 7z, tar and
+  split archives. Includes the hatchzip command (also as hz) and the
+  HatchZip desktop app.
+vendor: HatchZip
+homepage: https://github.com/xevrion/hatchzip
+license: MIT OR Apache-2.0
+
+contents:
+  - src: dist/pkg/hatchzip
+    dst: /usr/bin/hatchzip
+    file_info:
+      mode: 0755
+  # The short name. A link rather than a copy, so the two never differ.
+  - src: hatchzip
+    dst: /usr/bin/hz
+    type: symlink
+  - src: dist/pkg/hatchzip-gui
+    dst: /usr/bin/hatchzip-gui
+    file_info:
+      mode: 0755
+
+  - src: dist/pkg/hatchzip.1.gz
+    dst: /usr/share/man/man1/hatchzip.1.gz
+    file_info:
+      mode: 0644
+  - src: hatchzip.1.gz
+    dst: /usr/share/man/man1/hz.1.gz
+    type: symlink
+
+  - src: dist/pkg/completions/hatchzip.bash
+    dst: /usr/share/bash-completion/completions/hatchzip
+    file_info:
+      mode: 0644
+  - src: dist/pkg/completions/hatchzip.fish
+    dst: /usr/share/fish/vendor_completions.d/hatchzip.fish
+    file_info:
+      mode: 0644
+  # zsh looks in a different folder on each family.
+  - src: dist/pkg/completions/_hatchzip
+    dst: /usr/share/zsh/vendor-completions/_hatchzip
+    packager: deb
+    file_info:
+      mode: 0644
+  - src: dist/pkg/completions/_hatchzip
+    dst: /usr/share/zsh/site-functions/_hatchzip
+    packager: rpm
+    file_info:
+      mode: 0644
+
+  - src: packaging/linux/io.github.xevrion.hatchzip.desktop
+    dst: /usr/share/applications/io.github.xevrion.hatchzip.desktop
+  - src: packaging/linux/io.github.xevrion.hatchzip.metainfo.xml
+    dst: /usr/share/metainfo/io.github.xevrion.hatchzip.metainfo.xml
+  # One by one, so the package owns its icons and not the hicolor folders,
+  # which belong to the icon theme.
+  - src: packaging/linux/icons/hicolor/16x16/apps/io.github.xevrion.hatchzip.png
+    dst: /usr/share/icons/hicolor/16x16/apps/io.github.xevrion.hatchzip.png
+  - src: packaging/linux/icons/hicolor/24x24/apps/io.github.xevrion.hatchzip.png
+    dst: /usr/share/icons/hicolor/24x24/apps/io.github.xevrion.hatchzip.png
+  - src: packaging/linux/icons/hicolor/32x32/apps/io.github.xevrion.hatchzip.png
+    dst: /usr/share/icons/hicolor/32x32/apps/io.github.xevrion.hatchzip.png
+  - src: packaging/linux/icons/hicolor/48x48/apps/io.github.xevrion.hatchzip.png
+    dst: /usr/share/icons/hicolor/48x48/apps/io.github.xevrion.hatchzip.png
+  - src: packaging/linux/icons/hicolor/64x64/apps/io.github.xevrion.hatchzip.png
+    dst: /usr/share/icons/hicolor/64x64/apps/io.github.xevrion.hatchzip.png
+  - src: packaging/linux/icons/hicolor/128x128/apps/io.github.xevrion.hatchzip.png
+    dst: /usr/share/icons/hicolor/128x128/apps/io.github.xevrion.hatchzip.png
+  - src: packaging/linux/icons/hicolor/256x256/apps/io.github.xevrion.hatchzip.png
+    dst: /usr/share/icons/hicolor/256x256/apps/io.github.xevrion.hatchzip.png
+  - src: packaging/linux/icons/hicolor/512x512/apps/io.github.xevrion.hatchzip.png
+    dst: /usr/share/icons/hicolor/512x512/apps/io.github.xevrion.hatchzip.png
+  - src: packaging/linux/icons/hicolor/scalable/apps/io.github.xevrion.hatchzip.svg
+    dst: /usr/share/icons/hicolor/scalable/apps/io.github.xevrion.hatchzip.svg
+
+  - src: LICENSE-MIT
+    dst: /usr/share/licenses/hatchzip/LICENSE-MIT
+    packager: rpm
+  - src: LICENSE-APACHE
+    dst: /usr/share/licenses/hatchzip/LICENSE-APACHE
+    packager: rpm
+  - src: packaging/linux/copyright
+    dst: /usr/share/doc/hatchzip/copyright
+    packager: deb
+
+# No install scripts: dpkg and rpm run the icon cache, desktop database and
+# man-db updates themselves through file triggers. The right-click menu is
+# per user, so it's switched on from the app (`hatchzip-gui
+# --register-shell`), never by a package running as root.
+
+# The CLI is static and needs nothing. The desktop app needs the C library;
+# its window speaks Wayland or X11 and draws with OpenGL, all loaded at
+# runtime, so those are recommended rather than required. If the GUI ever
+# links one of them directly, the container test in the release workflow
+# fails with "error while loading shared libraries", and it moves up here.
+overrides:
+  deb:
+    depends:
+      - libc6 (>= 2.35)
+      - libgcc-s1
+    recommends:
+      - libfontconfig1
+      - libxkbcommon0
+      - libxkbcommon-x11-0
+      - libwayland-client0
+      - libwayland-egl1
+      - libegl1
+      - libgl1
+      - libx11-xcb1
+      - libxcursor1
+      - libxi6
+      - libxrandr2
+  # By library rather than package name, the way rpmbuild writes them, so
+  # the same .rpm resolves on Fedora and openSUSE, whose names differ.
+  rpm:
+    depends:
+      - libc.so.6(GLIBC_2.35)(64bit)
+      - libgcc_s.so.1()(64bit)
+    recommends:
+      - libfontconfig.so.1()(64bit)
+      - libxkbcommon.so.0()(64bit)
+      - libxkbcommon-x11.so.0()(64bit)
+      - libwayland-client.so.0()(64bit)
+      - libwayland-egl.so.1()(64bit)
+      - libEGL.so.1()(64bit)
+      - libGL.so.1()(64bit)
+      - libX11-xcb.so.1()(64bit)
+      - libXcursor.so.1()(64bit)
+      - libXi.so.6()(64bit)
+      - libXrandr.so.2()(64bit)
+
+rpm:
+  summary: Extract huge archives in place
+  group: Applications/Archiving
+  compression: zstd
+
+# xz rather than zstd for the .deb: older dpkg can't read zstd.
+deb:
+  compression: xz
