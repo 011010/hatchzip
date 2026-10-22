@@ -2,13 +2,15 @@
 
 use std::sync::Arc;
 
-use ::zip::ZipArchive;
 use ::zip::read::ZipArchiveMetadata;
 use ::zip::result::ZipError;
+use ::zip::{CompressionMethod, ZipArchive};
 use anyhow::{Context, Result, anyhow, bail};
 
 use super::storage::{Reader, Storage, Tail};
-use super::{Format, Item, Kind, Opened, PasswordNeeded, Sink, Unit, Worker, WrongPassword};
+use super::{
+    Codec, Format, Item, Kind, Opened, PasswordNeeded, Sink, Stream, Unit, Worker, WrongPassword,
+};
 use crate::fsutil;
 
 struct Zip {
@@ -95,6 +97,35 @@ impl Format for Zip {
         Ok(Box::new(ZipWorker {
             zip,
             password: self.password.as_deref(),
+        }))
+    }
+
+    fn stream(&self, unit: &Unit) -> Result<Option<Stream>> {
+        let e = self.meta.entry(unit.key)?;
+        // Encrypted data is decrypted by the zip crate on the way out; read
+        // raw, it would be written to disk as it is.
+        if unit.encrypted || e.encrypted() {
+            return Ok(None);
+        }
+        let codec = match e.compression() {
+            CompressionMethod::Stored => Codec::Stored,
+            CompressionMethod::Deflated => Codec::Deflate,
+            _ => return Ok(None),
+        };
+        // Safety: as for workers. The local header is read to find where the
+        // data begins, and it is never freed before the entry is committed.
+        let mut zip = unsafe {
+            ZipArchive::unsafe_new_with_metadata(self.storage.reader(None), self.meta.clone())
+        };
+        let data_start = zip
+            .by_index_raw(unit.key)?
+            .data_start()
+            .ok_or_else(|| anyhow!("can't find where '{}' begins", unit.items[0].path.display()))?;
+        Ok(Some(Stream {
+            data_start,
+            packed: e.compressed_size(),
+            codec,
+            crc: Some(e.crc32()),
         }))
     }
 }

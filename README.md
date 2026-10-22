@@ -43,7 +43,7 @@ The same 200 MB of game data (21 files), packed by the real tools, extracted on 
 
 Measured on Fedora 43, Intel Core i7-14700HX, SK Hynix NVMe SSD, warm page cache; the disk-space runs used a 220 MiB tmpfs to stand in for a full laptop disk, the speed runs ext4. Speed comes from decompressing files in parallel, so an archive holding one giant file extracts at the speed of a single core.
 
-The extra space HatchZip needs beyond the output is about the size of the largest single unit it can free at once: one file for ZIP and tar, one solid block for 7z. `hatchzip check` computes the exact figure for any archive.
+The extra space HatchZip needs beyond the output is about the size of the largest single unit it can free at once: one file for ZIP and tar, one solid block for 7z. On filesystems that can punch holes (ext4, XFS, btrfs, tmpfs; NTFS and APFS not yet verified), a large file stored or deflated in a ZIP, or in a tar, frees its archive bytes every 256 MiB while it is extracted: a ZIP holding one 600 MiB stored file extracted on a 950 MiB tmpfs with 367 MB free, where it needed 629 MB before. `hatchzip check` computes the exact figure for any archive.
 
 ## Installation
 

@@ -2,6 +2,7 @@
 //! units, byte ranges that can be truncated away once every file in them is
 //! safely on disk, and a way to decode one unit.
 
+pub mod resumable;
 mod sevenz;
 pub mod storage;
 mod tar;
@@ -82,6 +83,32 @@ pub trait Format: Send + Sync {
     /// A worker decodes units on one thread. `threads` is a hint for codecs
     /// that can decode a single stream on several cores.
     fn worker(&self, threads: u32) -> Result<Box<dyn Worker + '_>>;
+
+    /// For a unit holding one file whose data [`resumable`] can decode from
+    /// the middle: where that data lies. Such units can free their archive
+    /// bytes while they are extracted instead of only once they are done.
+    fn stream(&self, _unit: &Unit) -> Result<Option<Stream>> {
+        Ok(None)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Codec {
+    Stored,
+    /// Raw deflate, as ZIP stores it.
+    Deflate,
+}
+
+#[derive(Clone, Debug)]
+pub struct Stream {
+    /// Where the file's data begins. The headers before it stay untouched
+    /// until the unit is committed, so the archive still parses on resume.
+    pub data_start: u64,
+    /// Length of the data in the archive.
+    pub packed: u64,
+    pub codec: Codec,
+    /// CRC-32 of the output, if the format records one.
+    pub crc: Option<u32>,
 }
 
 pub trait Worker {
