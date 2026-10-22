@@ -58,7 +58,10 @@ Debug builds read these environment variables. Release builds ignore them.
 | `HATCHZIP_BATCH_ENTRIES=<n>` | Cap batches at `n` entries, to exercise many commits on a small archive |
 | `HATCHZIP_CRASH_AT=after-extract` or `after-journal` | Abort the process at that point of a batch |
 | `HATCHZIP_CRASH_AT=restore-appended` or `restore-written` | Abort `restore` after it appended the new index, or after it also rewrote the 7z start header |
+| `HATCHZIP_CRASH_AT=stream-after-sync`, `stream-after-journal` or `stream-after-punch` | Abort at that step of a resume point while a large file is streamed |
 | `HATCHZIP_CRASH_AFTER=<n>` | Let that point pass `n` times before aborting |
+| `HATCHZIP_STREAM_STEP=<bytes>` | Make a resume point every `<bytes>` of output instead of 256 MiB, and stream every file of at least twice that, even when it would fit whole |
+| `HATCHZIP_NO_PUNCH=1` | Act as if the filesystem couldn't punch holes, as on FAT32 and exFAT |
 
 ### Testing against a nearly full disk
 

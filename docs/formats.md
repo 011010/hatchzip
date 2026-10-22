@@ -15,7 +15,7 @@ The answer is a **resume point**: a saved state from which decoding can restart 
 - the length of each open output file
 - the running checksum state
 
-The protocol: flush the outputs, write and flush the journal, then punch up to the previous durable point. Keep two points alternating.
+The protocol: flush the outputs, write and flush the journal, then punch up to the point just made durable. **Done** for single files stored or deflated in ZIP and for tar entries ([How it works](how-it-works.md#freeing-space-inside-a-large-file)); the deflate decoder state is the bit position plus the last 32 KiB of output, read back from the flushed output file instead of stored in the journal.
 
 ## Per format
 
@@ -41,7 +41,7 @@ The exception to watch is UnRAR. The `unrar` crate is MIT or Apache, but the bun
 
 | System | Call | Notes |
 |---|---|---|
-| Linux | `fallocate(FALLOC_FL_PUNCH_HOLE \| FALLOC_FL_KEEP_SIZE)` | ext4, XFS, btrfs, tmpfs. Verified on ext4: punching 32 MiB of a 64 MiB file dropped its usage from 65M to 33M. |
-| macOS | `fcntl(F_PUNCHHOLE)` with `fpunchhole_t` | Offset and length must be multiples of the filesystem block size. Can return ENOSPC on cloned files. Unverified whether APFS frees the space. |
-| Windows | `FSCTL_SET_SPARSE`, then `FSCTL_SET_ZERO_DATA` | Without marking the file sparse first, NTFS writes real zeros and allocates the range. Frees space only for "large enough" ranges; unverified granularity, likely 64 KiB. Check with `FSCTL_QUERY_ALLOCATED_RANGES`. |
+| Linux | `fallocate(FALLOC_FL_PUNCH_HOLE \| FALLOC_FL_KEEP_SIZE)` | ext4, XFS, btrfs, tmpfs. Verified on ext4: punching 32 MiB of a 64 MiB file dropped its usage from 65M to 33M; punching an unaligned 4,000,008 bytes of an 8 MiB file through `platform::punch_hole` dropped its allocation from 8,392,704 to 4,399,104 bytes (tmpfs: 8,388,608 to 4,395,008). |
+| macOS | `fcntl(F_PUNCHHOLE)` with `fpunchhole_t` | Offset and length must be multiples of the filesystem block size, so HatchZip shrinks the range inwards. Can return ENOSPC on cloned files, which HatchZip treats as unsupported. Compiles; unverified whether APFS frees the space. |
+| Windows | `FSCTL_SET_SPARSE`, then `FSCTL_SET_ZERO_DATA` | Without marking the file sparse first, NTFS writes real zeros and allocates the range. HatchZip aligns ranges inwards to 64 KiB and counts 1 MiB per end in the space check. Compiles; unverified on real NTFS. The probe measures with `GetCompressedFileSizeW`. |
 | FAT32, exFAT | None | Only truncation from the end is possible. |

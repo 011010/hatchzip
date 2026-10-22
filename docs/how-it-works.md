@@ -24,6 +24,8 @@ Units are extracted in reverse order of their position in the file. After each b
 
 A solid 7z block can only be decoded from its beginning, so it is freed only once all of it is extracted. That makes the largest unit the main cost of in-place extraction: the run needs free space for the output plus roughly the largest unit. 7-Zip's default settings can put a whole archive into one block, which leaves nothing to gain; the space check reports this before anything is touched.
 
+For one large file the same cost is avoided where the filesystem can punch holes: see [Freeing space inside a large file](#freeing-space-inside-a-large-file).
+
 Directories and empty files in 7z have no data at all, only header entries. They form one extra unit that starts where the header does, so it is done first and truncating it frees only the header, which is already saved.
 
 ## Split archives
@@ -51,6 +53,9 @@ From then on the archive is parsed through `storage::Reader`, which serves the l
 | `total_size` | Total output size, for progress |
 | `committed_len` | The archive length after the latest commit. Every unit starting at or past it is done. |
 | `links` | Symlinks and hard links to create at the very end |
+| `resume` | While a large file is streamed: its unit, how many bytes of it are flushed, the bit of the archive decoding restarts at, and the CRC-32 so far. See below. |
+
+The journal is at version 3 since `resume` was added. Version 2 journals load as they are; older builds refuse version 3, which matters, because they would delete the half-written file whose archive bytes are already gone.
 
 There is no separate "done" counter: units start at distinct offsets, so `committed_len` alone says which are finished. The journal is always replaced atomically: written to a temporary file, flushed, renamed over the old one, and the directory flushed.
 
@@ -65,6 +70,32 @@ Units are processed in batches. Each batch goes through these steps, in this ord
 5. **Truncate.** The archive is shortened to `committed_len`, the start of the batch's lowest unit. The freed space becomes available for the next batch.
 
 At the end, links are created, then the remaining archive (at most a self-extractor stub or the 7z signature header) is deleted, then the side files.
+
+## Freeing space inside a large file
+
+A unit only frees its archive bytes when it is committed, so one 30 GB file needs 30 GB free before any of its bytes can go. Where the archive's filesystem can punch holes (free bytes in the middle of a file without moving the rest), a unit holding one file of at least 512 MiB, stored or deflated in a ZIP or any regular file in a tar, is **streamed** instead, alone, when its output doesn't fit whole in the space free at that moment:
+
+1. Its file is written to `<name>.hatchzip-part`. Every 256 MiB of output, at the next point where decoding can restart:
+2. **Flush** the part file and the folders above it.
+3. **Journal the resume point**: output length, the bit of the archive decoding restarts at, and the CRC-32 so far.
+4. **Punch** the archive from the start of the file's data up to the byte holding that bit. The archive's length doesn't change, and the freed bytes read as zeros.
+
+When the file is done it is renamed and committed through the ordinary steps 3 to 5, in the same journal write that clears `resume`. The local header or tar header in front of the data is never punched, so the archive still parses on resume.
+
+Stored data can restart at any byte. A deflate stream can restart at any block boundary, the technique of zlib's `examples/zran.c`, using the C API of zlib-rs (`inflatePrime`, `inflateSetDictionary`, `Z_BLOCK`). A boundary may fall inside a byte, so the point is recorded in bits, and the decoder also needs the 32 KiB of output before the point, which back-references reach into. That window is not stored in the journal: it is the last 32 KiB of the part file, flushed before the point was journaled.
+
+Hole punching is detected by punching a 1 MiB scratch file next to the archive and measuring that its allocation dropped, since a call can succeed without freeing anything. Without it (FAT32, exFAT, HFS+) every unit is extracted whole, as before. 7z solid blocks are not streamed yet.
+
+| Interrupted | State on disk | What a resume does |
+|---|---|---|
+| Before the first point is journaled | A part file, nothing punched | Deletes it and starts the file over |
+| After the flush, before the journal write | The part file holds output past the previous point, which is still the one in force | Cuts the part file back to the previous point and decodes from there; everything it needs is still in the archive |
+| After the journal write, before or after the punch | The point is durable, the bytes before it may be freed | Cuts the part file to the point and decodes from it, never reading before it |
+| After the rename, before the commit | The file has its real name, the journal still holds the last point | Renames it back and continues from that point |
+
+The rule: **the archive is never punched past the last durable resume point**, and a point is only durable once the output it vouches for is flushed. A half-streamed file is never deleted as uncommitted output. `restore` refuses an archive whose journal holds a resume point, since an entry with holes in it can't be put back. The test suite kills the process at each of the three steps of a point at several points, for a stored ZIP entry, a deflated ZIP entry and a tar entry, and around the final commit (`crates/cli/tests/streaming.rs`); a unit test resumes a deflate stream from every block boundary at levels 6 and 9 (`crates/core/src/archive/resumable.rs`).
+
+A deflate block can be as long as its encoder likes. zlib-ng and zlib-rs write level 1 as one block, which has no point to resume from but its start; such a file frees nothing until it ends, and if the space runs out first the run stops and says how much to free. zlib-rs at levels 6 and 9 wrote a block boundary about every 300 KB of output on the unit test's data, and the ZIP entries written by the zip crate and by Python's `zipfile` in the tests above had boundaries throughout; other encoders are not measured.
 
 ## Crash safety
 
@@ -109,6 +140,8 @@ Any run that opens an archive whose journal has `restoring` set, `restore` and `
 ## The space check
 
 Before anything is written, HatchZip replays the whole extraction one unit at a time, counting what each step adds (the unit's files, each rounded up to a 4 KiB block) and what it frees (the unit's span in the archive), plus the saved tail written at the start. The highest point of that running total is the free space the run needs. HatchZip refuses to start unless the disk has that much free plus `--keep-free`.
+
+A unit that can be streamed counts at most one step of output (256 MiB) plus a 1 MiB read buffer, plus what the filesystem may keep allocated at each end of a punched range (64 KiB, 1 MiB on NTFS, 16 MiB on ZFS, 128 MiB on btrfs, whose extents are freed whole), plus how far its output outgrows its compressed data, never more than the whole unit. For deflate that last part is bounded by its value at the end, since encoders fall back to stored blocks rather than expand data, with a 1/1024 margin for block headers. Measured on a 950 MiB tmpfs holding a ZIP with one 600 MiB entry and three small ones: stored, the check asked for 269.6 MB where the previous release asked for 629.1 MB and refused, and the lowest free space seen while it ran (sampled every 10 ms) was 98.5 MB of 367.0 MB, a peak of 268.5 MB; deflated (mostly incompressible data, 498.1 MB archive), it asked for 401.3 MB against 629.1 MB, and the peak was 324.4 MB. Both finished with the file byte-identical.
 
 The real run never needs more than the check promised: it uses larger batches only when there is room for them, since each batch is sized against the free space measured at that moment. If something else on the machine fills the disk during the run, HatchZip stops before the next unit, saves its progress, and says how much space to free.
 
