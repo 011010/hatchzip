@@ -1,4 +1,4 @@
-import { Button, ProgressIndicator, Spinner, Palette } from "std-widgets.slint";
+import { Button, LineEdit, ProgressIndicator, Spinner, Palette } from "std-widgets.slint";
 import { Theme, Meter } from "theme.slint";
 
 export enum Phase {
@@ -32,6 +32,8 @@ export struct TaskView {
     is-test: bool,
     heading: string,
     detail: string,
+    // "Needs 3.5 MB free, 7.8 GB is free now.", once the space is checked.
+    space: string,
     fraction: float,
     amounts: string,
     rate: string,
@@ -39,6 +41,8 @@ export struct TaskView {
     message: string,
     can-open-folder: bool,
     can-retry: bool,
+    // Paused or stopped halfway: offer to undo it.
+    can-give-back: bool,
 }
 
 component Row inherits HorizontalLayout {
@@ -193,9 +197,17 @@ export component TaskButtons inherits HorizontalLayout {
     callback open-folder();
     callback close();
     callback back();
+    callback give-back();
 
     alignment: end;
     spacing: 8px;
+
+    if root.task.can-give-back: Button {
+        text: "Stop and give me my archive back";
+        clicked => {
+            root.give-back();
+        }
+    }
 
     if !root.closable && (root.task.phase == Phase.paused || root.task.phase == Phase.failed || root.task.phase == Phase.no-space || (root.task.phase == Phase.done && !root.task.can-open-folder)): Button {
         text: "Back";
@@ -236,5 +248,85 @@ export component TaskButtons inherits HorizontalLayout {
         clicked => {
             root.open-folder();
         }
+    }
+}
+
+// Asks for an archive's password over the whole window, so nothing else can
+// be clicked while it is up. A new one is made for every question, so the
+// field starts empty and focused.
+export component PasswordPrompt inherits Rectangle {
+    in property <string> name;
+    in property <bool> wrong;
+    callback ok(string);
+    callback cancel();
+
+    background: Theme.scrim;
+    // Swallows clicks meant for what is underneath.
+    TouchArea { }
+
+    FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape {
+                root.cancel();
+                return accept;
+            }
+            reject
+        }
+
+        Rectangle {
+            width: min(380px, root.width - 32px);
+            height: card.preferred-height;
+            background: Palette.background;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Theme.line;
+
+            card := VerticalLayout {
+                padding: Theme.gutter;
+                spacing: 10px;
+                Text {
+                    text: "Password needed";
+                    font-size: 15px;
+                    font-weight: 600;
+                }
+                Text {
+                    text: root.name + " is protected. Type its password to open it.";
+                    color: Theme.muted;
+                    wrap: word-wrap;
+                }
+                input := LineEdit {
+                    input-type: password;
+                    placeholder-text: "Password";
+                    accepted(text) => {
+                        root.ok(text);
+                    }
+                }
+                if root.wrong: Text {
+                    text: "Wrong password. Try again.";
+                    color: Theme.danger;
+                }
+                HorizontalLayout {
+                    alignment: end;
+                    spacing: 8px;
+                    Button {
+                        text: "Cancel";
+                        clicked => {
+                            root.cancel();
+                        }
+                    }
+                    Button {
+                        text: "OK";
+                        primary: true;
+                        clicked => {
+                            root.ok(input.text);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    init => {
+        input.focus();
     }
 }

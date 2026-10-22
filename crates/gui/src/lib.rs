@@ -6,10 +6,18 @@ pub mod args;
 pub mod backend;
 mod entries;
 pub mod main_window;
+mod password;
+mod platform;
 mod runner;
+pub mod settings;
+pub mod shell;
 mod task;
 pub mod task_window;
 mod text;
 mod work;
 
 slint::include_modules!();
+
+/// The desktop file name packaging installs, which Wayland and X11 use to
+/// match the window to its launcher entry and icon.
+pub const APP_ID: &str = "io.github.xevrion.hatchzip";

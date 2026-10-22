@@ -18,12 +18,23 @@ pub struct Task {
     pub output: Option<PathBuf>,
     name: String,
     is_test: bool,
+    restoring: bool,
     /// The last failure left a journal, so the archive is partly out.
     resumable: bool,
     rate: Rate,
 }
 
 impl Task {
+    /// Stopping for good: the archive goes back to normal, holding what
+    /// wasn't extracted.
+    pub fn restore(name: &str) -> Self {
+        let mut task = Self::new(false, name);
+        task.restoring = true;
+        task.view.detail = "Making it a normal archive again. The files already out stay.".into();
+        task.view.heading = task.heading().into();
+        task
+    }
+
     pub fn extract(name: &str, output: Option<&Path>) -> Self {
         let mut task = Self::new(false, name);
         if let Some(o) = output {
@@ -49,6 +60,7 @@ impl Task {
             output: None,
             name: name.to_string(),
             is_test,
+            restoring: false,
             resumable: false,
             rate: Rate::default(),
         };
@@ -56,8 +68,20 @@ impl Task {
         task
     }
 
+    /// The archive's name, as the prompts and headings show it.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
     fn heading(&self) -> String {
         let n = &self.name;
+        if self.restoring {
+            return match self.view.phase {
+                Phase::Done => format!("Restored {n}"),
+                Phase::Failed => format!("Could not restore {n}"),
+                _ => format!("Restoring {n}"),
+            };
+        }
         match (self.is_test, self.view.phase) {
             (true, Phase::Done) => format!("Tested {n}"),
             (true, Phase::Failed) => format!("Could not test {n}"),
@@ -106,6 +130,18 @@ impl Task {
                 v.amounts = "".into();
                 v.rate = "".into();
                 v.archive_left = "".into();
+                v.space = "".into();
+            }
+            // The runner keeps the password; nothing to show.
+            Update::Unlocked(_) => {}
+            Update::Planned(plan) => {
+                self.plan = plan_view(&plan);
+                v.space = format!(
+                    "Needs {} free, {} is free now.",
+                    human(plan.needed),
+                    human(plan.free)
+                )
+                .into();
             }
             Update::NoSpace(plan) => {
                 self.plan = plan_view(&plan);
@@ -149,6 +185,25 @@ impl Task {
                 }
                 .into();
             }
+            Update::Restored { entries, output } => {
+                v.phase = Phase::Done;
+                v.fraction = 0.0;
+                v.amounts = "".into();
+                v.rate = "".into();
+                v.archive_left = "".into();
+                v.space = "".into();
+                let held = match entries {
+                    1 => "the one entry".to_string(),
+                    n => format!("the {} entries", count(n)),
+                };
+                v.message = format!(
+                    "Done. {} is a normal archive again, holding {held} not yet extracted. \
+                     The files already out stay in {}.",
+                    self.name,
+                    output.display()
+                )
+                .into();
+            }
             Update::Failed(f) => {
                 v.phase = Phase::Failed;
                 v.rate = "".into();
@@ -163,6 +218,11 @@ impl Task {
             }
         }
         self.view.heading = self.heading().into();
+        // Half extracted and not running: the archive can be put back.
+        self.view.can_give_back = !self.restoring
+            && !self.is_test
+            && (self.view.phase == Phase::Paused
+                || (self.view.phase == Phase::Failed && self.resumable));
     }
 
     /// Reads the counters the worker bumps and refreshes the numbers.
@@ -209,6 +269,19 @@ mod tests {
         assert!(t.running());
         assert!(!t.request_pause(), "nothing to pause while checking");
 
+        t.apply(Update::Planned(SpacePlan {
+            free: 7_800_000_000,
+            needed: 3_500_000,
+            keep_free: 2_000_000_000,
+            fits: true,
+            free_after: 7_700_000_000,
+            normal_needs: 41_500_000,
+            reclaims: true,
+            solid_block_bound: false,
+        }));
+        assert_eq!(t.view.space, "Needs 3.5 MB free, 7.8 GB is free now.");
+        assert_eq!(t.view.phase, Phase::Checking, "it fits, so it carries on");
+
         t.apply(Update::Working("/games/game".into()));
         assert_eq!(t.view.detail, "Into /games/game");
         let counters = Counters::default();
@@ -233,8 +306,10 @@ mod tests {
         t.apply(Update::Paused);
         assert_eq!(t.view.phase, Phase::Paused);
         assert!(!t.running());
+        assert!(t.view.can_give_back);
 
         t.apply(Update::Checking);
+        assert!(!t.view.can_give_back);
         t.apply(Update::Working("/games/game".into()));
         t.apply(Update::Extracted("/games/game".into()));
         assert_eq!(t.view.phase, Phase::Done);
@@ -242,6 +317,24 @@ mod tests {
         assert!(t.view.can_open_folder);
         assert_eq!(t.view.message, "Done. Everything is in /games/game.");
         assert_eq!(t.output.as_deref(), Some(Path::new("/games/game")));
+    }
+
+    #[test]
+    fn giving_the_archive_back_says_what_stays_where() {
+        let mut t = Task::restore("game.zip");
+        assert_eq!(t.view.heading, "Restoring game.zip");
+        t.apply(Update::Restored {
+            entries: 12,
+            output: "/games/game".into(),
+        });
+        assert_eq!(t.view.phase, Phase::Done);
+        assert_eq!(t.view.heading, "Restored game.zip");
+        assert!(!t.view.can_open_folder);
+        assert_eq!(
+            t.view.message,
+            "Done. game.zip is a normal archive again, holding the 12 entries not yet \
+             extracted. The files already out stay in /games/game."
+        );
     }
 
     #[test]

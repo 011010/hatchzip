@@ -1,6 +1,6 @@
 # hatchzip-gui
 
-The HatchZip desktop app, built with [Slint](https://slint.dev) under its Royalty-free 2.0 license. It drives the same engine as the `hatchzip` command, through `hatchzip-core`'s `session` and `engine` modules.
+The HatchZip desktop app, built with [Slint](https://slint.dev) under its Royalty-free 2.0 license. It drives the same engine as the `hatchzip` command, through `hatchzip-core`'s `session`, `engine` and `restore` modules.
 
 ```sh
 cargo run -p hatchzip-gui                         # main window
@@ -8,9 +8,20 @@ cargo run -p hatchzip-gui -- game.zip             # main window with an archive 
 cargo run -p hatchzip-gui -- --extract-here game.zip
 cargo run -p hatchzip-gui -- --extract-to game.zip
 cargo run -p hatchzip-gui -- --test game.zip
+cargo run -p hatchzip-gui -- --register-shell     # add the right-click menu, print where, exit
+cargo run -p hatchzip-gui -- --unregister-shell   # remove it, exit
 ```
 
-The three task forms are what file manager menus call, so they don't change.
+The three task forms are what file manager menus call, and installers run the two shell flags, so none of them change. The shell flags open no window. Inside an AppImage they register `$APPIMAGE`, not the temporary mount the app runs from.
+
+## Behavior
+
+| | |
+|---|---|
+| Passwords | Asked in the window when an archive needs one, and again after a wrong one. Kept in memory for this process only; a run continued later asks again. |
+| Giving up | A paused or half-extracted archive offers "Stop and give me my archive back", which runs `hatchzip_core::restore` on a worker thread. |
+| Settings | Keep-free size and "Check every file before deleting anything", saved to `~/.config/hatchzip/settings.json`, `%APPDATA%\HatchZip\settings.json` or `~/Library/Application Support/HatchZip/settings.json`. A missing or broken file means the defaults. The right-click menu switch is hidden on macOS, where hatchzip-shell can't add Finder entries yet. |
+| Identity | App id and X11 class `io.github.xevrion.hatchzip`, matching the desktop file. On Windows `build.rs` embeds `assets/icon/hatchzip.ico` and the version into the exe. |
 
 ## Drawing
 
@@ -20,8 +31,8 @@ The three task forms are what file manager menus call, so they don't change.
 | Renderer | FemtoVG (OpenGL) first. Without a working OpenGL driver the app restarts itself with Slint's software renderer, see `src/backend.rs`. `SLINT_BACKEND=winit-software` forces the software renderer. |
 | Theme | Light or dark, following the system. |
 
-Files dropped on the window open on Windows, macOS and X11. winit 0.30 doesn't report drops on Wayland.
+Files dropped on the window open on Windows, macOS and X11. winit 0.30 doesn't report drops on Wayland, nor files opened from the Finder on macOS, which arrive as Apple Events; only the command line works there.
 
 ## Tests
 
-`cargo test -p hatchzip-gui` runs the unit tests and `tests/ui.rs`, which drives the real windows headlessly through Slint's testing backend. Set `HATCHZIP_GUI_SHOTS=<dir>` to also save every state it passes through as a PNG, in light and dark.
+`cargo test -p hatchzip-gui` runs the unit tests, `tests/cli.rs` for the shell flags, and `tests/ui.rs`, which drives the real windows headlessly through Slint's testing backend. Set `HATCHZIP_GUI_SHOTS=<dir>` to also save every state it passes through as a PNG, in light and dark.

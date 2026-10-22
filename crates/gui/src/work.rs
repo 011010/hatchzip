@@ -9,7 +9,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use anyhow::{Context, Result, bail};
+use hatchzip_core::archive::{PasswordNeeded, WrongPassword};
 use hatchzip_core::engine::{self, Job, Outcome, Progress, Run};
+use hatchzip_core::journal::Paths;
 use hatchzip_core::session::{self, SpacePlan, State};
 
 #[derive(Default)]
@@ -30,7 +32,8 @@ impl Counters {
     }
 }
 
-#[derive(Clone, Debug)]
+/// No `Debug`: a request can carry a password.
+#[derive(Clone)]
 pub enum Request {
     Extract {
         archive: PathBuf,
@@ -38,15 +41,53 @@ pub enum Request {
         output: Option<PathBuf>,
         keep_free: u64,
         verify_first: bool,
+        password: Option<String>,
     },
     Test {
         archive: PathBuf,
+        password: Option<String>,
     },
+    /// Stops for good: turns a half-extracted archive back into a normal one.
+    Restore { archive: PathBuf },
 }
+
+impl Request {
+    pub fn archive(&self) -> &Path {
+        match self {
+            Self::Extract { archive, .. }
+            | Self::Test { archive, .. }
+            | Self::Restore { archive } => archive,
+        }
+    }
+
+    pub fn password(&self) -> Option<&str> {
+        match self {
+            Self::Extract { password, .. } | Self::Test { password, .. } => password.as_deref(),
+            Self::Restore { .. } => None,
+        }
+    }
+
+    /// Remembers a password that worked, so a rerun after a pause doesn't
+    /// ask again. It lives only in this process.
+    pub fn set_password(&mut self, p: String) {
+        match self {
+            Self::Extract { password, .. } | Self::Test { password, .. } => *password = Some(p),
+            Self::Restore { .. } => {}
+        }
+    }
+}
+
+/// Asks the person for a password; the flag says the last one was wrong.
+/// `None` means they gave up.
+pub type Ask<'a> = &'a mut dyn FnMut(bool) -> Option<String>;
 
 pub enum Update {
     /// Opening the archive and checking the space.
     Checking,
+    /// A password the person typed opened the archive.
+    Unlocked(String),
+    /// It fits; shown while the run starts.
+    Planned(SpacePlan),
     NoSpace(SpacePlan),
     /// Reading every file to check it; nothing is written.
     Verifying,
@@ -55,6 +96,12 @@ pub enum Update {
     Paused,
     Extracted(PathBuf),
     Tested(usize),
+    /// The archive is whole again, holding this many entries; the ones
+    /// already extracted stay in the folder.
+    Restored {
+        entries: usize,
+        output: PathBuf,
+    },
     Failed(Failure),
 }
 
@@ -66,34 +113,80 @@ pub struct Failure {
 
 /// Runs a request to the end, a pause or an error. Errors are reported as an
 /// update, never returned, so the UI hears about every way this ends.
-pub fn run(request: &Request, counters: &Arc<Counters>, send: &dyn Fn(Update)) {
+pub fn run(request: &Request, counters: &Arc<Counters>, send: &dyn Fn(Update), ask: Ask) {
     let result = match request {
         Request::Extract {
             archive,
             output,
             keep_free,
             verify_first,
+            password,
         } => extract(
             archive,
             output.clone(),
             *keep_free,
             *verify_first,
+            Secret {
+                password: password.clone(),
+                ask,
+            },
             counters,
             send,
         ),
-        Request::Test { archive } => test(archive, counters, send),
+        Request::Test { archive, password } => test(
+            archive,
+            Secret {
+                password: password.clone(),
+                ask,
+            },
+            counters,
+            send,
+        ),
+        Request::Restore { archive } => restore(archive, send),
     };
     if let Err(e) = result {
-        let archive = match request {
-            Request::Extract { archive, .. } | Request::Test { archive } => archive,
-        };
         let resumable = matches!(request, Request::Extract { .. })
-            && session::locate(archive).is_ok_and(|(_, paths)| paths.exists());
-        send(Update::Failed(Failure {
-            message: sentence(&format!("{e:#}")),
-            resumable,
-        }));
+            && session::locate(request.archive()).is_ok_and(|(_, paths)| paths.exists());
+        let message = if e.is::<PasswordNeeded>() || e.is::<WrongPassword>() {
+            // Only reached when the person closed the password prompt.
+            "No password was given, so nothing was changed.".to_string()
+        } else {
+            sentence(&format!("{e:#}"))
+        };
+        send(Update::Failed(Failure { message, resumable }));
     }
+}
+
+struct Secret<'a> {
+    password: Option<String>,
+    ask: Ask<'a>,
+}
+
+/// `session::open_encrypted`, reporting a password the person typed so a
+/// rerun can use it.
+fn open(
+    primary: &Path,
+    paths: &Paths,
+    output: Option<PathBuf>,
+    writable: bool,
+    secret: Secret,
+    send: &dyn Fn(Update),
+) -> Result<State> {
+    let given = secret.password.clone();
+    let (state, used) = session::open_encrypted(
+        primary,
+        paths,
+        output,
+        writable,
+        secret.password,
+        secret.ask,
+    )?;
+    if let Some(p) = used
+        && Some(&p) != given.as_ref()
+    {
+        send(Update::Unlocked(p));
+    }
+    Ok(state)
 }
 
 fn extract(
@@ -101,12 +194,13 @@ fn extract(
     output: Option<PathBuf>,
     keep_free: u64,
     verify_first: bool,
+    secret: Secret,
     counters: &Arc<Counters>,
     send: &dyn Fn(Update),
 ) -> Result<()> {
     send(Update::Checking);
     let (primary, paths) = session::locate(archive)?;
-    let (job, journal) = match session::open(&primary, &paths, output, true, None)? {
+    let (job, journal) = match open(&primary, &paths, output, true, secret, send)? {
         State::Orphan(journal) => {
             engine::finish_orphaned(&journal, &paths)?;
             send(Update::Extracted(journal.output));
@@ -118,6 +212,7 @@ fn extract(
                 send(Update::NoSpace(plan));
                 return Ok(());
             }
+            send(Update::Planned(plan));
             session::clear_uncommitted(&job, &journal.output)?;
             (job, journal)
         }
@@ -127,6 +222,7 @@ fn extract(
                 send(Update::NoSpace(plan));
                 return Ok(());
             }
+            send(Update::Planned(plan));
             if verify_first {
                 verify(&job, counters, send)
                     .context("the archive is damaged, so nothing was extracted")?;
@@ -174,15 +270,30 @@ fn extract(
     Ok(())
 }
 
-fn test(archive: &Path, counters: &Arc<Counters>, send: &dyn Fn(Update)) -> Result<()> {
+fn test(
+    archive: &Path,
+    secret: Secret,
+    counters: &Arc<Counters>,
+    send: &dyn Fn(Update),
+) -> Result<()> {
     send(Update::Checking);
     let (primary, paths) = session::locate(archive)?;
-    if paths.exists() {
-        bail!("this archive is partly extracted, so it can't be tested; extract it to finish");
-    }
-    let job = Job::open(&primary, false, None)?;
+    let job = match open(&primary, &paths, None, false, secret, send)? {
+        State::Fresh(job, _) => job,
+        _ => bail!("this archive is partly extracted, so it can't be tested; extract it to finish"),
+    };
     verify(&job, counters, send).context("the archive is damaged")?;
     send(Update::Tested(job.item_count()));
+    Ok(())
+}
+
+fn restore(archive: &Path, send: &dyn Fn(Update)) -> Result<()> {
+    send(Update::Checking);
+    let r = hatchzip_core::restore::restore(archive)?;
+    send(Update::Restored {
+        entries: r.entries,
+        output: r.output,
+    });
     Ok(())
 }
 
@@ -228,11 +339,15 @@ mod tests {
         assert_eq!(sentence(""), "");
     }
 
-    fn make_zip(dir: &Path) -> PathBuf {
+    fn make_zip(dir: &Path, password: Option<&str>) -> PathBuf {
         let path = dir.join("game.zip");
         let mut w = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
-        let opts = zip::write::SimpleFileOptions::default();
-        w.add_directory("data/", opts).unwrap();
+        let mut opts = zip::write::SimpleFileOptions::default();
+        if let Some(p) = password {
+            opts = opts.with_aes_encryption(zip::AesMode::Aes256, p);
+        }
+        w.add_directory("data/", zip::write::SimpleFileOptions::default())
+            .unwrap();
         for i in 0..20 {
             w.start_file(format!("data/file{i}.bin"), opts).unwrap();
             w.write_all(&vec![i as u8; 10_000 + i * 100]).unwrap();
@@ -241,32 +356,99 @@ mod tests {
         path
     }
 
-    fn collect(request: &Request, counters: &Arc<Counters>) -> Vec<String> {
+    fn name(u: Update) -> String {
+        match u {
+            Update::Checking => "checking".to_string(),
+            Update::Unlocked(p) => format!("unlocked {p}"),
+            Update::Planned(_) => "planned".to_string(),
+            Update::NoSpace(_) => "no space".to_string(),
+            Update::Verifying => "verifying".to_string(),
+            Update::Working(_) => "working".to_string(),
+            Update::Paused => "paused".to_string(),
+            Update::Extracted(_) => "extracted".to_string(),
+            Update::Tested(n) => format!("tested {n}"),
+            Update::Restored { entries, .. } => format!("restored {entries}"),
+            Update::Failed(f) => format!("failed: {}", f.message),
+        }
+    }
+
+    #[test]
+    fn a_paused_run_gives_the_archive_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = make_zip(dir.path(), None);
+        let counters = Arc::new(Counters::default());
+        // Paused before the first batch: the journal exists, so the archive
+        // counts as half extracted.
+        let request = extract(&archive, Some(dir.path().join("out")), false);
+        counters.stop.store(true, Ordering::Relaxed);
+        collect(&request, &counters);
+        assert!(session::locate(&archive).unwrap().1.exists());
+
+        let restore = Request::Restore {
+            archive: archive.clone(),
+        };
+        assert_eq!(collect(&restore, &counters), ["checking", "restored 21"]);
+        assert!(!session::locate(&archive).unwrap().1.exists());
+        // A normal archive again: testing it needs no journal.
+        counters.reset();
+        let test = Request::Test {
+            archive,
+            password: None,
+        };
+        assert_eq!(
+            collect(&test, &counters),
+            ["checking", "verifying", "tested 21"]
+        );
+    }
+
+    /// Runs `request`, answering password prompts from `answers` in order
+    /// and recording whether each prompt said the last one was wrong.
+    fn collect_asking(
+        request: &Request,
+        counters: &Arc<Counters>,
+        answers: &[Option<&str>],
+    ) -> (Vec<String>, Vec<bool>) {
         let seen = Mutex::new(Vec::new());
-        run(request, counters, &|u| {
-            seen.lock().unwrap().push(match u {
-                Update::Checking => "checking".to_string(),
-                Update::NoSpace(_) => "no space".to_string(),
-                Update::Verifying => "verifying".to_string(),
-                Update::Working(_) => "working".to_string(),
-                Update::Paused => "paused".to_string(),
-                Update::Extracted(_) => "extracted".to_string(),
-                Update::Tested(n) => format!("tested {n}"),
-                Update::Failed(f) => format!("failed: {}", f.message),
-            })
-        });
-        seen.into_inner().unwrap()
+        let mut asked = Vec::new();
+        let mut answers = answers.iter();
+        run(
+            request,
+            counters,
+            &|u| seen.lock().unwrap().push(name(u)),
+            &mut |wrong| {
+                asked.push(wrong);
+                answers.next().copied().flatten().map(str::to_string)
+            },
+        );
+        (seen.into_inner().unwrap(), asked)
+    }
+
+    fn collect(request: &Request, counters: &Arc<Counters>) -> Vec<String> {
+        let (updates, asked) = collect_asking(request, counters, &[]);
+        assert!(asked.is_empty(), "a plain archive never asks");
+        updates
+    }
+
+    fn extract(archive: &Path, out: Option<PathBuf>, verify_first: bool) -> Request {
+        Request::Extract {
+            archive: archive.to_path_buf(),
+            output: out,
+            keep_free: 0,
+            verify_first,
+            password: None,
+        }
     }
 
     #[test]
     fn test_then_extract_a_real_archive() {
         let dir = tempfile::tempdir().unwrap();
-        let archive = make_zip(dir.path());
+        let archive = make_zip(dir.path(), None);
         let counters = Arc::new(Counters::default());
 
         let updates = collect(
             &Request::Test {
                 archive: archive.clone(),
+                password: None,
             },
             &counters,
         );
@@ -278,14 +460,11 @@ mod tests {
 
         counters.reset();
         let out = dir.path().join("out");
-        let request = Request::Extract {
-            archive: archive.clone(),
-            output: Some(out.clone()),
-            keep_free: 0,
-            verify_first: true,
-        };
-        let updates = collect(&request, &counters);
-        assert_eq!(updates, ["checking", "verifying", "working", "extracted"]);
+        let updates = collect(&extract(&archive, Some(out.clone()), true), &counters);
+        assert_eq!(
+            updates,
+            ["checking", "planned", "verifying", "working", "extracted"]
+        );
         assert!(!archive.exists());
         assert_eq!(
             std::fs::read(out.join("data/file3.bin")).unwrap(),
@@ -298,22 +477,47 @@ mod tests {
     }
 
     #[test]
+    fn extracts_next_to_other_files_but_never_over_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = make_zip(dir.path(), None);
+        std::fs::write(dir.path().join("notes.txt"), b"mine").unwrap();
+        let counters = Arc::new(Counters::default());
+        // The folder holds the archive and a file of its own: extract here.
+        let here = extract(&archive, Some(dir.path().to_path_buf()), false);
+        assert_eq!(
+            collect(&here, &counters),
+            ["checking", "planned", "working", "extracted"]
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("notes.txt")).unwrap(),
+            b"mine"
+        );
+        assert!(dir.path().join("data/file19.bin").exists());
+
+        // Again, now every file would land on one that is there.
+        let again = make_zip(dir.path(), None);
+        counters.reset();
+        let updates = collect(
+            &extract(&again, Some(dir.path().to_path_buf()), false),
+            &counters,
+        );
+        assert_eq!(updates.len(), 2, "{updates:?}");
+        assert!(updates[1].starts_with("failed: "), "{updates:?}");
+        assert!(again.exists(), "a refused run leaves the archive alone");
+    }
+
+    #[test]
     fn a_stop_before_the_first_batch_pauses_and_resumes() {
         let dir = tempfile::tempdir().unwrap();
-        let archive = make_zip(dir.path());
+        let archive = make_zip(dir.path(), None);
         let out = dir.path().join("out");
         let counters = Arc::new(Counters::default());
-        let request = Request::Extract {
-            archive: archive.clone(),
-            output: Some(out.clone()),
-            keep_free: 0,
-            verify_first: false,
-        };
+        let request = extract(&archive, Some(out.clone()), false);
 
         counters.stop.store(true, Ordering::Relaxed);
         assert_eq!(
             collect(&request, &counters),
-            ["checking", "working", "paused"]
+            ["checking", "planned", "working", "paused"]
         );
         // Paused before anything was truncated: the journal is there to
         // continue from.
@@ -323,7 +527,7 @@ mod tests {
         counters.reset();
         assert_eq!(
             collect(&request, &counters),
-            ["checking", "working", "extracted"]
+            ["checking", "planned", "working", "extracted"]
         );
         assert!(!archive.exists());
         assert_eq!(std::fs::read_dir(out.join("data")).unwrap().count(), 20);
@@ -332,13 +536,14 @@ mod tests {
     #[test]
     fn not_enough_space_changes_nothing() {
         let dir = tempfile::tempdir().unwrap();
-        let archive = make_zip(dir.path());
+        let archive = make_zip(dir.path(), None);
         let counters = Arc::new(Counters::default());
         let request = Request::Extract {
             archive: archive.clone(),
             output: None,
             keep_free: u64::MAX / 4,
             verify_first: false,
+            password: None,
         };
         assert_eq!(collect(&request, &counters), ["checking", "no space"]);
         assert!(!session::locate(&archive).unwrap().1.exists());
@@ -350,8 +555,52 @@ mod tests {
         let bogus = dir.path().join("notes.zip");
         std::fs::write(&bogus, b"not an archive").unwrap();
         let counters = Arc::new(Counters::default());
-        let updates = collect(&Request::Test { archive: bogus }, &counters);
+        let request = Request::Test {
+            archive: bogus,
+            password: None,
+        };
+        let updates = collect(&request, &counters);
         assert_eq!(updates.len(), 2);
         assert!(updates[1].starts_with("failed: "), "{updates:?}");
+    }
+
+    #[test]
+    fn asks_for_a_password_until_it_is_right() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = make_zip(dir.path(), Some("hunter2"));
+        let counters = Arc::new(Counters::default());
+        let test = Request::Test {
+            archive: archive.clone(),
+            password: None,
+        };
+        let (updates, asked) = collect_asking(&test, &counters, &[Some("nope"), Some("hunter2")]);
+        assert_eq!(asked, [false, true], "first needed, then wrong");
+        assert_eq!(
+            updates,
+            ["checking", "unlocked hunter2", "verifying", "tested 21"]
+        );
+
+        // Closing the prompt gives up without touching anything.
+        let mut request = extract(&archive, Some(dir.path().join("out")), false);
+        let (updates, _) = collect_asking(&request, &counters, &[None]);
+        assert_eq!(
+            updates,
+            [
+                "checking",
+                "failed: No password was given, so nothing was changed."
+            ]
+        );
+        assert!(archive.exists());
+
+        // A remembered password isn't asked for again.
+        request.set_password("hunter2".into());
+        counters.reset();
+        let (updates, asked) = collect_asking(&request, &counters, &[]);
+        assert!(asked.is_empty());
+        assert_eq!(updates, ["checking", "planned", "working", "extracted"]);
+        assert_eq!(
+            std::fs::read(dir.path().join("out/data/file7.bin")).unwrap(),
+            vec![7u8; 10_700]
+        );
     }
 }

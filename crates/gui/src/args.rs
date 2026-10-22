@@ -10,7 +10,14 @@ use clap::{ArgGroup, Parser};
     name = "hatchzip-gui",
     version,
     about = "Extract huge archives in place: the archive shrinks as your files hatch.",
-    group(ArgGroup::new("what").args(["archive", "extract_here", "extract_to", "test"]))
+    group(ArgGroup::new("what").args([
+        "archive",
+        "extract_here",
+        "extract_to",
+        "test",
+        "register_shell",
+        "unregister_shell",
+    ]))
 )]
 pub struct Args {
     /// The archive to open, or any part of a split archive
@@ -24,6 +31,12 @@ pub struct Args {
     /// Check every file for damage, without writing anything
     #[arg(long, value_name = "ARCHIVE")]
     pub test: Option<PathBuf>,
+    /// Add HatchZip to the file manager's right-click menu, then exit
+    #[arg(long)]
+    pub register_shell: bool,
+    /// Remove HatchZip from the file manager's right-click menu, then exit
+    #[arg(long)]
+    pub unregister_shell: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -39,11 +52,18 @@ pub enum Launch {
     Main(Option<PathBuf>),
     /// A small window that runs one task, started from a right-click.
     Task(TaskKind, PathBuf),
+    /// Installers run these; no window opens.
+    RegisterShell,
+    UnregisterShell,
 }
 
 impl Args {
     pub fn launch(self) -> Launch {
-        if let Some(a) = self.extract_here {
+        if self.register_shell {
+            Launch::RegisterShell
+        } else if self.unregister_shell {
+            Launch::UnregisterShell
+        } else if let Some(a) = self.extract_here {
             Launch::Task(TaskKind::ExtractHere, a)
         } else if let Some(a) = self.extract_to {
             Launch::Task(TaskKind::ExtractTo, a)
@@ -95,6 +115,17 @@ mod tests {
             parse(&["--extract-here=game.zip"]).unwrap(),
             Launch::Task(TaskKind::ExtractHere, "game.zip".into())
         );
+    }
+
+    #[test]
+    fn installers_can_add_and_remove_the_menu() {
+        assert_eq!(parse(&["--register-shell"]).unwrap(), Launch::RegisterShell);
+        assert_eq!(
+            parse(&["--unregister-shell"]).unwrap(),
+            Launch::UnregisterShell
+        );
+        assert!(parse(&["--register-shell", "--unregister-shell"]).is_err());
+        assert!(parse(&["--register-shell", "a.zip"]).is_err());
     }
 
     #[test]

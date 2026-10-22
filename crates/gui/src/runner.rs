@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use slint::{Timer, TimerMode};
 
+use crate::password;
 use crate::task::Task;
 use crate::work::{self, Counters, Request, Update};
 
@@ -43,6 +44,38 @@ impl Runner {
         });
         RUNNER.with(|r| *r.borrow_mut() = Some(runner.clone()));
         runner
+    }
+
+    /// The password the last request opened its archive with, if any.
+    pub fn password(&self) -> Option<String> {
+        self.request
+            .borrow()
+            .as_ref()?
+            .password()
+            .map(str::to_string)
+    }
+
+    /// Stops a paused or failed extraction for good, giving the archive
+    /// back. The engine's journal makes this safe at any point that isn't
+    /// mid-run.
+    pub fn give_back(&self) {
+        if self.running() {
+            return;
+        }
+        let Some(archive) = self
+            .request
+            .borrow()
+            .as_ref()
+            .map(|r| r.archive().to_path_buf())
+        else {
+            return;
+        };
+        let name = self
+            .task
+            .borrow()
+            .as_ref()
+            .map_or_else(String::new, |t| t.name().to_string());
+        self.start(Task::restore(&name), Request::Restore { archive });
     }
 
     pub fn running(&self) -> bool {
@@ -82,14 +115,22 @@ impl Runner {
         self.counters.reset();
         self.update(|t| t.apply(Update::Checking));
         let counters = self.counters.clone();
+        let name = self
+            .task
+            .borrow()
+            .as_ref()
+            .map_or_else(String::new, |t| t.name().to_string());
         std::thread::spawn(move || {
             before();
-            work::run(&request, &counters, &|u| {
+            let send = |u: Update| {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(r) = RUNNER.with(|r| r.borrow().clone()) {
                         r.on_update(u);
                     }
                 });
+            };
+            work::run(&request, &counters, &send, &mut |wrong| {
+                password::ask(&name, wrong)
             });
         });
         self.timer.start(TimerMode::Repeated, TICK, || {
@@ -133,6 +174,11 @@ impl Runner {
     }
 
     fn on_update(&self, u: Update) {
+        if let Update::Unlocked(p) = &u
+            && let Some(r) = self.request.borrow_mut().as_mut()
+        {
+            r.set_password(p.clone());
+        }
         // One last read so a pause shows exactly where it stopped.
         self.tick();
         self.update(|t| t.apply(u));
