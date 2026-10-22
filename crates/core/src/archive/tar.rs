@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::io::{Cursor, Read, Seek, SeekFrom};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -150,4 +151,21 @@ impl Worker for TarWorker<'_> {
         self.reader.seek(SeekFrom::Start(entry.data_start))?;
         sink.item(item, &mut (&mut self.reader).take(entry.size))
     }
+}
+
+/// What ends a restored tar. Hard links whose targets are still in the
+/// archive get their entries back, since the originals were cut off with the
+/// extracted part and the link can't be made before its target exists. Then
+/// the two zero blocks that mark the end.
+pub fn closing(hard_links: &[(&Path, &Path)]) -> Result<Vec<u8>> {
+    let mut b = ::tar::Builder::new(Vec::new());
+    for (path, target) in hard_links {
+        let mut h = ::tar::Header::new_gnu();
+        h.set_entry_type(EntryType::Link);
+        h.set_size(0);
+        h.set_mode(0o644);
+        b.append_link(&mut h, path, target)
+            .with_context(|| format!("writing the tar entry for '{}'", path.display()))?;
+    }
+    Ok(b.into_inner()?)
 }
