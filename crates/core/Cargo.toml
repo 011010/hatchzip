@@ -1,0 +1,25 @@
+[package]
+name = "hatchzip-core"
+description = "The engine behind HatchZip: extract ZIP, 7z and tar archives in place, freeing the archive as it goes."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["zip", "7z", "extract", "archive", "disk-space"]
+categories = ["compression", "filesystem"]
+
+[dependencies]
+anyhow.workspace = true
+crc32fast = "1.5.3"
+fs4 = "1.1.0"
+rayon = "1.12.0"
+serde.workspace = true
+serde_json.workspace = true
+sevenz-rust2.workspace = true
+tar.workspace = true
+zip.workspace = true
+
+[target."cfg(unix)".dependencies]
+libc = "0.2.191"

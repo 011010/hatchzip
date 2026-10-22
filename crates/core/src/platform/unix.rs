@@ -12,6 +12,17 @@ pub fn same_filesystem(a: &Path, b: &Path) -> bool {
     }
 }
 
+/// Opens the archive for writing and makes sure no other HatchZip run has it.
+/// The lock is advisory, so it never gets in the way of our own readers.
+pub fn open_exclusive(path: &Path) -> io::Result<File> {
+    let file = fs::OpenOptions::new().read(true).write(true).open(path)?;
+    match file.try_lock() {
+        Ok(()) => Ok(file),
+        Err(fs::TryLockError::WouldBlock) => Err(io::ErrorKind::WouldBlock.into()),
+        Err(fs::TryLockError::Error(e)) => Err(e),
+    }
+}
+
 pub fn sync_dir(dir: &Path) -> io::Result<()> {
     File::open(dir)?.sync_all()
 }

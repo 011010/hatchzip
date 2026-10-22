@@ -100,7 +100,7 @@ impl Journal {
             tail_crc: crc32fast::hash(&tail),
             output: plan.output,
             total_size: plan.total_size,
-            committed_len: storage.len(),
+            committed_len: storage.original_len(),
             links: Vec::new(),
         };
         journal.save(paths)?;

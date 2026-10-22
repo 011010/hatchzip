@@ -1,12 +1,7 @@
-mod archive;
 mod cli;
-mod engine;
-mod fsutil;
-mod journal;
-mod platform;
 
 use std::io::{self, BufRead, IsTerminal, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -17,10 +12,12 @@ use anyhow::{Context, Result, bail};
 use clap::{CommandFactory, Parser};
 use indicatif::{ProgressBar, ProgressStyle};
 
-use archive::{Kind, storage};
 use cli::{Cli, Command, EXIT_DAMAGED, EXIT_FAILURE, EXIT_NO_SPACE, EXIT_PAUSED, Space, Target};
-use engine::{Job, Outcome, Progress, Run, human};
-use journal::{Journal, Paths, Plan};
+use hatchzip_core::archive::Kind;
+use hatchzip_core::engine::{self, Job, Outcome, Progress, Run};
+use hatchzip_core::human;
+use hatchzip_core::journal::Journal;
+use hatchzip_core::session::{self, State, display_name, locate};
 
 const ERROR: Style = AnsiColor::Red.on_default().bold();
 const GOOD: Style = AnsiColor::Green.on_default().bold();
@@ -73,111 +70,16 @@ fn run(command: Command) -> Result<ExitCode> {
     }
 }
 
-/// The first volume of the archive and where its journal lives. Paths are
-/// made absolute so a resume works from any directory.
-fn locate(archive: &Path) -> Result<(PathBuf, Paths)> {
-    let primary = std::path::absolute(storage::first_volume(archive))
-        .with_context(|| format!("resolving {}", archive.display()))?;
-    let paths = Paths::for_archive(&primary);
-    Ok((primary, paths))
-}
-
-enum State {
-    /// Nothing touched yet. Nothing changes on disk until `extract` decides
-    /// to go ahead and writes the journal.
-    Fresh(Job, PathBuf),
-    Resume(Job, Journal),
-    /// The archive is gone but the run died before cleaning up.
-    Orphan(Journal),
-}
-
-/// `writable` is false for the commands that only look, so they work on
-/// read-only media and never take the lock.
-fn open(primary: &Path, paths: &Paths, output: Option<PathBuf>, writable: bool) -> Result<State> {
-    if paths.exists() {
-        let (journal, tail) = Journal::load(paths)?;
-        if let Some(o) = &output
-            && std::path::absolute(o)? != journal.output
-        {
-            bail!(
-                "this archive is already half extracted into {}; finish it there first",
-                journal.output.display()
-            );
-        }
-        if !journal.parts[0].0.exists() {
-            return Ok(State::Orphan(journal));
-        }
-        let job = Job::resume(&journal, tail, writable)?;
-        return Ok(State::Resume(job, journal));
-    }
-    let job = Job::open(primary, writable)?;
-    let output = match output {
-        Some(o) => std::path::absolute(o)?,
-        None => default_output(primary),
-    };
-    if output.read_dir().is_ok_and(|mut d| d.next().is_some()) {
-        bail!(
-            "{} already exists and is not empty; pick another folder with -o",
-            output.display()
-        );
-    }
-    Ok(State::Fresh(job, output))
-}
-
-/// `game.zip` and `game.7z.001` both extract into `game`.
-fn default_output(primary: &Path) -> PathBuf {
-    let file_name = primary
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .into_owned();
-    let mut name = file_name.clone();
-    if let Some((stem, digits)) = name.rsplit_once('.')
-        && digits.len() >= 3
-        && digits.bytes().all(|b| b.is_ascii_digit())
-    {
-        name = stem.to_string();
-    }
-    let lower = name.to_ascii_lowercase();
-    for ext in [".zip", ".7z", ".tar", ".exe"] {
-        if lower.ends_with(ext) && name.len() > ext.len() {
-            name.truncate(name.len() - ext.len());
-            break;
-        }
-    }
-    if name == file_name {
-        name.push_str("-extracted");
-    }
-    primary.with_file_name(name)
-}
-
-fn display_name(job: &Job) -> String {
-    let parts = job.storage.parts();
-    let first = parts[0]
-        .path
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .into_owned();
-    match parts.len() {
-        1 => first,
-        n => format!("{first} (+{} more parts)", n - 1),
-    }
-}
-
 /// Prints the space plan and returns whether it fits. The verdict prints
 /// even under `--quiet`, since it is the whole answer.
 fn report(job: &Job, out: &Path, journal: Option<&Journal>, keep_free: u64) -> Result<bool> {
-    let reclaims = fsutil::same_filesystem(job.storage.primary(), out);
-    let stale: u64 = job.uncommitted(out).iter().map(|(_, n)| n).sum();
-    let free = fsutil::available_space(out)? + stale;
-    let (peak, end) = job.space_needed(journal.is_none(), reclaims);
+    let plan = session::plan(job, out, journal.is_some(), keep_free)?;
     let left = job.remaining_size();
 
     say!(
         "{BOLD}{}{BOLD:#}  {} {}, unpacks to {} in {} entries",
         display_name(job),
-        human(job.storage.len()),
+        human(job.storage.original_len()),
         job.format_name,
         human(journal.map_or(left, |j| j.total_size)),
         job.item_count()
@@ -189,43 +91,36 @@ fn report(job: &Job, out: &Path, journal: Option<&Journal>, keep_free: u64) -> R
             human(j.total_size)
         );
     }
-    say!("  free space now        {}", human(free));
-    say!("  normal extractors     {} free", human(left));
+    say!("  free space now        {}", human(plan.free));
+    say!("  normal extractors     {} free", human(plan.normal_needs));
     say!(
         "  HatchZip needs        {BOLD}{}{BOLD:#} free {DIM}(+{} kept spare){DIM:#}",
-        human(peak),
-        human(keep_free)
+        human(plan.needed),
+        human(plan.keep_free)
     );
-    if !reclaims {
+    if !plan.reclaims {
         say!(
             "  {DIM}note: the output is on another disk, so deleting the archive won't make room there{DIM:#}"
         );
     }
-
-    let fits = free >= peak + keep_free;
-    if fits {
-        let after = (free as i128 - end).max(0) as u64;
-        say!("  free after            {}", human(after));
+    if plan.fits {
+        say!("  free after            {}", human(plan.free_after));
     } else {
-        let short = human(peak + keep_free - free);
+        let short = human(plan.needed + plan.keep_free - plan.free);
         println!("{ERROR}Not enough space.{ERROR:#} Free up {short} more, or lower --keep-free.");
-        if job
-            .units
-            .iter()
-            .any(|u| u.items.len() > 1 && u.size() > free)
-        {
+        if plan.solid_block_bound {
             println!(
                 "{DIM}Most of that is one solid block, which can only be freed once all of it is \
                  extracted. Archives packed with smaller solid blocks need far less.{DIM:#}"
             );
         }
     }
-    Ok(fits)
+    Ok(plan.fits)
 }
 
 fn check(target: Target, space: Space) -> Result<ExitCode> {
     let (primary, paths) = locate(&target.archive)?;
-    let fits = match open(&primary, &paths, target.output, false)? {
+    let fits = match session::open(&primary, &paths, target.output, false)? {
         State::Fresh(job, out) => report(&job, &out, None, space.keep_free)?,
         State::Resume(job, journal) => {
             report(&job, &journal.output, Some(&journal), space.keep_free)?
@@ -244,12 +139,9 @@ fn check(target: Target, space: Space) -> Result<ExitCode> {
 
 fn list(archive: &Path) -> Result<ExitCode> {
     let (primary, paths) = locate(archive)?;
-    let job = match open(&primary, &paths, None, false) {
-        Ok(State::Fresh(job, _)) | Ok(State::Resume(job, _)) => job,
-        Ok(State::Orphan(_)) => bail!("nothing is left in this archive"),
-        // A non-empty folder of the same name only matters to extract.
-        Err(_) if !paths.exists() => Job::open(&primary, false)?,
-        Err(e) => return Err(e),
+    let job = match session::open(&primary, &paths, None, false)? {
+        State::Fresh(job, _) | State::Resume(job, _) => job,
+        State::Orphan(_) => bail!("nothing is left in this archive"),
     };
     println!("{BOLD}{:>10}  Name{BOLD:#}", "Size");
     for item in job.units.iter().rev().flat_map(|u| &u.items) {
@@ -267,7 +159,7 @@ fn list(archive: &Path) -> Result<ExitCode> {
         "{DIM}{} entries, {} unpacked, {} {} archive{DIM:#}",
         job.item_count(),
         human(job.remaining_size()),
-        human(job.storage.len()),
+        human(job.storage.original_len()),
         job.format_name
     );
     Ok(ExitCode::SUCCESS)
@@ -290,7 +182,7 @@ fn test_command(archive: &Path) -> Result<ExitCode> {
 fn extract(target: Target, verify_first: bool, space: Space, yes: bool) -> Result<ExitCode> {
     let keep_free = space.keep_free;
     let (primary, paths) = locate(&target.archive)?;
-    let (job, journal) = match open(&primary, &paths, target.output, true)? {
+    let (job, journal) = match session::open(&primary, &paths, target.output, true)? {
         State::Orphan(journal) => {
             engine::finish_orphaned(&journal, &paths)?;
             say!(
@@ -303,10 +195,7 @@ fn extract(target: Target, verify_first: bool, space: Space, yes: bool) -> Resul
             if !report(&job, &journal.output, Some(&journal), keep_free)? {
                 return Ok(ExitCode::from(EXIT_NO_SPACE));
             }
-            for (p, _) in job.uncommitted(&journal.output) {
-                std::fs::remove_file(&p)
-                    .with_context(|| format!("removing stale {}", p.display()))?;
-            }
+            session::clear_uncommitted(&job, &journal.output)?;
             (job, journal)
         }
         State::Fresh(job, out) => {
@@ -320,13 +209,7 @@ fn extract(target: Target, verify_first: bool, space: Space, yes: bool) -> Resul
             if !yes {
                 confirm(&display_name(&job), &out)?;
             }
-            let plan = Plan {
-                format: job.format_name,
-                tail_start: job.tail_start,
-                output: out,
-                total_size: job.remaining_size(),
-            };
-            let journal = Journal::create(&paths, &job.storage, plan)?;
+            let journal = session::begin(&job, &paths, out)?;
             (job, journal)
         }
     };
@@ -335,7 +218,10 @@ fn extract(target: Target, verify_first: bool, space: Space, yes: bool) -> Resul
         if STOP.swap(true, Ordering::Relaxed) {
             std::process::exit(EXIT_PAUSED.into());
         }
-        eprintln!("\nFinishing the current files, then pausing. Press Ctrl+C again to quit now.");
+        eprintln!(
+            "\nPausing. Files that were half written will be redone next time. \
+             Press Ctrl+C again to quit now."
+        );
     })
     .context("installing Ctrl+C handler")?;
 

@@ -8,6 +8,8 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow, bail};
 
+use crate::platform;
+
 #[derive(Clone, Debug)]
 pub struct Part {
     pub path: PathBuf,
@@ -68,23 +70,22 @@ impl Storage {
 
     fn with_parts(parts: Vec<Part>, writable: bool) -> Result<Self> {
         let path = &parts[0].path;
-        let first = OpenOptions::new()
-            .read(true)
-            .write(writable)
-            .open(path)
-            .with_context(|| {
-                let how = if writable {
-                    "reading and writing"
-                } else {
-                    "reading"
-                };
-                format!("opening {} for {how}", path.display())
-            })?;
-        if writable {
-            first
-                .try_lock()
-                .map_err(|_| anyhow!("{} is in use by another HatchZip run", path.display()))?;
-        }
+        let first = if writable {
+            platform::open_exclusive(path).map_err(|e| match e.kind() {
+                io::ErrorKind::WouldBlock => {
+                    anyhow!(
+                        "{} is in use by another program or HatchZip run",
+                        path.display()
+                    )
+                }
+                _ => anyhow!(e).context(format!(
+                    "opening {} for reading and writing",
+                    path.display()
+                )),
+            })?
+        } else {
+            File::open(path).with_context(|| format!("opening {}", path.display()))?
+        };
         Ok(Self {
             parts: parts.into(),
             first,
@@ -104,7 +105,7 @@ impl Storage {
     }
 
     /// The archive's original length.
-    pub fn len(&self) -> u64 {
+    pub fn original_len(&self) -> u64 {
         self.parts.last().map_or(0, |p| p.start + p.len)
     }
 
@@ -188,7 +189,7 @@ impl Storage {
             parts: self.parts.clone(),
             open: None,
             tail,
-            len: self.len(),
+            len: self.original_len(),
             pos: 0,
         }
     }

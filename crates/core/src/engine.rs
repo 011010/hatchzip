@@ -42,7 +42,7 @@ impl Job {
     pub fn open(path: &Path, writable: bool) -> Result<Self> {
         let storage = Arc::new(Storage::open(path, writable)?);
         let opened = archive::open(&storage, None)?;
-        let top = storage.len();
+        let top = storage.original_len();
         Self::build(storage, opened, top)
     }
 
@@ -116,7 +116,7 @@ impl Job {
     /// saved yet; `reclaims` that freed archive space lands on the output's
     /// disk.
     pub fn space_needed(&self, fresh: bool, reclaims: bool) -> (u64, i128) {
-        let tail = (self.storage.len() - self.tail_start) as i128;
+        let tail = (self.storage.original_len() - self.tail_start) as i128;
         let mut extra: i128 = if fresh { tail } else { 0 };
         let mut peak = extra;
         for (i, u) in self.units.iter().enumerate() {
@@ -252,9 +252,12 @@ impl Run<'_> {
             // take back, since its archive bytes are about to be truncated.
             platform::sync_batch(&out).context("flushing extracted files to disk")?;
             if platform::SYNC_EACH_FILE {
+                // Links are only recorded here and made at the end, so their
+                // folders may not exist yet.
                 let dirs: HashSet<PathBuf> = batch
                     .iter()
                     .flat_map(|u| &u.items)
+                    .filter(|it| matches!(it.kind, Kind::File | Kind::Dir))
                     .filter_map(|it| out.join(&it.path).parent().map(Path::to_path_buf))
                     .collect();
                 for d in &dirs {
