@@ -36,7 +36,7 @@ Ticked when it is merged and tested, not when it is started.
 - [x] Settings in the window: kept-free space, verify first, output folder
 - [x] Remember settings between runs (keep-free and verify-first, in the per-OS config folder)
 - [x] Password dialog, asking again on a wrong password
-- [x] "Stop and give me my archive back" (restore) on half-extracted and paused archives
+- [x] "Restore archive" on half-extracted and paused archives
 - [x] App icon in the window, and embedded in the Windows exe with a version resource
 - [ ] Contents as a folder tree
 - [x] Light and dark theme following the system
