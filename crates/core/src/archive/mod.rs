@@ -43,7 +43,34 @@ pub struct Unit {
     /// The format's own handle for the unit: a ZIP entry index, a 7z block.
     pub key: usize,
     pub items: Vec<Item>,
+    /// Decoding it needs the archive's password.
+    pub encrypted: bool,
 }
+
+/// The archive is encrypted and nothing can be read without its password.
+/// Front ends look for this error to ask for one.
+#[derive(Debug)]
+pub struct PasswordNeeded;
+
+impl std::fmt::Display for PasswordNeeded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("this archive is password protected")
+    }
+}
+
+impl std::error::Error for PasswordNeeded {}
+
+/// The password doesn't open the archive.
+#[derive(Debug)]
+pub struct WrongPassword;
+
+impl std::fmt::Display for WrongPassword {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("that password doesn't open this archive")
+    }
+}
+
+impl std::error::Error for WrongPassword {}
 
 impl Unit {
     pub fn size(&self) -> u64 {
@@ -75,15 +102,21 @@ pub struct Opened {
 }
 
 /// Parses the archive. `resume` carries the format recorded by an earlier
-/// run and the tail it saved; a fresh run sniffs the format instead.
-pub fn open(storage: &Arc<Storage>, resume: Option<(&str, Arc<Tail>)>) -> Result<Opened> {
+/// run and the tail it saved; a fresh run sniffs the format instead. The
+/// password is only needed for encrypted archives; whether it is right is
+/// found out when a unit is decoded (see `Job::check_password`).
+pub fn open(
+    storage: &Arc<Storage>,
+    resume: Option<(&str, Arc<Tail>)>,
+    password: Option<&str>,
+) -> Result<Opened> {
     let (name, tail) = match resume {
         Some((name, tail)) => (name.to_string(), Some(tail)),
         None => (sniff(storage)?.to_string(), None),
     };
     match name.as_str() {
-        "zip" => zip::open(storage, tail),
-        "7z" => sevenz::open(storage, tail),
+        "zip" => zip::open(storage, tail, password),
+        "7z" => sevenz::open(storage, tail, password),
         "tar" => tar::open(storage, tail),
         other => bail!("unknown archive format '{other}' in the journal"),
     }

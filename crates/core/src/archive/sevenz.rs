@@ -10,7 +10,10 @@ use anyhow::{Context, Result, anyhow, bail};
 use sevenz_rust2::{Archive, ArchiveEntry, BlockDecoder, Password, SIGNATURE_HEADER_SIZE};
 
 use super::storage::{Reader, Storage, Tail};
-use super::{Format, Item, Kind, Opened, Sink, Unit, Worker, is_symlink_mode, safe_path};
+use super::{
+    Format, Item, Kind, Opened, PasswordNeeded, Sink, Unit, Worker, WrongPassword, is_symlink_mode,
+    safe_path,
+};
 
 /// Files with no data (directories, empty files) live only in the header.
 /// They get a unit of their own that starts where the header does, so it's
@@ -22,27 +25,30 @@ const AES: &[u8] = &[0x06, 0xF1, 0x07, 0x01];
 struct SevenZ {
     storage: Arc<Storage>,
     archive: Archive,
+    password: Password,
 }
 
-pub fn open(storage: &Arc<Storage>, tail: Option<Arc<Tail>>) -> Result<Opened> {
+pub fn open(
+    storage: &Arc<Storage>,
+    tail: Option<Arc<Tail>>,
+    password: Option<&str>,
+) -> Result<Opened> {
+    use sevenz_rust2::Error;
+
     let resuming = tail.as_ref().map(|t| t.start);
     let mut reader = storage.reader(tail);
-    let archive = Archive::read(&mut reader, &Password::empty()).map_err(|e| {
-        if matches!(e, sevenz_rust2::Error::PasswordRequired) {
-            anyhow!("this 7z archive is password protected, which HatchZip doesn't support yet")
-        } else {
+    let password = password.map_or_else(Password::empty, Password::new);
+    let archive = Archive::read(&mut reader, &password).map_err(|e| match e {
+        Error::PasswordRequired => anyhow::Error::new(PasswordNeeded),
+        Error::BadSignature(_) | Error::UnsupportedVersion { .. } => {
             anyhow!("this is not a 7z archive HatchZip can read: {e}")
         }
+        // An encrypted header that won't parse is almost always the wrong
+        // password; damage can't be told apart from it.
+        _ if !password.is_empty() => anyhow::Error::new(WrongPassword),
+        e => anyhow!("this is not a 7z archive HatchZip can read: {e}"),
     })?;
 
-    if archive
-        .blocks
-        .iter()
-        .flat_map(|b| &b.coders)
-        .any(|c| c.encoder_method_id() == AES)
-    {
-        bail!("this 7z archive is password protected, which HatchZip doesn't support yet");
-    }
     if archive.files.iter().any(|f| f.is_anti_item()) {
         bail!(
             "this 7z archive holds update deletions (anti-items), which HatchZip doesn't support"
@@ -55,7 +61,6 @@ pub fn open(storage: &Arc<Storage>, tail: Option<Arc<Tail>>) -> Result<Opened> {
 
     let first_pack = archive.stream_map.block_first_pack_stream_index();
     let offsets = archive.stream_map.pack_stream_offsets();
-    let password = Password::empty();
     let mut covered = vec![false; archive.files.len()];
     let mut units = Vec::with_capacity(archive.blocks.len() + 1);
     for block in 0..archive.blocks.len() {
@@ -70,10 +75,15 @@ pub fn open(storage: &Arc<Storage>, tail: Option<Arc<Tail>>) -> Result<Opened> {
             .ok_or_else(|| anyhow!("this 7z archive's header is inconsistent"))?;
         covered[first..first + count].fill(true);
         let items = files.iter().map(item).collect::<Result<_>>()?;
+        let encrypted = archive.blocks[block]
+            .coders
+            .iter()
+            .any(|c| c.encoder_method_id() == AES);
         units.push(Unit {
             start,
             key: block,
             items,
+            encrypted,
         });
     }
     let empty: Vec<Item> = archive
@@ -88,6 +98,7 @@ pub fn open(storage: &Arc<Storage>, tail: Option<Arc<Tail>>) -> Result<Opened> {
             start: tail_start,
             key: NO_DATA,
             items: empty,
+            encrypted: false,
         });
     }
 
@@ -96,6 +107,7 @@ pub fn open(storage: &Arc<Storage>, tail: Option<Arc<Tail>>) -> Result<Opened> {
         format: Box::new(SevenZ {
             storage: storage.clone(),
             archive,
+            password,
         }),
         units,
         tail_start,
@@ -157,12 +169,14 @@ impl Worker for SevenZWorker<'_> {
             }
             return Ok(());
         }
-        let password = Password::empty();
+        if unit.encrypted && self.fmt.password.is_empty() {
+            return Err(PasswordNeeded.into());
+        }
         let decoder = BlockDecoder::new(
             self.threads,
             unit.key,
             &self.fmt.archive,
-            &password,
+            &self.fmt.password,
             &mut self.reader,
         );
         // The decoder's callback can only return its own error type, so the

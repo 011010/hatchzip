@@ -104,6 +104,7 @@ pub fn open(storage: &Arc<Storage>, tail: Option<Arc<Tail>>) -> Result<Opened> {
                 mode,
                 mtime,
             }],
+            encrypted: false,
         });
         entries.push(Entry {
             data_start: e.raw_file_position(),

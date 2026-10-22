@@ -32,12 +32,14 @@ pub enum State {
 /// `writable` is false for anything that only looks, so it works on
 /// read-only media and never takes the lock. For a fresh extraction the
 /// output folder may already hold other files, but nothing in the archive may
-/// land on top of one.
+/// land on top of one. `password` only matters for encrypted archives; see
+/// [`open_encrypted`] for the ask-and-retry loop front ends want.
 pub fn open(
     primary: &Path,
     paths: &Paths,
     output: Option<PathBuf>,
     writable: bool,
+    password: Option<&str>,
 ) -> Result<State> {
     if paths.exists() {
         let (journal, tail) = Journal::load(paths)?;
@@ -52,10 +54,10 @@ pub fn open(
         if !journal.parts[0].0.exists() {
             return Ok(State::Orphan(journal));
         }
-        let job = Job::resume(&journal, tail, writable)?;
+        let job = Job::resume(&journal, tail, writable, password)?;
         return Ok(State::Resume(job, journal));
     }
-    let job = Job::open(primary, writable)?;
+    let job = Job::open(primary, writable, password)?;
     let output = match output {
         Some(o) => std::path::absolute(o)?,
         None => default_output(primary),
@@ -64,6 +66,59 @@ pub fn open(
         check_collisions(&job, &output)?;
     }
     Ok(State::Fresh(job, output))
+}
+
+/// Opens an archive that may be encrypted. `ask` is called whenever a
+/// password is needed or the last one was wrong, and returns `None` to give
+/// up. Archives with a password are proven with [`Job::check_password`]
+/// before this returns, so nothing is deleted on a wrong guess. Returns the
+/// state and the password that worked.
+pub fn open_encrypted(
+    primary: &Path,
+    paths: &Paths,
+    output: Option<PathBuf>,
+    writable: bool,
+    mut password: Option<String>,
+    mut ask: impl FnMut(bool) -> Option<String>,
+) -> Result<(State, Option<String>)> {
+    let mut wrong = false;
+    loop {
+        let attempt = open(
+            primary,
+            paths,
+            output.clone(),
+            writable,
+            password.as_deref(),
+        );
+        let failure = match attempt {
+            Ok(State::Orphan(j)) => return Ok((State::Orphan(j), password)),
+            Ok(state) => {
+                let job = match &state {
+                    State::Fresh(job, _) | State::Resume(job, _) => job,
+                    State::Orphan(_) => unreachable!(),
+                };
+                if !job.encrypted() {
+                    return Ok((state, password));
+                }
+                match job.check_password() {
+                    Ok(()) => return Ok((state, password)),
+                    Err(e) => e,
+                }
+            }
+            Err(e) => e,
+        };
+        if failure.is::<crate::archive::WrongPassword>() {
+            wrong = true;
+        } else if !failure.is::<crate::archive::PasswordNeeded>() {
+            return Err(failure);
+        }
+        // Drop the open archive before asking, so nothing stays locked while
+        // a person types.
+        match ask(wrong) {
+            Some(p) => password = Some(p),
+            None => return Err(failure),
+        }
+    }
 }
 
 /// HatchZip never overwrites a file. That is also what lets a crashed run

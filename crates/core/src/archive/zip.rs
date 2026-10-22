@@ -4,18 +4,24 @@ use std::sync::Arc;
 
 use ::zip::ZipArchive;
 use ::zip::read::ZipArchiveMetadata;
+use ::zip::result::ZipError;
 use anyhow::{Context, Result, anyhow, bail};
 
 use super::storage::{Reader, Storage, Tail};
-use super::{Format, Item, Kind, Opened, Sink, Unit, Worker};
+use super::{Format, Item, Kind, Opened, PasswordNeeded, Sink, Unit, Worker, WrongPassword};
 use crate::fsutil;
 
 struct Zip {
     storage: Arc<Storage>,
     meta: Arc<ZipArchiveMetadata>,
+    password: Option<String>,
 }
 
-pub fn open(storage: &Arc<Storage>, tail: Option<Arc<Tail>>) -> Result<Opened> {
+pub fn open(
+    storage: &Arc<Storage>,
+    tail: Option<Arc<Tail>>,
+    password: Option<&str>,
+) -> Result<Opened> {
     let resuming = tail.clone();
     let mut zip = ZipArchive::new(storage.reader(tail))
         .context("this is not a ZIP archive HatchZip can read")?;
@@ -43,9 +49,6 @@ pub fn open(storage: &Arc<Storage>, tail: Option<Arc<Tail>>) -> Result<Opened> {
     for index in 0..meta.len() {
         let e = meta.entry(index)?;
         let name = e.name().map(|n| n.into_owned()).unwrap_or_default();
-        if e.encrypted() {
-            bail!("'{name}' is password protected, which HatchZip doesn't support yet");
-        }
         let path = e.enclosed_name().ok_or_else(|| {
             anyhow!("'{name}' would be written outside the output folder; refusing")
         })?;
@@ -66,6 +69,7 @@ pub fn open(storage: &Arc<Storage>, tail: Option<Arc<Tail>>) -> Result<Opened> {
                 mode: e.unix_mode(),
                 mtime: e.last_modified().and_then(fsutil::zip_time),
             }],
+            encrypted: e.encrypted(),
         });
     }
 
@@ -74,6 +78,7 @@ pub fn open(storage: &Arc<Storage>, tail: Option<Arc<Tail>>) -> Result<Opened> {
         format: Box::new(Zip {
             storage: storage.clone(),
             meta,
+            password: password.map(str::to_owned),
         }),
         units,
         tail_start,
@@ -87,19 +92,31 @@ impl Format for Zip {
         let zip = unsafe {
             ZipArchive::unsafe_new_with_metadata(self.storage.reader(None), self.meta.clone())
         };
-        Ok(Box::new(ZipWorker { zip }))
+        Ok(Box::new(ZipWorker {
+            zip,
+            password: self.password.as_deref(),
+        }))
     }
 }
 
-struct ZipWorker {
+struct ZipWorker<'a> {
     zip: ZipArchive<Reader>,
+    password: Option<&'a str>,
 }
 
-impl Worker for ZipWorker {
+impl Worker for ZipWorker<'_> {
     fn extract(&mut self, unit: &Unit, sink: &mut dyn Sink) -> Result<()> {
         // The zip crate checks the CRC as the stream ends, so corruption
         // surfaces as a read error inside the sink.
-        let mut data = self.zip.by_index(unit.key)?;
+        let opened = match (unit.encrypted, self.password) {
+            (false, _) => self.zip.by_index(unit.key),
+            (true, Some(pw)) => self.zip.by_index_decrypt(unit.key, pw.as_bytes()),
+            (true, None) => return Err(PasswordNeeded.into()),
+        };
+        let mut data = opened.map_err(|e| match e {
+            ZipError::InvalidPassword => anyhow::Error::new(WrongPassword),
+            e => anyhow::Error::new(e),
+        })?;
         sink.item(&unit.items[0], &mut data)
     }
 }
