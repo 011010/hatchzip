@@ -15,13 +15,13 @@ Ticked when it is merged and tested, not when it is started.
 - [x] `hatchzip restore`: turn a half-extracted archive back into a normal ZIP, 7z or tar any tool can open (tested with `unzip`, `7z` and GNU `tar`, including interrupted restores)
 - [ ] Decide whether `--verify-first` becomes the default
 - [x] Release workflow: static binaries for Windows x64, macOS arm64 and x64, Linux x64 and arm64, smoke tested, with SHA-256 checksums (dry run passed on all five)
-- [ ] First tagged release (`git tag v0.1.0 && git push --tags`)
+- [x] First release: v0.1.0 on GitHub Releases, 11 downloads with checksums; the one-line installer tested against it
 - [x] One-line install: `install.sh` for Linux and macOS (tested locally, including a tampered checksum and uninstall), `install.ps1` for Windows
 - [ ] Test `install.ps1` on a real Windows machine against a published release
 - [x] Archive over 4 GB with 64-bit offsets, including a crash and resume past 4 GiB (sparse test archive)
 - [ ] Real run on a big real-world archive and on a real Windows machine
 - [ ] Demo GIF at the top of the README: `unzip` fails on a nearly full disk, HatchZip finishes
-- [ ] Publish to crates.io so `cargo install hatchzip` works
+- [x] Publish to crates.io so `cargo install hatchzip` works (`hatchzip` and `hatchzip-core` 0.1.0; installed from crates.io in a clean folder)
 - [ ] Open a handful of `good first issue` issues from the lists below
 
 ## GUI, like WinRAR and 7-Zip

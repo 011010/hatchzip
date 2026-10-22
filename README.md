@@ -78,6 +78,14 @@ irm https://raw.githubusercontent.com/xevrion/hatchzip/main/install.ps1 | iex
 
 Both download the build for your machine from the latest release, check it against its published SHA-256 checksum, and install `hatchzip` and `hz` for your user only, with the man page and shell completions. No root or administrator rights.
 
+### With Cargo
+
+```sh
+cargo install hatchzip
+```
+
+This builds the command line tool from [crates.io](https://crates.io/crates/hatchzip). The engine is a library too: [`hatchzip-core`](https://crates.io/crates/hatchzip-core).
+
 ### From source
 
 With [Rust](https://rustup.rs) (the version is pinned in `rust-toolchain.toml` and installed automatically):
