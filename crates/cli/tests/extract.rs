@@ -178,15 +178,62 @@ fn refuses_to_start_without_enough_space() {
 }
 
 #[test]
-fn refuses_a_non_empty_output_folder() {
+fn extracts_next_to_unrelated_files_and_leaves_them_alone() {
+    let tmp = TempDir::new().unwrap();
+    let mut files = sample_files();
+    let archive = build_zip(tmp.path(), &files);
+    let out = tmp.path().join("out");
+    fs::create_dir_all(out.join("game/data")).unwrap();
+    fs::write(out.join("mine.txt"), "keep me").unwrap();
+    fs::write(out.join("game/data/notes.txt"), "mine too").unwrap();
+
+    // A crashed run deletes uncommitted output on resume; that must never
+    // reach files that were there before.
+    let env = [
+        ("HATCHZIP_BATCH_ENTRIES", "1"),
+        ("HATCHZIP_CRASH_AT", "after-extract"),
+        ("HATCHZIP_CRASH_AFTER", "10"),
+    ];
+    assert!(!extract(&archive, &out, &env).status.success());
+    assert_ok(&extract(&archive, &out, &[]));
+
+    files.insert("mine.txt".into(), b"keep me".to_vec());
+    files.insert("game/data/notes.txt".into(), b"mine too".to_vec());
+    assert_tree(&out, &files);
+    assert_consumed(&archive);
+}
+
+#[test]
+fn refuses_to_overwrite_an_existing_file() {
+    let tmp = TempDir::new().unwrap();
+    let archive = build_zip(tmp.path(), &sample_files());
+    let before = fs::read(&archive).unwrap();
+    let out = tmp.path().join("out");
+    fs::create_dir_all(out.join("game/data")).unwrap();
+    fs::write(out.join("game/data/small.pak"), "already here").unwrap();
+
+    let run = extract(&archive, &out, &[]);
+    assert!(!run.status.success());
+    assert!(String::from_utf8_lossy(&run.stderr).contains("never overwrites"));
+    assert_eq!(
+        fs::read_to_string(out.join("game/data/small.pak")).unwrap(),
+        "already here"
+    );
+    assert_eq!(fs::read(&archive).unwrap(), before);
+    assert!(!side_files(&archive)[0].exists());
+}
+
+#[test]
+fn refuses_when_a_file_sits_where_a_folder_must_go() {
     let tmp = TempDir::new().unwrap();
     let archive = build_zip(tmp.path(), &sample_files());
     let out = tmp.path().join("out");
-    fs::create_dir(&out).unwrap();
-    fs::write(out.join("mine.txt"), "keep me").unwrap();
+    fs::create_dir_all(out.join("game")).unwrap();
+    fs::write(out.join("game/many"), "a file, not a folder").unwrap();
 
-    assert!(!extract(&archive, &out, &[]).status.success());
-    assert_eq!(fs::read_to_string(out.join("mine.txt")).unwrap(), "keep me");
+    let run = extract(&archive, &out, &[]);
+    assert!(!run.status.success());
+    assert!(String::from_utf8_lossy(&run.stderr).contains("needs a folder"));
     assert!(archive.exists());
 }
 

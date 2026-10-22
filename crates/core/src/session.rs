@@ -30,8 +30,9 @@ pub enum State {
 }
 
 /// `writable` is false for anything that only looks, so it works on
-/// read-only media and never takes the lock. `output` is only checked for a
-/// fresh extraction, where it must be empty or not exist.
+/// read-only media and never takes the lock. For a fresh extraction the
+/// output folder may already hold other files, but nothing in the archive may
+/// land on top of one.
 pub fn open(
     primary: &Path,
     paths: &Paths,
@@ -59,13 +60,52 @@ pub fn open(
         Some(o) => std::path::absolute(o)?,
         None => default_output(primary),
     };
-    if writable && output.read_dir().is_ok_and(|mut d| d.next().is_some()) {
-        bail!(
-            "{} already exists and is not empty; pick another folder",
-            output.display()
-        );
+    if writable {
+        check_collisions(&job, &output)?;
     }
     Ok(State::Fresh(job, output))
+}
+
+/// HatchZip never overwrites a file. That is also what lets a crashed run
+/// delete whatever sits at the paths of its uncommitted entries: before the
+/// run started, nothing did.
+fn check_collisions(job: &Job, out: &Path) -> Result<()> {
+    if !out.exists() {
+        return Ok(());
+    }
+    let mut checked = std::collections::HashSet::new();
+    for item in job.units.iter().flat_map(|u| &u.items) {
+        let dest = out.join(&item.path);
+        if let Ok(meta) = fs::symlink_metadata(&dest)
+            && !(meta.is_dir() && item.kind == crate::archive::Kind::Dir)
+        {
+            bail!(
+                "{} already exists, and HatchZip never overwrites files. \
+                 Move it, or extract somewhere else",
+                dest.display()
+            );
+        }
+        // A file where the archive needs a folder would only fail halfway.
+        for parent in item
+            .path
+            .ancestors()
+            .skip(1)
+            .filter(|p| !p.as_os_str().is_empty())
+        {
+            if !checked.insert(parent.to_path_buf()) {
+                break;
+            }
+            if let Ok(meta) = fs::symlink_metadata(out.join(parent))
+                && !meta.is_dir()
+            {
+                bail!(
+                    "{} is a file, but the archive needs a folder there",
+                    out.join(parent).display()
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 /// `game.zip` and `game.7z.001` both extract into `game`, next to them.

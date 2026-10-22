@@ -104,7 +104,8 @@ fn list_shows_every_entry_without_touching_anything() {
     let before = fs::read(&archive).unwrap();
     let run = hatchzip(&["list", archive.to_str().unwrap()], &[]);
     assert_ok(&run);
-    let text = stdout(&run);
+    // Paths are listed with the platform's own separator.
+    let text = stdout(&run).replace('\\', "/");
     for name in files.keys() {
         assert!(
             text.contains(name.as_str()),
