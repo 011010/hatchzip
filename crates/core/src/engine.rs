@@ -630,19 +630,38 @@ impl Run<'_> {
             (self.progress.on_bytes)(n as u64);
             since_point += n as u64;
 
-            if since_point >= step
-                && written < item.size
-                && let Some(bit) = decoder.restart_point()
-            {
-                let point = Resume {
-                    unit: at.unit,
-                    written,
-                    bit,
-                    crc: crc.clone().finalize(),
-                };
-                punching = self.save_point(&file, part, out, point, stream, punching)?;
-                since_point = 0;
-                self.ensure_room(out, item, written, punching)?;
+            if since_point < step || written == item.size {
+                continue;
+            }
+            match decoder.restart_point() {
+                Some(bit) => {
+                    let point = Resume {
+                        unit: at.unit,
+                        written,
+                        bit,
+                        crc: crc.clone().finalize(),
+                    };
+                    punching = self.save_point(&file, part, out, point, stream, punching)?;
+                    since_point = 0;
+                    self.ensure_room(out, item, written, punching)?;
+                }
+                // A deflate block runs as long as its encoder likes; zlib-ng
+                // and zlib-rs write level 1 as a single block. Until it ends
+                // there is nowhere to resume from, so nothing can be freed,
+                // and the run has to stop before the disk fills.
+                None => {
+                    let avail = fsutil::available_space(out)?.saturating_sub(self.keep_free);
+                    if avail < 2 * BUF_SIZE as u64 {
+                        bail!(
+                            "stopped inside it: its compressed data has no point to resume from \
+                             in the last {}, so its archive space can't be freed yet. Nothing \
+                             is lost. Free up {} (what is left of this file) and run the same \
+                             command again to continue.",
+                            human(since_point),
+                            human(item.size - written),
+                        );
+                    }
+                }
             }
         }
         if written != item.size {

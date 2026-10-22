@@ -94,6 +94,7 @@ impl Format for Zip {
         let e = self.meta.entry(unit.key)?;
         let codec = match e.compression() {
             CompressionMethod::Stored => Codec::Stored,
+            CompressionMethod::Deflated => Codec::Deflate,
             _ => return Ok(None),
         };
         // Safety: as for workers. The local header is read to find where the

@@ -14,6 +14,10 @@ categories = ["compression", "filesystem"]
 anyhow.workspace = true
 crc32fast = "1.5.3"
 fs4 = "1.1.0"
+# Pure Rust zlib with the C API, for inflatePrime, inflateSetDictionary and
+# Z_BLOCK, which resuming a deflate stream mid-way needs and the safe
+# wrappers don't expose. Its zlib-rs core is already flate2's backend here.
+libz-rs-sys = "0.6.8"
 rayon = "1.12.0"
 serde.workspace = true
 serde_json.workspace = true

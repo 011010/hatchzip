@@ -25,6 +25,44 @@ fn files() -> Files {
     files
 }
 
+/// Text-like data with bursts of noise: deflate gives it Huffman blocks
+/// whose matches reach back across block boundaries, and stored blocks in
+/// between, so resuming needs the window and the exact bit position.
+fn text(len: usize) -> Vec<u8> {
+    let words: Vec<&str> = "hatch every byte of the archive back into files while the disk \
+        stays nearly full and a crash at any moment loses nothing 42 1337 zran"
+        .split(' ')
+        .collect();
+    let bursts = noise(len / 50 + 1, 77);
+    let mut x: u64 = 0x2545_F491_4F6C_DD1D;
+    let mut out = Vec::with_capacity(len + 64);
+    while out.len() < len {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        out.extend_from_slice(words[(x % words.len() as u64) as usize].as_bytes());
+        out.push(if x & 0x700 == 0 { b'\n' } else { b' ' });
+        if x & 0x3FFF == 0 {
+            let at = (x as usize >> 20) % (bursts.len() - 600);
+            out.extend_from_slice(&bursts[at..at + 600]);
+        }
+    }
+    out.truncate(len);
+    out
+}
+
+fn deflate_files() -> Files {
+    let mut files = sample_files();
+    files.insert(HUGE.into(), text(40_000_000));
+    files
+}
+
+/// How many bytes the huge entry takes in a ZIP archive.
+fn packed_size(archive: &Path) -> u64 {
+    let mut zip = zip::ZipArchive::new(fs::File::open(archive).unwrap()).unwrap();
+    zip.by_name(HUGE).unwrap().compressed_size()
+}
+
 /// `method` is used for the huge entry; the rest are stored or deflated in
 /// turn, so the ordinary path runs alongside.
 fn build_zip(dir: &Path, files: &Files, method: CompressionMethod) -> PathBuf {
@@ -90,8 +128,13 @@ fn stream_env<'a>(extra: &[(&'a str, &'a str)]) -> Vec<(&'a str, &'a str)> {
 }
 
 /// Kills a run at each step of a resume point, after `after` earlier points,
-/// then resumes it and checks the result.
-fn crash_inside_the_entry(build: impl Fn(&Path) -> PathBuf, files: &Files) {
+/// then resumes it and checks the result. `packed` gives the huge entry's
+/// size in the archive.
+fn crash_inside_the_entry(
+    build: impl Fn(&Path) -> PathBuf,
+    files: &Files,
+    packed: impl Fn(&Path) -> u64,
+) {
     for point in [
         "stream-after-sync",
         "stream-after-journal",
@@ -100,6 +143,7 @@ fn crash_inside_the_entry(build: impl Fn(&Path) -> PathBuf, files: &Files) {
         for after in [0u32, 3, 9] {
             let tmp = TempDir::new().unwrap();
             let archive = build(tmp.path());
+            let packed = packed(&archive);
             let out = tmp.path().join("out");
             let after_s = after.to_string();
 
@@ -119,15 +163,18 @@ fn crash_inside_the_entry(build: impl Fn(&Path) -> PathBuf, files: &Files) {
             // the huge one keeps its full extent while it streams.
             let len = fs::metadata(&archive).unwrap().len();
             assert!(
-                len > files[HUGE].len() as u64,
+                len > packed,
                 "{point}#{after}: the archive was cut to {len} mid-entry"
             );
             // A point that was journaled and then punched has given back
-            // the archive bytes behind it: at least `after + 1` steps.
+            // the archive bytes behind it: at least `after + 1` steps of
+            // output, less what compression saved, give or take 10%.
             if point == "stream-after-punch"
                 && let Some(used) = allocated(&archive)
             {
-                let freed = (after as u64 + 1) * 2_097_152 - 2 * 65_536;
+                let size = files[HUGE].len() as u64;
+                let per_step = 2_097_152 * packed / size * 9 / 10;
+                let freed = (after as u64 + 1) * per_step - 2 * 65_536;
                 assert!(
                     used + freed <= len.next_multiple_of(4096),
                     "{point}#{after}: {used} of {len} bytes still allocated"
@@ -147,13 +194,58 @@ fn crash_inside_the_entry(build: impl Fn(&Path) -> PathBuf, files: &Files) {
 #[test]
 fn a_stored_zip_entry_frees_space_as_it_goes_and_survives_crashes() {
     let files = files();
-    crash_inside_the_entry(|d| build_zip(d, &files, CompressionMethod::Stored), &files);
+    crash_inside_the_entry(
+        |d| build_zip(d, &files, CompressionMethod::Stored),
+        &files,
+        packed_size,
+    );
 }
 
 #[test]
 fn a_tar_entry_frees_space_as_it_goes_and_survives_crashes() {
     let files = files();
-    crash_inside_the_entry(|d| build_tar(d, &files), &files);
+    let size = files[HUGE].len() as u64;
+    crash_inside_the_entry(|d| build_tar(d, &files), &files, |_| size);
+}
+
+#[test]
+fn a_deflated_zip_entry_frees_space_as_it_goes_and_survives_crashes() {
+    let files = deflate_files();
+    crash_inside_the_entry(
+        |d| build_zip(d, &files, CompressionMethod::Deflated),
+        &files,
+        packed_size,
+    );
+}
+
+/// Damage inside a streamed entry stops the run, and since the bytes before
+/// the last point are gone, the half-written file and its point stay for a
+/// later run rather than being thrown away.
+#[test]
+fn damage_inside_a_streamed_entry_keeps_its_progress() {
+    let files = deflate_files();
+    let tmp = TempDir::new().unwrap();
+    let archive = build_zip(tmp.path(), &files, CompressionMethod::Deflated);
+    let mut bytes = fs::read(&archive).unwrap();
+    // Late in the entry's data, past several resume points.
+    let at = bytes.len() / 2 + bytes.len() / 4;
+    for b in &mut bytes[at..at + 64] {
+        *b ^= 0x5A;
+    }
+    fs::write(&archive, bytes).unwrap();
+    let out = tmp.path().join("out");
+
+    let run = extract(&archive, &out, &stream_env(&[]));
+    assert!(!run.status.success());
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(stderr.contains("huge.bin"), "{stderr}");
+    assert!(out.join(format!("{HUGE}.hatchzip-part")).exists());
+    for p in side_files(&archive) {
+        assert!(p.exists());
+    }
+    // Trying again fails the same way, and still loses nothing.
+    assert!(!extract(&archive, &out, &stream_env(&[])).status.success());
+    assert!(out.join(format!("{HUGE}.hatchzip-part")).exists());
 }
 
 /// The commit at the end of a streamed entry goes through the same two crash
