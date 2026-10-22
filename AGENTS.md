@@ -1,6 +1,6 @@
 # Project coding standards
 
-HatchZip extracts archives in place: it extracts an archive's units (ZIP entries, 7z solid blocks, tar entries) from the last to the first and truncates the archive behind itself, so the user only needs free space for the output. `src/archive/` has one file per format plus `storage.rs`, the only code that shrinks archive bytes; `src/engine.rs` plans and runs the extraction for every format; `src/journal.rs` holds the crash-safety state; `src/platform/` everything that differs per OS; `src/cli.rs` the command line. Read [docs/how-it-works.md](docs/how-it-works.md) before touching the engine, the journal or storage.
+HatchZip extracts archives in place: it extracts an archive's units (ZIP entries, 7z solid blocks, tar entries) from the last to the first and truncates the archive behind itself, so the user only needs free space for the output. The engine is the library `crates/core`: `archive/` has one file per format plus `storage.rs`, the only code that shrinks archive bytes; `engine.rs` plans and runs the extraction for every format; `journal.rs` holds the crash-safety state; `session.rs` is what front ends call; `platform/` everything that differs per OS. `crates/cli` is the `hatchzip` command and the end to end tests. Read [docs/how-it-works.md](docs/how-it-works.md) before touching the engine, the journal or storage.
 
 ## Communication
 
@@ -18,7 +18,7 @@ HatchZip extracts archives in place: it extracts an archive's units (ZIP entries
 
 ## Operating systems
 
-- Everything that differs between systems lives in `src/platform/`, one file per system (`linux.rs`, `macos.rs`, `windows.rs`, shared Unix code in `unix.rs`) providing the same items.
+- Everything that differs between systems lives in `crates/core/src/platform/`, one file per system (`linux.rs`, `macos.rs`, `windows.rs`, shared Unix code in `unix.rs`) providing the same items.
 - No `cfg(target_os)`, `cfg(windows)` or `cfg!(windows)` outside that module. `cfg(debug_assertions)` for test knobs is fine.
 - CI runs the tests on Linux, macOS and Windows, since nobody develops on the latter two.
 
@@ -32,6 +32,8 @@ HatchZip extracts archives in place: it extracts an archive's units (ZIP entries
 ## Traps already fallen into
 
 - The zip crate scans backwards over the whole archive looking for the end record. `storage::Reader` must return zeros, not an error, for regions already truncated away, or every resume fails with "No CDFH found". Tar relies on the same zeros to stop at the truncation point.
+- Byte-range locks are mandatory on Windows: locking the archive blocked our own reader threads ("another process has locked a portion of the file"). `platform::open_exclusive` uses the share mode there instead.
+- Linux flushes a batch with one `syncfs`, so per-folder bugs only show on macOS and Windows. Folders of link entries don't exist until the end; don't touch them per batch.
 - Don't hardcode unit counts in tests. The 7z writer gives some empty files a block of their own, which shifted every count by one; assert invariants (volumes past `committed_len` are gone) instead.
 - 7-Zip's default settings can put a whole archive in one solid block, which in-place extraction can't free until the end. Test 7z with `-ms=<size>` archives as well as defaults.
 - On resume, files a crashed batch wrote but never committed still occupy space. They are deleted before the space check, or the check refuses a run that fits.
@@ -47,5 +49,5 @@ HatchZip extracts archives in place: it extracts an archive's units (ZIP entries
 cargo test
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all
-cargo run -- check some.zip
+cargo run -p hatchzip -- check some.zip
 ```

@@ -36,8 +36,8 @@ git config core.hooksPath .githooks
 
 | Command | Description |
 |---|---|
-| `cargo run -- check <archive>` | Show the space plan for an archive |
-| `cargo run -- extract <archive> -o <dir>` | Extract from source. **This deletes the archive.** Work on a copy. |
+| `cargo run -p hatchzip -- check <archive>` | Show the space plan for an archive |
+| `cargo run -p hatchzip -- extract <archive> -o <dir>` | Extract from source. **This deletes the archive.** Work on a copy. |
 | `cargo test` | Run all tests |
 | `cargo clippy --all-targets -- -D warnings` | Lint; warnings are errors |
 | `cargo fmt --all` | Format |
@@ -72,25 +72,28 @@ mkdir -p /tmp/hz && unshare -rm sh -c '
 
 ## Project structure
 
+The workspace has two crates: `crates/core` (`hatchzip-core`, the engine as a library) and `crates/cli` (`hatchzip`, the command). Front ends only talk to the engine through `session` and `engine`.
+
 | Path | Contents |
 |---|---|
-| `src/cli.rs` | Command line definition, help text and exit codes; also the source of the completions and man page |
-| `src/main.rs` | Commands, the space report, confirmation and progress display |
-| `src/engine.rs` | Format-independent planning, batch extraction, commit and truncation |
-| `src/journal.rs` | The journal and the saved tail |
-| `src/archive/mod.rs` | The `Format`, `Worker` and `Sink` interface every format implements, format detection, path safety |
-| `src/archive/storage.rs` | One file or a split set, the reader that serves the saved tail, and the only code that shrinks or deletes archive bytes |
-| `src/archive/{zip,sevenz,tar}.rs` | One file per format: list its units, decode one |
-| `src/platform/` | Everything that differs between Linux, macOS and Windows |
-| `src/fsutil.rs` | Free space, atomic writes, timestamps |
-| `tests/extract.rs` | ZIP end to end tests, including the crash tests |
-| `tests/formats.rs` | 7z, tar and split archives through the same checks |
-| `tests/cli.rs` | Exit codes, quiet mode, listing, completions and man page |
+| `crates/core/src/session.rs` | Opening an archive fresh or half extracted, the space plan, starting a run; shared by every front end |
+| `crates/core/src/engine.rs` | Format-independent planning, batch extraction, commit and truncation |
+| `crates/core/src/journal.rs` | The journal and the saved tail |
+| `crates/core/src/archive/mod.rs` | The `Format`, `Worker` and `Sink` interface every format implements, format detection, path safety |
+| `crates/core/src/archive/storage.rs` | One file or a split set, the reader that serves the saved tail, and the only code that shrinks or deletes archive bytes |
+| `crates/core/src/archive/{zip,sevenz,tar}.rs` | One file per format: list its units, decode one |
+| `crates/core/src/platform/` | Everything that differs between Linux, macOS and Windows |
+| `crates/core/src/fsutil.rs` | Free space, atomic writes, timestamps |
+| `crates/cli/src/cli.rs` | Command line definition, help text and exit codes; also the source of the completions and man page |
+| `crates/cli/src/main.rs` | Commands, the space report, confirmation and progress display |
+| `crates/cli/tests/extract.rs` | ZIP end to end tests, including the crash tests |
+| `crates/cli/tests/formats.rs` | 7z, tar and split archives through the same checks |
+| `crates/cli/tests/cli.rs` | Exit codes, quiet mode, listing, completions and man page |
 | `docs/` | [How it works](docs/how-it-works.md), [format notes](docs/formats.md) |
 
 ### Adding a format
 
-A format is one file in `src/archive/` that parses the archive into units (each with the offset it starts at and the files it holds) and decodes one unit on request. The engine does everything else: batching, the space check, the journal, crash safety, truncation. A new format needs its own section in `tests/formats.rs`, including `crash_and_resume`, and the archives it is tested with should come from the format's own tools as well as from a Rust writer.
+A format is one file in `crates/core/src/archive/` that parses the archive into units (each with the offset it starts at and the files it holds) and decodes one unit on request. The engine does everything else: batching, the space check, the journal, crash safety, truncation. A new format needs its own section in `crates/cli/tests/formats.rs`, including `crash_and_resume`, and the archives it is tested with should come from the format's own tools as well as from a Rust writer.
 
 ## Engineering standards
 
@@ -106,7 +109,7 @@ Every figure in the README and docs was measured on real hardware. Changes that 
 
 ### Operating systems
 
-- Everything that differs between systems lives in `src/platform/`, one file per system providing the same items. No `cfg(target_os)` or `cfg(windows)` outside it.
+- Everything that differs between systems lives in `crates/core/src/platform/`, one file per system providing the same items. No `cfg(target_os)` or `cfg(windows)` outside it.
 - CI runs the full test suite on Linux, macOS and Windows.
 
 ### Rust

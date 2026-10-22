@@ -1,6 +1,6 @@
 # How it works
 
-This document describes how HatchZip extracts an archive while giving its space back, and why each step happens in the order it does. Read it before changing anything in `src/engine.rs`, `src/journal.rs` or `src/archive/storage.rs`.
+This document describes how HatchZip extracts an archive while giving its space back, and why each step happens in the order it does. Read it before changing anything in `engine.rs`, `journal.rs` or `archive/storage.rs` under `crates/core/src`.
 
 ## The space problem
 
@@ -28,7 +28,7 @@ Directories and empty files in 7z have no data at all, only header entries. They
 
 ## Split archives
 
-A split archive (`game.7z.001`, `game.7z.002`, ...) as 7-Zip writes it is one archive cut into byte ranges. `Storage` (`src/archive/storage.rs`) joins the volumes into one logical file. Truncating it to a length deletes every volume that lies wholly past that length and shortens the one it falls in. Volume boundaries need no special handling: a unit may span two volumes, and the volume past it is deleted once the unit is committed.
+A split archive (`game.7z.001`, `game.7z.002`, ...) as 7-Zip writes it is one archive cut into byte ranges. `Storage` (`crates/core/src/archive/storage.rs`) joins the volumes into one logical file. Truncating it to a length deletes every volume that lies wholly past that length and shortens the one it falls in. Volume boundaries need no special handling: a unit may span two volumes, and the volume past it is deleted once the unit is committed.
 
 Any volume's name finds the whole set, and the journal records every volume with its original length so a resume can check that what is left is an untouched prefix.
 
@@ -81,7 +81,7 @@ Each step can be interrupted. The order above makes every interruption recoverab
 
 The rule behind the table: **the journal never claims a file before it is durable, and the archive is never truncated past a unit before the journal claims it.**
 
-The test suites kill the process at steps 3 and 5 at many positions for every format, including split archives with volume boundaries inside entries, and check that the resumed run produces identical output (`tests/extract.rs`, `tests/formats.rs`).
+The test suites kill the process at steps 3 and 5 at many positions for every format, including split archives with volume boundaries inside entries, and check that the resumed run produces identical output (`crates/cli/tests/extract.rs`, `crates/cli/tests/formats.rs`).
 
 ## The space check
 
@@ -106,7 +106,7 @@ These are refused while the archive is still untouched:
 
 ## Operating systems
 
-Everything that differs between systems lives in `src/platform/`, one file per system:
+Everything that differs between systems lives in `crates/core/src/platform/`, one file per system:
 
 | | Linux | macOS | Windows |
 |---|---|---|---|
