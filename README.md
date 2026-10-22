@@ -47,7 +47,40 @@ The extra space HatchZip needs beyond the output is about the size of the larges
 
 ## Installation
 
-HatchZip has no published releases yet. Build it from source with [Rust](https://rustup.rs) (the version is pinned in `rust-toolchain.toml` and installed automatically):
+### Desktop app
+
+Download from the [latest release](https://github.com/xevrion/hatchzip/releases/latest):
+
+| System | File |
+|---|---|
+| Windows 10 and 11 (x64) | [`HatchZip-x64-setup.exe`](https://github.com/xevrion/hatchzip/releases/latest/download/HatchZip-x64-setup.exe): installs per user, no admin rights, adds the right-click menu |
+| macOS, Apple Silicon | [`HatchZip-aarch64.dmg`](https://github.com/xevrion/hatchzip/releases/latest/download/HatchZip-aarch64.dmg) |
+| macOS, Intel | [`HatchZip-x86_64.dmg`](https://github.com/xevrion/hatchzip/releases/latest/download/HatchZip-x86_64.dmg) |
+| Debian, Ubuntu | [`hatchzip_amd64.deb`](https://github.com/xevrion/hatchzip/releases/latest/download/hatchzip_amd64.deb) |
+| Fedora, openSUSE | [`hatchzip-x86_64.rpm`](https://github.com/xevrion/hatchzip/releases/latest/download/hatchzip-x86_64.rpm) |
+| Any Linux | [`HatchZip-x86_64.AppImage`](https://github.com/xevrion/hatchzip/releases/latest/download/HatchZip-x86_64.AppImage) |
+
+The installers also put the `hatchzip` command (and its short name `hz`) on your `PATH`. The Windows setup and the macOS apps are not code-signed yet: on Windows choose **More info**, then **Run anyway**; on macOS 15 and later, open the app once, then allow it under System Settings, Privacy & Security.
+
+### Command line only
+
+Linux and macOS:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/xevrion/hatchzip/main/install.sh | sh
+```
+
+Windows, in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/xevrion/hatchzip/main/install.ps1 | iex
+```
+
+Both download the build for your machine from the latest release, check it against its published SHA-256 checksum, and install `hatchzip` and `hz` for your user only, with the man page and shell completions. No root or administrator rights.
+
+### From source
+
+With [Rust](https://rustup.rs) (the version is pinned in `rust-toolchain.toml` and installed automatically):
 
 ```sh
 git clone https://github.com/xevrion/hatchzip.git
@@ -55,7 +88,7 @@ cd hatchzip
 cargo build --release
 ```
 
-The binary is `target/release/hatchzip` (`hatchzip.exe` on Windows). It is a single self-contained file; copy it anywhere on your `PATH`.
+The binaries are `target/release/hatchzip` and `target/release/hatchzip-gui` (`.exe` on Windows). Building the desktop app on Linux needs the fontconfig headers (`libfontconfig1-dev` or `fontconfig-devel`).
 
 ### Shell completions and man page
 
