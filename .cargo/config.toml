@@ -1,0 +1,4 @@
+# The Visual C++ runtime is linked into the program on Windows, so it runs on
+# a fresh install that never had the redistributable.
+[target.'cfg(all(windows, target_env = "msvc"))']
+rustflags = ["-C", "target-feature=+crt-static"]

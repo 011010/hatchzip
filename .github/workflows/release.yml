@@ -1,0 +1,172 @@
+name: release
+
+# Pushing a tag like v0.1.0 builds every download and publishes them as a
+# GitHub release. install.sh, install.ps1 and the website link to the latest
+# one, so file names never change between versions.
+#
+# Run by hand without a tag, it's a dry run: everything is built and smoke
+# tested, but nothing is published.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build and publish (empty for a dry run of this branch)
+        required: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+jobs:
+  # Static musl binaries: one file that runs on any distribution, old or new.
+  linux:
+    name: linux ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    env:
+      TARGET: ${{ matrix.arch }}-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.tag || github.ref }}
+      # zstd is C, and has to be compiled against musl too.
+      - name: packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends musl-tools
+      - name: build
+        run: |
+          rustup target add "$TARGET"
+          export "CC_${TARGET//-/_}=musl-gcc"
+          cargo build --release --locked -p hatchzip --target "$TARGET"
+      - name: check it is static
+        run: file "target/$TARGET/release/hatchzip" | tee /dev/stderr | grep -q "static"
+      - name: smoke test
+        run: python3 .github/scripts/smoke.py "target/$TARGET/release/hatchzip"
+      - name: package
+        run: |
+          bin="target/$TARGET/release/hatchzip"
+          name="hatchzip-${{ matrix.arch }}-linux"
+          mkdir -p "dist/$name/completions" "dist/$name/man"
+          cp "$bin" LICENSE-MIT LICENSE-APACHE README.md "dist/$name/"
+          "$bin" completions bash > "dist/$name/completions/hatchzip.bash"
+          "$bin" completions zsh > "dist/$name/completions/_hatchzip"
+          "$bin" completions fish > "dist/$name/completions/hatchzip.fish"
+          "$bin" man > "dist/$name/man/hatchzip.1"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          (cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: linux-${{ matrix.arch }}
+          path: dist/*.tar.gz*
+          if-no-files-found: error
+
+  windows:
+    name: windows x86_64
+    runs-on: windows-2025
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.tag || github.ref }}
+      # .cargo/config.toml links the C runtime in, so no redistributable is needed.
+      - name: build
+        run: cargo build --release --locked -p hatchzip
+      - name: smoke test
+        run: python .github/scripts/smoke.py target/release/hatchzip.exe
+      - name: package
+        run: |
+          name="hatchzip-x86_64-windows"
+          mkdir -p "dist/$name"
+          cp target/release/hatchzip.exe "dist/$name/"
+          cp LICENSE-MIT "dist/$name/LICENSE-MIT.txt"
+          cp LICENSE-APACHE "dist/$name/LICENSE-APACHE.txt"
+          cp README.md "dist/$name/README.md"
+          target/release/hatchzip.exe completions powershell > "dist/$name/hatchzip-completion.ps1"
+          (cd "dist/$name" && 7z a -tzip "../$name.zip" . > /dev/null)
+          (cd dist && sha256sum "$name.zip" > "$name.zip.sha256")
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-x86_64
+          path: dist/*.zip*
+          if-no-files-found: error
+
+  # Both Mac architectures from one Apple Silicon runner. Only the native one
+  # can be smoke tested; the Intel build is checked to be the right kind of file.
+  macos:
+    name: macos
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.tag || github.ref }}
+      - name: build
+        run: |
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          cargo build --release --locked -p hatchzip --target aarch64-apple-darwin
+          cargo build --release --locked -p hatchzip --target x86_64-apple-darwin
+          file target/x86_64-apple-darwin/release/hatchzip | grep -q x86_64
+      - name: smoke test
+        run: python3 .github/scripts/smoke.py target/aarch64-apple-darwin/release/hatchzip
+      - name: package
+        run: |
+          native=target/aarch64-apple-darwin/release/hatchzip
+          for arch in aarch64 x86_64; do
+            name="hatchzip-$arch-macos"
+            mkdir -p "dist/$name/completions" "dist/$name/man"
+            cp "target/$arch-apple-darwin/release/hatchzip" LICENSE-MIT LICENSE-APACHE README.md "dist/$name/"
+            "$native" completions bash > "dist/$name/completions/hatchzip.bash"
+            "$native" completions zsh > "dist/$name/completions/_hatchzip"
+            "$native" completions fish > "dist/$name/completions/hatchzip.fish"
+            "$native" man > "dist/$name/man/hatchzip.1"
+            tar -C dist -czf "dist/$name.tar.gz" "$name"
+            (cd dist && shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256")
+          done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: macos
+          path: dist/*.tar.gz*
+          if-no-files-found: error
+
+  publish:
+    needs: [linux, windows, macos]
+    if: startsWith(github.ref, 'refs/tags/') || inputs.tag != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: dist
+          merge-multiple: true
+      - name: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          ls -l dist
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" dist/* --generate-notes --title "HatchZip $TAG" --repo "$GITHUB_REPOSITORY"
+          fi
