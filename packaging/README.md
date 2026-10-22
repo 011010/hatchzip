@@ -17,8 +17,10 @@ before anything is published: in clean Ubuntu 22.04 and Fedora containers
 for the .deb and .rpm, by a silent install and uninstall on the Windows
 runner, and by opening the dmg on the Mac runner.
 
-The desktop app (`crates/gui`) is not merged yet. Until it is, the release
-workflow skips the installer jobs with a notice and publishes only the CLI.
+The Windows and macOS jobs build the app next to the CLI and package both.
+The Linux packages have a job of their own on Ubuntu 22.04: the app links
+the C library and fontconfig, so it's built on the oldest system it should
+run on, while the CLI inside is the static musl build from the tarball.
 
 ## Why these tools
 

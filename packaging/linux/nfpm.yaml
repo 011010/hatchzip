@@ -113,18 +113,19 @@ contents:
 # per user, so it's switched on from the app (`hatchzip-gui
 # --register-shell`), never by a package running as root.
 
-# The CLI is static and needs nothing. The desktop app needs the C library;
-# its window speaks Wayland or X11 and draws with OpenGL, all loaded at
-# runtime, so those are recommended rather than required. If the GUI ever
-# links one of them directly, the container test in the release workflow
-# fails with "error while loading shared libraries", and it moves up here.
+# The CLI is static and needs nothing. The desktop app links the C library
+# and fontconfig; its window speaks Wayland or X11 and draws with OpenGL or
+# on the CPU, all loaded at runtime, so those are recommended rather than
+# required. If the app ever links another library, the container test in the
+# release workflow fails with "error while loading shared libraries" (check
+# with `readelf -d hatchzip-gui | grep NEEDED`), and it moves up here.
 overrides:
   deb:
     depends:
       - libc6 (>= 2.35)
       - libgcc-s1
-    recommends:
       - libfontconfig1
+    recommends:
       - libxkbcommon0
       - libxkbcommon-x11-0
       - libwayland-client0
@@ -141,8 +142,8 @@ overrides:
     depends:
       - libc.so.6(GLIBC_2.35)(64bit)
       - libgcc_s.so.1()(64bit)
-    recommends:
       - libfontconfig.so.1()(64bit)
+    recommends:
       - libxkbcommon.so.0()(64bit)
       - libxkbcommon-x11.so.0()(64bit)
       - libwayland-client.so.0()(64bit)
