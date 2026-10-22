@@ -13,7 +13,7 @@ use ::tar::EntryType;
 use anyhow::{Context, Result, anyhow, bail};
 
 use super::storage::{Reader, Storage, Tail};
-use super::{Format, Item, Kind, Opened, Sink, Unit, Worker, safe_path};
+use super::{Codec, Format, Item, Kind, Opened, Sink, Stream, Unit, Worker, safe_path};
 
 struct Entry {
     data_start: u64,
@@ -128,6 +128,19 @@ impl Format for Tar {
         Ok(Box::new(TarWorker {
             fmt: self,
             reader: self.storage.reader(None),
+        }))
+    }
+
+    fn stream(&self, unit: &Unit) -> Result<Option<Stream>> {
+        let entry = &self.entries[unit.key];
+        if unit.items[0].kind != Kind::File {
+            return Ok(None);
+        }
+        Ok(Some(Stream {
+            data_start: entry.data_start,
+            packed: entry.size,
+            codec: Codec::Stored,
+            crc: None,
         }))
     }
 }

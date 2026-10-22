@@ -2,12 +2,12 @@
 
 use std::sync::Arc;
 
-use ::zip::ZipArchive;
 use ::zip::read::ZipArchiveMetadata;
+use ::zip::{CompressionMethod, ZipArchive};
 use anyhow::{Context, Result, anyhow, bail};
 
 use super::storage::{Reader, Storage, Tail};
-use super::{Format, Item, Kind, Opened, Sink, Unit, Worker};
+use super::{Codec, Format, Item, Kind, Opened, Sink, Stream, Unit, Worker};
 use crate::fsutil;
 
 struct Zip {
@@ -88,6 +88,29 @@ impl Format for Zip {
             ZipArchive::unsafe_new_with_metadata(self.storage.reader(None), self.meta.clone())
         };
         Ok(Box::new(ZipWorker { zip }))
+    }
+
+    fn stream(&self, unit: &Unit) -> Result<Option<Stream>> {
+        let e = self.meta.entry(unit.key)?;
+        let codec = match e.compression() {
+            CompressionMethod::Stored => Codec::Stored,
+            _ => return Ok(None),
+        };
+        // Safety: as for workers. The local header is read to find where the
+        // data begins, and it is never freed before the entry is committed.
+        let mut zip = unsafe {
+            ZipArchive::unsafe_new_with_metadata(self.storage.reader(None), self.meta.clone())
+        };
+        let data_start = zip
+            .by_index_raw(unit.key)?
+            .data_start()
+            .ok_or_else(|| anyhow!("can't find where '{}' begins", unit.items[0].path.display()))?;
+        Ok(Some(Stream {
+            data_start,
+            packed: e.compressed_size(),
+            codec,
+            crc: Some(e.crc32()),
+        }))
     }
 }
 
