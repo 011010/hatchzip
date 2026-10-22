@@ -134,7 +134,13 @@ mod tests {
         let len = 8usize << 20;
         let data: Vec<u8> = (0..len).map(|i| (i * 31 % 251) as u8 + 1).collect();
         fs::write(&path, &data).unwrap();
-        File::open(&path).unwrap().sync_all().unwrap();
+        // Windows refuses to flush through a read-only handle.
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .sync_all()
+            .unwrap();
 
         let supported = can_punch(&dir);
         eprintln!("punching supported in {}: {supported}", dir.display());
