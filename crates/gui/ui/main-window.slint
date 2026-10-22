@@ -1,6 +1,6 @@
 import { Button, CheckBox, LineEdit, ListView, Palette } from "std-widgets.slint";
 import { Theme, Line, VLine, FolderIcon, FileIcon, DropIcon } from "theme.slint";
-import { Phase, PlanView, TaskView, SpacePanel, Progress, Outcome, Busy, TaskButtons } from "parts.slint";
+import { Phase, PlanView, TaskView, SpacePanel, Progress, Outcome, Busy, TaskButtons, PasswordPrompt } from "parts.slint";
 
 export enum Screen { empty, loading, opened, error }
 
@@ -94,8 +94,23 @@ export component MainWindow inherits Window {
     in property <bool> keep-free-valid: true;
     in-out property <bool> verify-first;
     in property <TaskView> task;
+    in property <bool> password-shown;
+    in property <bool> password-wrong;
+    in property <string> password-name;
+    // The right-click menu setting exists where hatchzip-shell supports it.
+    in property <bool> shell-menu-available;
+    in-out property <bool> shell-menu-on;
+    // A short message at the bottom of the window, such as the outcome of
+    // changing the right-click menu.
+    in property <string> notice;
+    in property <bool> notice-bad;
 
     callback open-archive();
+    callback password-ok(string);
+    callback password-cancel();
+    callback shell-menu-toggled();
+    callback give-back();
+    callback verify-first-toggled();
     callback change-output();
     callback keep-free-edited(string);
     callback extract();
@@ -131,6 +146,25 @@ export component MainWindow inherits Window {
                 shortcut: @keys(Control + Q);
                 activated => {
                     root.quit();
+                }
+            }
+        }
+        Menu {
+            title: "Settings";
+            if root.shell-menu-available: MenuItem {
+                title: "Show HatchZip in the right-click menu";
+                checkable: true;
+                checked <=> root.shell-menu-on;
+                activated => {
+                    root.shell-menu-toggled();
+                }
+            }
+            MenuItem {
+                title: "Check every file before deleting anything";
+                checkable: true;
+                checked <=> root.verify-first;
+                activated => {
+                    root.verify-first-toggled();
                 }
             }
         }
@@ -182,6 +216,20 @@ export component MainWindow inherits Window {
                 color: Theme.faint;
                 font-size: Theme.small-size;
                 horizontal-alignment: center;
+            }
+        }
+        // The same switch as in the Settings menu, where a first-time user
+        // looks: most will use HatchZip from the right-click menu.
+        if root.shell-menu-available: HorizontalLayout {
+            y: parent.height - self.height - 20px;
+            height: self.preferred-height;
+            alignment: center;
+            CheckBox {
+                text: "Show HatchZip in the right-click menu";
+                checked <=> root.shell-menu-on;
+                toggled => {
+                    root.shell-menu-toggled();
+                }
             }
         }
     }
@@ -320,6 +368,9 @@ export component MainWindow inherits Window {
                 if root.mode == Mode.fresh: CheckBox {
                     text: "Check every file before deleting anything";
                     checked <=> root.verify-first;
+                    toggled => {
+                        root.verify-first-toggled();
+                    }
                 }
                 Rectangle {
                     horizontal-stretch: 1;
@@ -340,6 +391,12 @@ export component MainWindow inherits Window {
                     text: "Test";
                     clicked => {
                         root.test();
+                    }
+                }
+                if root.mode == Mode.resume: Button {
+                    text: "Stop and give me my archive back";
+                    clicked => {
+                        root.give-back();
                     }
                 }
                 Button {
@@ -390,8 +447,42 @@ export component MainWindow inherits Window {
                     back => {
                         root.back();
                     }
+                    give-back => {
+                        root.give-back();
+                    }
                 }
             }
+        }
+    }
+
+    if root.notice != "": Rectangle {
+        x: (parent.width - self.width) / 2;
+        // Above the footer's buttons and the right-click switch.
+        y: 16px;
+        width: min(notice-text.preferred-width + 32px, parent.width - 32px);
+        height: notice-text.preferred-height + 20px;
+        background: Palette.alternate-background;
+        border-radius: 6px;
+        border-width: 1px;
+        border-color: Theme.line;
+        notice-text := Text {
+            x: 16px;
+            width: parent.width - 32px;
+            text: root.notice;
+            wrap: word-wrap;
+            vertical-alignment: center;
+            color: root.notice-bad ? Theme.danger : Palette.foreground;
+        }
+    }
+
+    if root.password-shown: PasswordPrompt {
+        name: root.password-name;
+        wrong: root.password-wrong;
+        ok(text) => {
+            root.password-ok(text);
+        }
+        cancel => {
+            root.password-cancel();
         }
     }
 }

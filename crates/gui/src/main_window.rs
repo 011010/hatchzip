@@ -5,22 +5,23 @@ use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use anyhow::Result;
 use hatchzip_core::engine::Job;
 use hatchzip_core::human;
 use hatchzip_core::session::{self, State, display_name};
-use slint::{CloseRequestResponse, ComponentHandle, ModelRc};
+use slint::{CloseRequestResponse, ComponentHandle, ModelRc, Timer, TimerMode};
 
 use crate::backend::Drops;
 use crate::entries::{self, Entries, Entry};
 use crate::runner::Runner;
+use crate::settings::{self, Settings};
 use crate::task::Task;
 use crate::text::{self, gb_text, parse_gb, plan_view};
 use crate::work::{Request, sentence};
-use crate::{AboutWindow, MainWindow, Mode, PlanView, Screen, TaskView};
+use crate::{AboutWindow, MainWindow, Mode, PlanView, Screen, TaskView, platform, shell};
 
-pub const DEFAULT_KEEP_FREE: u64 = 2_000_000_000;
 const REPO: &str = "https://github.com/xevrion/hatchzip";
 
 /// An archive opened read-only for looking at. It takes no lock, so another
@@ -32,11 +33,22 @@ struct Loaded {
     mode: Mode,
     output: PathBuf,
     job: Option<Job>,
+    password: Option<String>,
 }
 
-fn load(archive: &Path) -> Result<Loaded> {
+/// Runs on a worker thread; an encrypted archive asks for its password
+/// through the window.
+fn load(archive: &Path, password: Option<String>) -> Result<Loaded> {
     let (primary, paths) = session::locate(archive)?;
-    let state = session::open(&primary, &paths, None, false, None)?;
+    let file_name = primary
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    let (state, password) =
+        session::open_encrypted(&primary, &paths, None, false, password, |wrong| {
+            crate::password::ask(&file_name, wrong)
+        })?;
     let (job, mode, output, total, left) = match state {
         State::Fresh(job, out) => {
             let total = job.remaining_size();
@@ -56,11 +68,7 @@ fn load(archive: &Path) -> Result<Loaded> {
     };
     let name = match &job {
         Some(j) => display_name(j),
-        None => primary
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .into_owned(),
+        None => file_name,
     };
     let mut summary = Vec::new();
     if let Some(j) = &job {
@@ -86,6 +94,7 @@ fn load(archive: &Path) -> Result<Loaded> {
         mode,
         output,
         job,
+        password,
     })
 }
 
@@ -107,6 +116,15 @@ struct App {
     /// old question never overwrites a newer one.
     generation: Cell<u64>,
     about: RefCell<Option<AboutWindow>>,
+    /// The password that opened the current archive, for this process only.
+    password: RefCell<Option<String>>,
+    settings: RefCell<Settings>,
+    /// Where settings are saved; `None` keeps them in memory, for tests.
+    settings_file: Option<PathBuf>,
+    notice_timer: Timer,
+    /// The person changed the right-click switch, so the startup check,
+    /// which may answer later, must not overwrite it.
+    shell_touched: Cell<bool>,
 }
 
 thread_local! {
@@ -123,7 +141,9 @@ fn post(f: impl FnOnce(&Rc<App>) + Send + 'static) {
 }
 
 pub fn run(archive: Option<PathBuf>, drops: Rc<Drops>) -> Result<()> {
-    let ui = build(archive, &drops)?;
+    let file = settings::file();
+    let saved = file.as_deref().map(Settings::load_from).unwrap_or_default();
+    let ui = build(archive, &drops, saved, file)?;
     // Opening only reads, so it needn't wait for the first frame like a
     // task does; this only arms the switch to software drawing.
     crate::backend::when_drawn(ui.window(), || {});
@@ -133,10 +153,18 @@ pub fn run(archive: Option<PathBuf>, drops: Rc<Drops>) -> Result<()> {
 }
 
 /// The window with everything wired up, and `archive` opening in the
-/// background. Shown but not run, so a test can drive it.
-pub fn build(archive: Option<PathBuf>, drops: &Drops) -> Result<MainWindow> {
+/// background. Shown but not run, so a test can drive it. Changed settings
+/// are saved to `settings_file`, if there is one.
+pub fn build(
+    archive: Option<PathBuf>,
+    drops: &Drops,
+    settings: Settings,
+    settings_file: Option<PathBuf>,
+) -> Result<MainWindow> {
     let ui = MainWindow::new()?;
-    ui.set_keep_free(gb_text(DEFAULT_KEEP_FREE).into());
+    ui.set_keep_free(gb_text(settings.keep_free).into());
+    ui.set_verify_first(settings.verify_first);
+    ui.set_shell_menu_available(platform::SHELL_MENU);
 
     let weak = ui.as_weak();
     let runner = Runner::install(move |task: &Task| {
@@ -151,14 +179,33 @@ pub fn build(archive: Option<PathBuf>, drops: &Drops) -> Result<MainWindow> {
         name: RefCell::new(String::new()),
         mode: Cell::new(Mode::Fresh),
         output: RefCell::new(PathBuf::new()),
-        keep_free: Cell::new(DEFAULT_KEEP_FREE),
+        keep_free: Cell::new(settings.keep_free),
         job: RefCell::default(),
         generation: Cell::new(0),
         about: RefCell::new(None),
+        password: RefCell::new(None),
+        settings: RefCell::new(settings),
+        settings_file,
+        notice_timer: Timer::default(),
+        shell_touched: Cell::new(false),
     });
     APP.with(|a| *a.borrow_mut() = Some(app.clone()));
 
     wire(&ui, &app);
+    crate::password::host_in!(ui);
+    if platform::SHELL_MENU {
+        // Reading the registry or the menu folders is disk work; the box
+        // fills in a moment later.
+        std::thread::spawn(|| {
+            let on =
+                hatchzip_shell::Dirs::current().is_ok_and(|d| hatchzip_shell::is_registered(&d));
+            post(move |app| {
+                if !app.shell_touched.get() {
+                    app.ui().set_shell_menu_on(on);
+                }
+            });
+        });
+    }
     *drops.on_drop.borrow_mut() = Some(Box::new(|path| {
         if let Some(app) = APP.with(|a| a.borrow().clone()) {
             app.open(path);
@@ -209,6 +256,15 @@ fn wire(ui: &MainWindow, app: &Rc<App>) {
     let a = app.clone();
     ui.on_about(move || a.show_about());
     let a = app.clone();
+    ui.on_verify_first_toggled(move || {
+        let on = a.ui().get_verify_first();
+        a.change_settings(|s| s.verify_first = on);
+    });
+    let a = app.clone();
+    ui.on_shell_menu_toggled(move || a.shell_menu_toggled());
+    let a = app.clone();
+    ui.on_give_back(move || a.give_back());
+    let a = app.clone();
     ui.on_quit(move || {
         if a.runner.may_close() {
             let _ = slint::quit_event_loop();
@@ -253,11 +309,21 @@ impl App {
                 .into(),
         );
         ui.set_screen(Screen::Loading);
+        // Opening the same archive again, after a run, needn't ask again.
+        let same = self.archive.borrow().as_ref() == Some(&path);
+        let password = if same {
+            self.password
+                .borrow()
+                .clone()
+                .or_else(|| self.runner.password())
+        } else {
+            None
+        };
         *self.archive.borrow_mut() = Some(path.clone());
         *self.job.borrow_mut() = SharedJob::default();
 
         std::thread::spawn(move || {
-            let result = load(&path);
+            let result = load(&path, password);
             post(move |app| app.loaded(generation, result));
         });
     }
@@ -282,6 +348,7 @@ impl App {
         ui.set_output(loaded.output.display().to_string().into());
         ui.set_screen(Screen::Opened);
         *self.name.borrow_mut() = loaded.name;
+        *self.password.borrow_mut() = loaded.password;
         self.mode.set(loaded.mode);
         *self.output.borrow_mut() = loaded.output;
         *self.job.borrow_mut() = Arc::new(Mutex::new(loaded.job));
@@ -329,10 +396,59 @@ impl App {
             Some(bytes) => {
                 ui.set_keep_free_valid(true);
                 self.keep_free.set(bytes);
+                self.change_settings(|s| s.keep_free = bytes);
                 self.refresh_plan();
             }
             None => ui.set_keep_free_valid(false),
         }
+    }
+
+    fn change_settings(&self, f: impl FnOnce(&mut Settings)) {
+        let mut settings = self.settings.borrow_mut();
+        f(&mut settings);
+        if let Some(file) = &self.settings_file {
+            settings.save(file);
+        }
+    }
+
+    fn shell_menu_toggled(&self) {
+        self.shell_touched.set(true);
+        let on = self.ui().get_shell_menu_on();
+        std::thread::spawn(move || {
+            let result = shell::set_menu(on);
+            post(move |app| {
+                let (text, bad) = match result {
+                    Ok(()) if on => (
+                        "HatchZip is now in the right-click menu.".to_string(),
+                        false,
+                    ),
+                    Ok(()) => (
+                        "HatchZip is no longer in the right-click menu.".to_string(),
+                        false,
+                    ),
+                    Err(e) => {
+                        // Show the box as it really is.
+                        app.ui().set_shell_menu_on(!on);
+                        (sentence(&format!("{e:#}")), true)
+                    }
+                };
+                app.notify(&text, bad);
+            });
+        });
+    }
+
+    /// A short message at the bottom of the window that goes away by itself.
+    fn notify(&self, text: &str, bad: bool) {
+        let ui = self.ui();
+        ui.set_notice(text.into());
+        ui.set_notice_bad(bad);
+        let weak = ui.as_weak();
+        self.notice_timer
+            .start(TimerMode::SingleShot, Duration::from_secs(6), move || {
+                if let Some(ui) = weak.upgrade() {
+                    ui.set_notice("".into());
+                }
+            });
     }
 
     fn pick_archive(&self) {
@@ -396,6 +512,7 @@ impl App {
             output: (self.mode.get() == Mode::Fresh).then(|| output.clone()),
             keep_free: self.keep_free.get(),
             verify_first: ui.get_verify_first(),
+            password: self.password.borrow().clone(),
         };
         // On Windows our read handle would block the exclusive one the
         // extraction takes, so the worker closes it first, waiting out any
@@ -408,12 +525,33 @@ impl App {
         );
     }
 
+    /// Stops a half-done extraction for good and makes the archive whole.
+    fn give_back(&self) {
+        if self.runner.running() {
+            return;
+        }
+        let Some(archive) = self.archive.borrow().clone() else {
+            return;
+        };
+        // Restore writes to the archive, so our read handle goes first, as
+        // for an extraction.
+        let job = self.job.replace(SharedJob::default());
+        self.runner.start_after(
+            move || drop(job.lock().map(|mut j| j.take())),
+            Task::restore(&self.name.borrow()),
+            Request::Restore { archive },
+        );
+    }
+
     fn test(&self) {
         let Some(archive) = self.archive.borrow().clone() else {
             return;
         };
-        self.runner
-            .start(Task::test(&self.name.borrow()), Request::Test { archive });
+        let request = Request::Test {
+            archive,
+            password: self.password.borrow().clone(),
+        };
+        self.runner.start(Task::test(&self.name.borrow()), request);
     }
 
     fn back(&self) {
@@ -429,8 +567,10 @@ impl App {
             self.ui().set_task(TaskView::default());
             return;
         }
-        // Anything else may have changed the archive: look again.
-        if let Some(path) = self.archive.borrow().clone() {
+        // Anything else may have changed the archive: look again. The path
+        // is copied out first, since opening replaces it.
+        let path = self.archive.borrow().clone();
+        if let Some(path) = path {
             self.open(path);
         }
     }

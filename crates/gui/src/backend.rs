@@ -17,7 +17,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use slint::winit_030::winit::event::WindowEvent;
 use slint::winit_030::winit::event_loop::ActiveEventLoop;
-use slint::winit_030::winit::window::{Window as WinitWindow, WindowId};
+use slint::winit_030::winit::window::{Icon, Window as WinitWindow, WindowId};
 use slint::winit_030::{CustomApplicationHandler, EventResult};
 use slint::{RenderingState, Timer};
 
@@ -77,11 +77,37 @@ impl CustomApplicationHandler for Handler {
 }
 
 pub fn select(drops: Rc<Drops>) -> Result<()> {
+    let icon = window_icon();
     slint::BackendSelector::new()
         .backend_name("winit".into())
         .with_winit_custom_application_handler(Handler(drops))
+        // With the `.slint` files' `icon:` set to an embedded PNG, Slint
+        // 1.18 left X11 with an empty _NET_WM_ICON (checked with xprop), so
+        // the windows set no icon there and winit gets it here, for every
+        // window. Wayland and macOS take the icon from the desktop file or
+        // the app bundle instead.
+        .with_winit_window_attributes_hook(move |attrs| attrs.with_window_icon(icon.clone()))
         .select()
         .context("starting the window system")
+}
+
+fn window_icon() -> Option<Icon> {
+    let png = include_bytes!("../../../assets/icon/png/hatchzip-64.png");
+    let mut reader = png::Decoder::new(std::io::Cursor::new(&png[..]))
+        .read_info()
+        .ok()?;
+    let mut buf = vec![0; reader.output_buffer_size()?];
+    let info = reader.next_frame(&mut buf).ok()?;
+    buf.truncate(info.buffer_size());
+    let rgba = match info.color_type {
+        png::ColorType::Rgba => buf,
+        png::ColorType::Rgb => buf
+            .chunks(3)
+            .flat_map(|p| [p[0], p[1], p[2], 255])
+            .collect(),
+        _ => return None,
+    };
+    Icon::from_rgba(rgba, info.width, info.height).ok()
 }
 
 /// Runs `start` once it is safe to touch the archive: after the first frame
@@ -136,5 +162,13 @@ fn restart_in_software() -> ! {
             eprintln!("hatchzip-gui: could not restart: {e}");
             std::process::exit(1)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_window_icon_decodes() {
+        assert!(super::window_icon().is_some());
     }
 }

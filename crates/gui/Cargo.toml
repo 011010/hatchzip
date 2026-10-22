@@ -11,10 +11,15 @@ publish = false
 
 [dependencies]
 hatchzip-core.workspace = true
+hatchzip-shell = { path = "../shell" }
 anyhow.workspace = true
 clap = { version = "4", features = ["derive"] }
 open = "5.4.5"
+# Decodes the window icon; already in the tree through Slint's build.
+png = "0.18.1"
 rfd = "0.17.2"
+serde.workspace = true
+serde_json.workspace = true
 # No Qt backend: winit with FemtoVG (OpenGL) first and the software renderer
 # as the fallback for machines without a working GPU driver. `~1.18` because
 # `unstable-winit-030`, needed for files dropped on the window, may change in
@@ -33,11 +38,12 @@ slint = { version = "~1.18.1", default-features = false, features = [
 
 [build-dependencies]
 slint-build = "~1.18.1"
+# Only used when the target is Windows; see build.rs.
+winresource = { version = "0.1.34", default-features = false }
 
 [dev-dependencies]
 # Drives the real windows headlessly, drawn by the software renderer. Must
 # match the version `slint` pins its internals to.
 i-slint-backend-testing = { version = "=1.18.1", features = ["renderer-software"] }
-png = "0.18.1"
 tempfile.workspace = true
 zip.workspace = true

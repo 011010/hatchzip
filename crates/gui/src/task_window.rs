@@ -10,8 +10,8 @@ use slint::{CloseRequestResponse, ComponentHandle};
 
 use crate::TaskWindow;
 use crate::args::TaskKind;
-use crate::main_window::DEFAULT_KEEP_FREE;
 use crate::runner::Runner;
+use crate::settings::Settings;
 use crate::task::Task;
 use crate::work::Request;
 
@@ -25,15 +25,20 @@ pub fn output_for(kind: TaskKind, primary: &Path) -> Option<PathBuf> {
 }
 
 pub fn run(kind: TaskKind, archive: PathBuf) -> Result<()> {
-    let (ui, start) = build(kind, archive)?;
+    let (ui, start) = build(kind, archive, Settings::saved())?;
     crate::backend::when_drawn(ui.window(), start);
     ui.run()?;
     Ok(())
 }
 
 /// The window, shown, and the function that starts the task. Nothing
-/// touches the archive until that is called.
-pub fn build(kind: TaskKind, archive: PathBuf) -> Result<(TaskWindow, impl FnOnce() + 'static)> {
+/// touches the archive until that is called. The main window's settings
+/// apply here too.
+pub fn build(
+    kind: TaskKind,
+    archive: PathBuf,
+    settings: Settings,
+) -> Result<(TaskWindow, impl FnOnce() + 'static)> {
     let ui = TaskWindow::new()?;
     // Only resolves the path; a missing file is reported by the run itself.
     let primary = session::locate(&archive).map_or_else(|_| archive.clone(), |(p, _)| p);
@@ -49,11 +54,18 @@ pub fn build(kind: TaskKind, archive: PathBuf) -> Result<(TaskWindow, impl FnOnc
             Request::Extract {
                 archive,
                 output: Some(out.clone()),
-                keep_free: DEFAULT_KEEP_FREE,
-                verify_first: false,
+                keep_free: settings.keep_free,
+                verify_first: settings.verify_first,
+                password: None,
             },
         ),
-        None => (Task::test(&name), Request::Test { archive }),
+        None => (
+            Task::test(&name),
+            Request::Test {
+                archive,
+                password: None,
+            },
+        ),
     };
 
     let weak = ui.as_weak();
@@ -76,6 +88,9 @@ pub fn build(kind: TaskKind, archive: PathBuf) -> Result<(TaskWindow, impl FnOnc
             let _ = open::that_detached(out);
         }
     });
+    let r = runner.clone();
+    ui.on_give_back(move || r.give_back());
+    crate::password::host_in!(ui);
     let r = runner.clone();
     ui.on_dismiss(move || {
         if r.may_close() {

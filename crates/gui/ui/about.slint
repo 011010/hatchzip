@@ -16,14 +16,28 @@ export component AboutWindow inherits Window {
         spacing: 10px;
         alignment: start;
 
-        Text {
-            text: "HatchZip";
-            font-size: 20px;
-            font-weight: 600;
-        }
-        Text {
-            text: "Version " + root.version;
-            color: Theme.muted;
+        HorizontalLayout {
+            spacing: 14px;
+            alignment: start;
+            Image {
+                // Drawn on a 16 px grid, so 48 keeps every edge sharp.
+                source: @image-url("../../../assets/icon/png/hatchzip-48.png");
+                width: 48px;
+                height: 48px;
+            }
+            VerticalLayout {
+                alignment: center;
+                spacing: 2px;
+                Text {
+                    text: "HatchZip";
+                    font-size: 20px;
+                    font-weight: 600;
+                }
+                Text {
+                    text: "Version " + root.version;
+                    color: Theme.muted;
+                }
+            }
         }
         Text {
             text: "Extracts huge archives in place. The archive shrinks as your files come out, so you only need room for the files.";
