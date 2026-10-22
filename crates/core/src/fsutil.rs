@@ -144,6 +144,11 @@ mod tests {
 
         let supported = can_punch(&dir);
         eprintln!("punching supported in {}: {supported}", dir.display());
+        // CI runs on ext4, APFS and NTFS, which all free punched space, so
+        // there a "not supported" would be a bug hiding as a skip.
+        if std::env::var_os("HATCHZIP_EXPECT_PUNCH").is_some() {
+            assert!(supported, "this filesystem should free punched ranges");
+        }
         if supported {
             let before = platform::allocated_bytes(&path).unwrap();
             let f = fs::OpenOptions::new().write(true).open(&path).unwrap();

@@ -68,7 +68,11 @@ jobs:
       # resume it, so an abort message in the log is expected, not a failure.
       # Every suite runs even after one fails, so a platform bug shows all
       # its symptoms in one run instead of one per push.
+      # The runners' disks (ext4, APFS, NTFS) all free punched space, so the
+      # punch test must see it happen rather than skip.
       - run: cargo test --locked --no-fail-fast
+        env:
+          HATCHZIP_EXPECT_PUNCH: '1'
 
   # The one check branch protection requires, so adding or renaming a job
   # above never means editing the protection rules. This passes when
