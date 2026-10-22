@@ -149,7 +149,11 @@ pub fn run(request: &Request, counters: &Arc<Counters>, send: &dyn Fn(Update), a
             && session::locate(request.archive()).is_ok_and(|(_, paths)| paths.exists());
         let message = if e.is::<PasswordNeeded>() || e.is::<WrongPassword>() {
             // Only reached when the person closed the password prompt.
-            "No password was given, so nothing was changed.".to_string()
+            match request {
+                Request::Test { .. } => "Test cancelled. The archive was not modified.",
+                _ => "Extraction cancelled. The archive was not modified.",
+            }
+            .to_string()
         } else {
             sentence(&format!("{e:#}"))
         };
@@ -225,7 +229,7 @@ fn extract(
             send(Update::Planned(plan));
             if verify_first {
                 verify(&job, counters, send)
-                    .context("the archive is damaged, so nothing was extracted")?;
+                    .context("the archive is damaged; no files were extracted")?;
                 if counters.stop.load(Ordering::Relaxed) {
                     send(Update::Paused);
                     return Ok(());
@@ -280,7 +284,9 @@ fn test(
     let (primary, paths) = session::locate(archive)?;
     let job = match open(&primary, &paths, None, false, secret, send)? {
         State::Fresh(job, _) => job,
-        _ => bail!("this archive is partly extracted, so it can't be tested; extract it to finish"),
+        _ => bail!(
+            "this archive is partially extracted and cannot be tested. Resume or restore it first"
+        ),
     };
     verify(&job, counters, send).context("the archive is damaged")?;
     send(Update::Tested(job.item_count()));
@@ -587,7 +593,7 @@ mod tests {
             updates,
             [
                 "checking",
-                "failed: No password was given, so nothing was changed."
+                "failed: Extraction cancelled. The archive was not modified."
             ]
         );
         assert!(archive.exists());

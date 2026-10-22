@@ -26,14 +26,19 @@ pub fn plural(n: usize, one: &str, many: &str) -> String {
     format!("{} {}", count(n), if n == 1 { one } else { many })
 }
 
-/// A time left, rounded the way people say it.
+/// A time remaining, rounded to the unit that matters.
 pub fn duration(d: Duration) -> String {
     let s = d.as_secs();
+    let unit = |n: u64, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
     match s {
-        0..=4 => "a few seconds".to_string(),
-        5..=59 => format!("{s} s"),
-        60..=3599 => format!("{} min", s.div_ceil(60)),
-        _ => format!("{} h {} min", s / 3600, (s % 3600) / 60),
+        0..=4 => "less than 5 seconds".to_string(),
+        5..=59 => unit(s, "second", "seconds"),
+        60..=3599 => unit(s.div_ceil(60), "minute", "minutes"),
+        _ => format!(
+            "{} {}",
+            unit(s / 3600, "hour", "hours"),
+            unit((s % 3600) / 60, "minute", "minutes")
+        ),
     }
 }
 
@@ -59,20 +64,25 @@ pub fn gb_text(bytes: u64) -> String {
 
 pub fn plan_view(plan: &SpacePlan) -> PlanView {
     let verdict = if plan.fits {
-        "It fits.".to_string()
+        "Sufficient disk space".to_string()
     } else {
         let short = plan.needed + plan.keep_free - plan.free;
-        format!("Not enough space. Free up {} more.", human(short))
+        format!(
+            "Insufficient disk space. {} more is required.",
+            human(short)
+        )
     };
     let mut notes = Vec::new();
     if !plan.fits && plan.solid_block_bound {
         notes.push(
-            "Most of this is one solid block, which can only be freed once all of it is out. \
-             Archives packed with smaller blocks need far less.",
+            "Most of the required space is one solid block, which can only be released after \
+             it is fully extracted.",
         );
     }
     if !plan.reclaims {
-        notes.push("The folder is on another disk, so deleting the archive won't make room there.");
+        notes.push(
+            "The destination is on another drive, so removing the archive does not free space there.",
+        );
     }
     let used = plan.needed + plan.keep_free;
     PlanView {
@@ -136,15 +146,15 @@ impl Rate {
         (secs >= 1.0).then(|| b1.saturating_sub(b0) as f64 / secs)
     }
 
-    /// "120.5 MB/s, 3 min left"
+    /// "120.5 MB/s, 3 minutes remaining"
     pub fn describe(&self, left: u64) -> String {
         match self.per_second() {
             Some(r) if r >= 1.0 => format!(
-                "{}/s, {} left",
+                "{}/s, {} remaining",
                 human(r as u64),
                 duration(Duration::from_secs_f64(left as f64 / r))
             ),
-            Some(_) => "Waiting for the disk".to_string(),
+            Some(_) => "Waiting for disk".to_string(),
             None => String::new(),
         }
     }
@@ -166,10 +176,15 @@ mod tests {
 
     #[test]
     fn durations_round_like_people_do() {
-        assert_eq!(duration(Duration::from_secs(2)), "a few seconds");
-        assert_eq!(duration(Duration::from_secs(42)), "42 s");
-        assert_eq!(duration(Duration::from_secs(61)), "2 min");
-        assert_eq!(duration(Duration::from_secs(3 * 3600 + 125)), "3 h 2 min");
+        assert_eq!(duration(Duration::from_secs(2)), "less than 5 seconds");
+        assert_eq!(duration(Duration::from_secs(42)), "42 seconds");
+        assert_eq!(duration(Duration::from_secs(60)), "1 minute");
+        assert_eq!(duration(Duration::from_secs(61)), "2 minutes");
+        assert_eq!(
+            duration(Duration::from_secs(3 * 3600 + 125)),
+            "3 hours 2 minutes"
+        );
+        assert_eq!(duration(Duration::from_secs(3600 + 60)), "1 hour 1 minute");
     }
 
     #[test]
@@ -194,7 +209,10 @@ mod tests {
         assert_eq!(rate.describe(1), "");
         rate.add(t + Duration::from_secs(2), 200_000_000);
         assert_eq!(rate.per_second(), Some(100_000_000.0));
-        assert_eq!(rate.describe(6_000_000_000), "100.0 MB/s, 1 min left");
+        assert_eq!(
+            rate.describe(6_000_000_000),
+            "100.0 MB/s, 1 minute remaining"
+        );
     }
 
     #[test]
@@ -231,7 +249,7 @@ mod tests {
     fn plans_read_plainly() {
         let fits = plan_view(&plan(10_000_000_000, 3_000_000_000, 2_000_000_000));
         assert!(fits.fits);
-        assert_eq!(fits.verdict, "It fits.");
+        assert_eq!(fits.verdict, "Sufficient disk space");
         assert_eq!(fits.needed, "3.0 GB");
         assert_eq!(fits.note, "");
         assert!((fits.meter - 0.5).abs() < 1e-6);
@@ -241,10 +259,13 @@ mod tests {
         tight.reclaims = false;
         let v = plan_view(&tight);
         assert!(!v.fits);
-        assert_eq!(v.verdict, "Not enough space. Free up 1.0 GB more.");
+        assert_eq!(
+            v.verdict,
+            "Insufficient disk space. 1.0 GB more is required."
+        );
         assert_eq!(v.after, "-");
         assert!(v.note.contains("solid block"));
-        assert!(v.note.contains("another disk"));
+        assert!(v.note.contains("another drive"));
         assert_eq!(v.meter, 1.0);
     }
 }

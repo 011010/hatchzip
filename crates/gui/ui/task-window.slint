@@ -51,13 +51,13 @@ export component TaskWindow inherits Window {
         }
 
         if root.task.phase == Phase.checking: Busy {
-            text: "Checking space";
+            text: "Checking disk space…";
         }
         if root.task.phase == Phase.verifying || root.task.phase == Phase.working || root.task.phase == Phase.pausing || root.task.phase == Phase.paused: Progress {
             task: root.task;
         }
         if root.task.phase == Phase.no-space: Text {
-            text: "Free now: " + root.plan.free + ". HatchZip needs " + root.plan.needed + ", plus " + root.plan.keep + " kept free.";
+            text: "Available: " + root.plan.free + ". Required: " + root.plan.needed + ", plus " + root.plan.keep + " reserved.";
             color: Theme.muted;
             wrap: word-wrap;
         }

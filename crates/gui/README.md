@@ -19,8 +19,8 @@ The three task forms are what file manager menus call, and installers run the tw
 | | |
 |---|---|
 | Passwords | Asked in the window when an archive needs one, and again after a wrong one. Kept in memory for this process only; a run continued later asks again. |
-| Giving up | A paused or half-extracted archive offers "Stop and give me my archive back", which runs `hatchzip_core::restore` on a worker thread. |
-| Settings | Keep-free size and "Check every file before deleting anything", saved to `~/.config/hatchzip/settings.json`, `%APPDATA%\HatchZip\settings.json` or `~/Library/Application Support/HatchZip/settings.json`. A missing or broken file means the defaults. The right-click menu switch is hidden on macOS, where hatchzip-shell can't add Finder entries yet. |
+| Giving up | A paused or partially extracted archive offers "Restore archive", which runs `hatchzip_core::restore` on a worker thread. |
+| Settings | Reserved space and "Verify archive before extracting", saved to `~/.config/hatchzip/settings.json`, `%APPDATA%\HatchZip\settings.json` or `~/Library/Application Support/HatchZip/settings.json`. A missing or broken file means the defaults. The right-click menu switch is hidden on macOS, where hatchzip-shell can't add Finder entries yet. |
 | Identity | App id and X11 class `io.github.xevrion.hatchzip`, matching the desktop file. On Windows `build.rs` embeds `assets/icon/hatchzip.ico` and the version into the exe. |
 
 ## Drawing

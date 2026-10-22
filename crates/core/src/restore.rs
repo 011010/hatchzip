@@ -58,22 +58,22 @@ pub fn restore(archive: &Path) -> Result<Restored> {
     let (primary, paths) = session::locate(archive)?;
     if !paths.exists() {
         bail!(
-            "{} is not half extracted, so there is nothing to restore",
+            "{} is not partially extracted; there is nothing to restore",
             primary.display()
         );
     }
     let (mut journal, tail) = Journal::load(&paths)?;
     if !journal.parts[0].0.exists() {
-        bail!("every entry is already extracted; run extract to finish cleaning up");
+        bail!("all entries are already extracted. Run extract to complete the cleanup");
     }
     // A streamed entry gives its archive bytes back while it is extracted,
     // and the journal holds a resume point exactly as long as some are gone.
     // An entry with holes in it can't go back into an archive.
     if let Some(r) = &journal.resume {
         bail!(
-            "{} can't be restored: a large entry was being extracted, and the archive space \
-             of its first {} may already be freed, so it can't be put back. Run extract to \
-             finish the extraction instead",
+            "{} cannot be restored: a large entry was being extracted, and the archive space \
+             of its first {} may already be released. Run extract to complete the \
+             extraction instead",
             primary.display(),
             engine::human(r.written)
         );
@@ -83,7 +83,7 @@ pub fn restore(archive: &Path) -> Result<Restored> {
     // password is needed, except for a 7z whose header itself is encrypted.
     let job = Job::resume(&journal, tail.clone(), true, None)?;
     if job.units.is_empty() {
-        bail!("every entry is already extracted; run extract to finish");
+        bail!("all entries are already extracted. Run extract to complete the extraction");
     }
     let out = journal.output.clone();
     let keep = journal.committed_len;
@@ -165,12 +165,12 @@ pub fn restore(archive: &Path) -> Result<Restored> {
             drop(job);
             recover(&mut journal, &paths)?;
             let why = match found {
-                Ok(_) => "it doesn't list the same entries as what is left".to_string(),
+                Ok(_) => "it does not list the same entries as the remaining archive".to_string(),
                 Err(e) => format!("{e:#}"),
             };
             bail!(
-                "the restored archive failed its check ({why}), so the restore was undone. \
-                 Nothing is lost; run extract again to finish, and please report this"
+                "the restored archive failed verification ({why}) and the restore was reverted. \
+                 No data was lost. Run extract to complete the extraction, and report this issue"
             );
         }
     }

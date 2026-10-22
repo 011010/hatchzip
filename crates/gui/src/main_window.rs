@@ -80,13 +80,13 @@ fn load(archive: &Path, password: Option<String>) -> Result<Loaded> {
                 summary.push(text::plural(j.item_count(), "entry", "entries"));
             }
             Some(left) => summary.push(format!(
-                "{} in {} left",
+                "{} in {} remaining",
                 human(left),
                 text::plural(j.item_count(), "entry", "entries")
             )),
         }
     }
-    summary.push(format!("unpacks to {}", human(total)));
+    summary.push(format!("{} uncompressed", human(total)));
     Ok(Loaded {
         name,
         summary: summary.join(" \u{b7} "),
@@ -165,6 +165,7 @@ pub fn build(
     ui.set_keep_free(gb_text(settings.keep_free).into());
     ui.set_verify_first(settings.verify_first);
     ui.set_shell_menu_available(platform::SHELL_MENU);
+    ui.set_shell_menu_label(platform::SHELL_MENU_LABEL.into());
 
     let weak = ui.as_weak();
     let runner = Runner::install(move |task: &Task| {
@@ -361,7 +362,7 @@ impl App {
             ui.set_plan(PlanView {
                 ready: true,
                 fits: true,
-                verdict: "Nothing is left to extract.".into(),
+                verdict: "No entries remaining".into(),
                 ..Default::default()
             });
             return;
@@ -418,14 +419,8 @@ impl App {
             let result = shell::set_menu(on);
             post(move |app| {
                 let (text, bad) = match result {
-                    Ok(()) if on => (
-                        "HatchZip is now in the right-click menu.".to_string(),
-                        false,
-                    ),
-                    Ok(()) => (
-                        "HatchZip is no longer in the right-click menu.".to_string(),
-                        false,
-                    ),
+                    Ok(()) if on => ("Context menu entries added.".to_string(), false),
+                    Ok(()) => ("Context menu entries removed.".to_string(), false),
                     Err(e) => {
                         // Show the box as it really is.
                         app.ui().set_shell_menu_on(!on);
@@ -457,7 +452,7 @@ impl App {
         }
         let ui = self.ui();
         let mut dialog = rfd::AsyncFileDialog::new()
-            .set_title("Open an archive")
+            .set_title("Open archive")
             .add_filter("Archives", &["zip", "7z", "tar", "exe", "001"])
             .add_filter("All files", &["*"])
             .set_parent(&ui.window().window_handle());
@@ -480,7 +475,7 @@ impl App {
         // looking that up needs no disk access on this thread.
         let start = current.parent();
         let mut dialog = rfd::AsyncFileDialog::new()
-            .set_title("Extract to")
+            .set_title("Select destination folder")
             .set_parent(&ui.window().window_handle());
         if let Some(dir) = start {
             dialog = dialog.set_directory(dir);

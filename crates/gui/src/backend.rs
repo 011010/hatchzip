@@ -149,7 +149,7 @@ pub fn when_drawn(window: &slint::Window, start: impl FnOnce() + 'static) {
 }
 
 fn restart_in_software() -> ! {
-    eprintln!("hatchzip-gui: OpenGL did not start, drawing without it instead");
+    eprintln!("hatchzip-gui: OpenGL is not available; using the software renderer");
     let spawned = std::env::current_exe().and_then(|exe| {
         Command::new(exe)
             .args(std::env::args_os().skip(1))
@@ -159,7 +159,7 @@ fn restart_in_software() -> ! {
     match spawned {
         Ok(_) => std::process::exit(0),
         Err(e) => {
-            eprintln!("hatchzip-gui: could not restart: {e}");
+            eprintln!("hatchzip-gui: unable to restart: {e}");
             std::process::exit(1)
         }
     }

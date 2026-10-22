@@ -79,7 +79,7 @@ fn open(
         secret.password,
         |wrong| {
             if wrong {
-                eprintln!("{ERROR}Wrong password.{ERROR:#}");
+                eprintln!("{ERROR}Incorrect password.{ERROR:#}");
             }
             tries += 1;
             if tries > 3 || !io::stdin().is_terminal() {
@@ -132,7 +132,7 @@ fn report(job: &Job, out: &Path, journal: Option<&Journal>, keep_free: u64) -> R
     let left = job.remaining_size();
 
     say!(
-        "{BOLD}{}{BOLD:#}  {} {}, unpacks to {} in {}",
+        "{BOLD}{}{BOLD:#}  {} {}, {} uncompressed in {}",
         display_name(job),
         human(job.storage.original_len()),
         job.format_name,
@@ -141,32 +141,38 @@ fn report(job: &Job, out: &Path, journal: Option<&Journal>, keep_free: u64) -> R
     );
     if let Some(j) = journal {
         say!(
-            "  resuming: {} of {} left",
+            "  resuming: {} of {} remaining",
             human(left),
             human(j.total_size)
         );
     }
-    say!("  free space now        {}", human(plan.free));
-    say!("  normal extractors     {} free", human(plan.normal_needs));
+    say!("  available                    {}", human(plan.free));
     say!(
-        "  HatchZip needs        {BOLD}{}{BOLD:#} free {DIM}(+{} kept spare){DIM:#}",
+        "  standard extraction needs    {}",
+        human(plan.normal_needs)
+    );
+    say!(
+        "  required                     {BOLD}{}{BOLD:#} {DIM}(+{} reserved){DIM:#}",
         human(plan.needed),
         human(plan.keep_free)
     );
     if !plan.reclaims {
         say!(
-            "  {DIM}note: the output is on another disk, so deleting the archive won't make room there{DIM:#}"
+            "  {DIM}note: the destination is on another drive, so removing the archive does not free space there{DIM:#}"
         );
     }
     if plan.fits {
-        say!("  free after            {}", human(plan.free_after));
+        say!("  available after              {}", human(plan.free_after));
     } else {
         let short = human(plan.needed + plan.keep_free - plan.free);
-        println!("{ERROR}Not enough space.{ERROR:#} Free up {short} more, or lower --keep-free.");
+        println!(
+            "{ERROR}Insufficient disk space:{ERROR:#} {short} more is required. Free up space or lower --keep-free."
+        );
         if plan.solid_block_bound {
             println!(
-                "{DIM}Most of that is one solid block, which can only be freed once all of it is \
-                 extracted. Archives packed with smaller solid blocks need far less.{DIM:#}"
+                "{DIM}Most of the required space is one solid block, which can only be released after \
+                 it is fully extracted. Archives created with smaller solid blocks require much \
+                 less space.{DIM:#}"
             );
         }
     }
@@ -181,7 +187,7 @@ fn check(target: Target, space: Space) -> Result<ExitCode> {
             report(&job, &journal.output, Some(&journal), space.keep_free)?
         }
         State::Orphan(_) => {
-            say!("The archive is already fully extracted; run extract to finish cleaning up.");
+            say!("All entries are already extracted. Run extract to complete the cleanup.");
             true
         }
     };
@@ -195,7 +201,7 @@ fn check(target: Target, space: Space) -> Result<ExitCode> {
 fn list(archive: &Path, secret: Secret) -> Result<ExitCode> {
     let job = match open(archive, None, false, secret)?.0 {
         State::Fresh(job, _) | State::Resume(job, _) => job,
-        State::Orphan(_) => bail!("nothing is left in this archive"),
+        State::Orphan(_) => bail!("no entries remain in this archive"),
     };
     println!("{BOLD}{:>10}  Name{BOLD:#}", "Size");
     for item in job.units.iter().rev().flat_map(|u| &u.items) {
@@ -210,7 +216,7 @@ fn list(archive: &Path, secret: Secret) -> Result<ExitCode> {
         }
     }
     say!(
-        "{DIM}{}, {} unpacked, {} {} archive{DIM:#}",
+        "{DIM}{}, {} uncompressed, {} {} archive{DIM:#}",
         entries(job.item_count()),
         human(job.remaining_size()),
         human(job.storage.original_len()),
@@ -222,16 +228,18 @@ fn list(archive: &Path, secret: Secret) -> Result<ExitCode> {
 fn test_command(archive: &Path, secret: Secret) -> Result<ExitCode> {
     let job = match open(archive, None, false, secret)?.0 {
         State::Fresh(job, _) => job,
-        _ => bail!("this archive is half extracted; run extract to continue it"),
+        _ => bail!(
+            "this archive is partially extracted and cannot be tested. Run extract to resume it, or restore to undo it"
+        ),
     };
     if let Err(e) = verify(&job) {
         eprintln!("{ERROR}error:{ERROR:#} {e:#}");
         return Ok(ExitCode::from(EXIT_DAMAGED));
     }
-    match job.item_count() {
-        1 => say!("{GOOD}The one entry is intact.{GOOD:#}"),
-        n => say!("{GOOD}All {n} entries are intact.{GOOD:#}"),
-    }
+    say!(
+        "{GOOD}Test passed:{GOOD:#} {} verified.",
+        entries(job.item_count())
+    );
     Ok(ExitCode::SUCCESS)
 }
 
@@ -247,15 +255,12 @@ fn restore(archive: &Path) -> Result<ExitCode> {
     let r = hatchzip_core::restore::restore(archive)?;
     let name = r.archive.file_name().unwrap_or_default().to_string_lossy();
     say!(
-        "{GOOD}Restored.{GOOD:#} {name} is a normal {} archive again, holding the {} not yet \
-         extracted.",
+        "{GOOD}Archive restored.{GOOD:#} {name} is a standard {} archive again and contains \
+         the {} not yet extracted.",
         r.format,
         entries(r.entries)
     );
-    say!(
-        "The entries already extracted stay in {}.",
-        r.output.display()
-    );
+    say!("Extracted files remain in {}.", r.output.display());
     Ok(ExitCode::SUCCESS)
 }
 
@@ -266,7 +271,7 @@ fn extract(target: Target, verify_first: bool, space: Space, yes: bool) -> Resul
         State::Orphan(journal) => {
             engine::finish_orphaned(&journal, &paths)?;
             say!(
-                "{GOOD}Done.{GOOD:#} Everything is in {}.",
+                "{GOOD}Extraction complete.{GOOD:#} Files are in {}.",
                 journal.output.display()
             );
             return Ok(ExitCode::SUCCESS);
@@ -299,18 +304,18 @@ fn extract(target: Target, verify_first: bool, space: Space, yes: bool) -> Resul
             std::process::exit(EXIT_PAUSED.into());
         }
         eprintln!(
-            "\nPausing. Files that were half written will be redone next time. \
-             Press Ctrl+C again to quit now."
+            "\nPausing after the current batch. Partly written files are redone on resume. \
+             Press Ctrl+C again to exit immediately."
         );
     })
     .context("installing Ctrl+C handler")?;
 
-    let bar = progress_bar(journal.total_size, "Hatching");
+    let bar = progress_bar(journal.total_size, "Extracting");
     bar.set_position(journal.total_size - job.remaining_size());
-    bar.set_message(format!("archive {}", human(journal.committed_len)));
+    bar.set_message(format!("archive: {}", human(journal.committed_len)));
 
     let output = journal.output.clone();
-    let name = display_name(&job);
+    let count = job.item_count();
     let (b1, b2) = (bar.clone(), bar.clone());
     let run = Run {
         job,
@@ -319,7 +324,7 @@ fn extract(target: Target, verify_first: bool, space: Space, yes: bool) -> Resul
         stop: &STOP,
         progress: Progress {
             on_bytes: Box::new(move |n| b1.inc(n)),
-            on_commit: Box::new(move |len| b2.set_message(format!("archive {}", human(len)))),
+            on_commit: Box::new(move |len| b2.set_message(format!("archive: {}", human(len)))),
         },
         keep_free,
     };
@@ -329,44 +334,45 @@ fn extract(target: Target, verify_first: bool, space: Space, yes: bool) -> Resul
     match outcome {
         Ok(Outcome::Finished) => {
             say!(
-                "{GOOD}Done.{GOOD:#} Everything is in {}, and {name} is gone.",
+                "{GOOD}Extraction complete:{GOOD:#} {} in {}. The archive was removed.",
+                entries(count),
                 output.display()
             );
             Ok(ExitCode::SUCCESS)
         }
         Ok(Outcome::Paused) => {
-            say!("Paused. Run the same command again to continue.");
+            say!("Extraction paused. Run the same command to resume.");
             Ok(ExitCode::from(EXIT_PAUSED))
         }
         Err(e) => {
             eprintln!("{ERROR}error:{ERROR:#} {e:#}");
-            eprintln!("Progress is saved. Run the same command again to continue.");
+            eprintln!("Progress is saved. Run the same command to resume.");
             Ok(ExitCode::from(EXIT_FAILURE))
         }
     }
 }
 
 fn verify(job: &Job) -> Result<()> {
-    let bar = progress_bar(job.remaining_size(), "Checking");
+    let bar = progress_bar(job.remaining_size(), "Verifying");
     let b = bar.clone();
     let result = job.verify(&move |n| b.inc(n));
     bar.finish_and_clear();
-    result.context("the archive is damaged, so nothing was extracted")
+    result.context("the archive is damaged; no files were extracted")
 }
 
 fn confirm(archive: &str, output: &Path) -> Result<()> {
     if !io::stdin().is_terminal() {
-        bail!("HatchZip deletes the archive as it extracts; pass --yes to confirm");
+        bail!("HatchZip removes the archive during extraction; pass --yes to confirm");
     }
     print!(
-        "\nThis extracts into {} and deletes {BOLD}{archive}{BOLD:#} as it goes. Continue? [y/N] ",
+        "\nExtract to {} and remove {BOLD}{archive}{BOLD:#} during extraction? [y/N] ",
         output.display()
     );
     io::stdout().flush()?;
     let mut answer = String::new();
     io::stdin().lock().read_line(&mut answer)?;
     if !matches!(answer.trim(), "y" | "Y" | "yes") {
-        bail!("cancelled; nothing was changed");
+        bail!("extraction cancelled. The archive was not modified");
     }
     Ok(())
 }

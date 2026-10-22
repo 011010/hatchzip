@@ -9,7 +9,7 @@ use clap::{ArgGroup, Parser};
 #[command(
     name = "hatchzip-gui",
     version,
-    about = "Extract huge archives in place: the archive shrinks as your files hatch.",
+    about = "Extract large archives in place, removing the archive progressively.",
     group(ArgGroup::new("what").args([
         "archive",
         "extract_here",

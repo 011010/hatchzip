@@ -172,7 +172,7 @@ fn refuses_to_start_without_enough_space() {
         &[],
     );
     assert!(!run.status.success());
-    assert!(String::from_utf8_lossy(&run.stdout).contains("Not enough space"));
+    assert!(String::from_utf8_lossy(&run.stdout).contains("Insufficient disk space"));
     assert_eq!(fs::read(&archive).unwrap(), before);
     assert!(!o.exists());
 }
@@ -214,7 +214,7 @@ fn refuses_to_overwrite_an_existing_file() {
 
     let run = extract(&archive, &out, &[]);
     assert!(!run.status.success());
-    assert!(String::from_utf8_lossy(&run.stderr).contains("never overwrites"));
+    assert!(String::from_utf8_lossy(&run.stderr).contains("does not overwrite existing files"));
     assert_eq!(
         fs::read_to_string(out.join("game/data/small.pak")).unwrap(),
         "already here"
@@ -233,7 +233,7 @@ fn refuses_when_a_file_sits_where_a_folder_must_go() {
 
     let run = extract(&archive, &out, &[]);
     assert!(!run.status.success());
-    assert!(String::from_utf8_lossy(&run.stderr).contains("needs a folder"));
+    assert!(String::from_utf8_lossy(&run.stderr).contains("requires a folder"));
     assert!(archive.exists());
 }
 
@@ -365,7 +365,7 @@ fn a_resumed_run_stays_in_its_output_folder() {
 
     let elsewhere = extract(&archive, &tmp.path().join("other"), &[]);
     assert!(!elsewhere.status.success());
-    assert!(String::from_utf8_lossy(&elsewhere.stderr).contains("already half extracted"));
+    assert!(String::from_utf8_lossy(&elsewhere.stderr).contains("already partially extracted"));
 }
 
 #[cfg(unix)]
@@ -416,7 +416,9 @@ fn windows_only_names_are_refused_up_front_on_windows() {
     let run = extract(&archive, &out, &[]);
     if cfg!(windows) {
         assert!(!run.status.success());
-        assert!(String::from_utf8_lossy(&run.stderr).contains("can't be created here"));
+        assert!(
+            String::from_utf8_lossy(&run.stderr).contains("cannot be created at this location")
+        );
         assert_eq!(fs::read(&archive).unwrap(), before);
         assert!(!side_files(&archive)[0].exists());
     } else {

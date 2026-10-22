@@ -67,7 +67,7 @@ pub struct WrongPassword;
 
 impl std::fmt::Display for WrongPassword {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("that password doesn't open this archive")
+        f.write_str("incorrect password")
     }
 }
 
@@ -199,12 +199,12 @@ fn sniff(storage: &Storage) -> Result<&'static str> {
         || starts(b"BZh")
     {
         bail!(
-            "this is a compressed stream (.gz, .zst, .xz or .bz2). In-place extraction of those \
-             needs a different technique that HatchZip doesn't have yet"
+            "this is a compressed stream (.gz, .zst, .xz or .bz2). In-place extraction of \
+             compressed streams is not supported"
         );
     }
     if starts(b"Rar!\x1A\x07") {
-        bail!("RAR archives aren't supported yet");
+        bail!("RAR archives are not supported");
     }
     let ext = storage.primary().to_string_lossy().to_ascii_lowercase();
     if ext.ends_with(".tar") || ext.contains(".tar.") {

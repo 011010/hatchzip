@@ -36,13 +36,13 @@ pub fn name_problem(name: &str) -> Option<&'static str> {
         return Some("it is a reserved device name on Windows");
     }
     if name.ends_with('.') || name.ends_with(' ') {
-        return Some("Windows drops a trailing dot or space from names");
+        return Some("Windows removes a trailing dot or space from names");
     }
     if name
         .chars()
         .any(|c| matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*') || (c as u32) < 32)
     {
-        return Some("it contains a character Windows doesn't allow in names");
+        return Some("it contains a character that Windows does not allow in names");
     }
     None
 }

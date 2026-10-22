@@ -58,20 +58,20 @@ pub fn open(storage: &Arc<Storage>, tail: Option<Arc<Tail>>) -> Result<Opened> {
                     .map(|t| t.to_string_lossy().into_owned())
                     .unwrap_or_default();
                 Kind::HardLink(safe_path(&target).ok_or_else(|| {
-                    anyhow!("hard link '{name}' points outside the output folder; refusing")
+                    anyhow!("hard link '{name}' points outside the destination folder; extraction refused")
                 })?)
             }
             EntryType::GNUSparse => {
-                bail!("'{name}' is a sparse file, which HatchZip doesn't support yet")
+                bail!("'{name}' is a sparse file, which is not supported")
             }
-            other => bail!("'{name}' is a {other:?} entry, which HatchZip can't create"),
+            other => bail!("'{name}' is a {other:?} entry, which cannot be created"),
         };
         let Some(path) = safe_path(&name) else {
             // "./" at the top of many tarballs names the output folder itself.
             if kind == Kind::Dir {
                 continue;
             }
-            bail!("'{name}' would be written outside the output folder; refusing");
+            bail!("'{name}' would be written outside the destination folder; extraction refused");
         };
         let target = match kind {
             Kind::Symlink => Some(

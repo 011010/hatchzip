@@ -12,47 +12,48 @@ pub const EXIT_DAMAGED: u8 = 4;
 pub const EXIT_PASSWORD: u8 = 5;
 pub const EXIT_PAUSED: u8 = 130;
 
-const ABOUT: &str = "Extract huge archives in place: the archive shrinks as your files hatch.";
+const ABOUT: &str = "Extract large archives in place, removing the archive progressively.";
 
 const LONG_ABOUT: &str = "\
-Extract huge archives in place: the archive shrinks as your files hatch.
+Extract large archives in place, removing the archive progressively.
 
-HatchZip extracts an archive from its end and cuts each finished part off the \
-archive file as it goes, so the space the archive gives back is reused for the \
-next files. You need free space for the output, not for the output and the \
-archive. It checks the plan fits before touching anything, and an interrupted \
-run continues where it stopped when you run the same command again.
+HatchZip extracts an archive from its end and truncates each completed part from \
+the archive file, so the released space is reused for the next files. Free space \
+is required for the extracted files only, not for the files and the archive. The \
+space plan is checked before the archive is modified, and an interrupted \
+extraction resumes where it stopped when the same command is run again.
 
 Supported: ZIP (including ZIP64 and self-extracting .exe), 7z, uncompressed tar, \
 and split archives (.001, .002, ...) of any of those.";
 
 const AFTER_LONG_HELP: &str = "\
 Examples:
-  hatchzip check game.zip              Will it fit? Changes nothing.
-  hatchzip extract game.zip            Extract into ./game, deleting game.zip as it goes
-  hatchzip x game.7z.001 -o D:\\Games   Split archive, any part name works
+  hatchzip check game.zip              Show the space plan without modifying anything
+  hatchzip extract game.zip            Extract to ./game, removing game.zip during extraction
+  hatchzip x game.7z.001 -o D:\\Games   Extract a split archive from any of its parts
   hatchzip extract big.zip --verify-first --keep-free 10GB
-  hatchzip test game.7z                Check every file for damage, write nothing
-  hatchzip restore game.zip            Stopped halfway? Make what is left a normal archive
+  hatchzip test game.7z                Verify every entry without writing files
+  hatchzip restore game.zip            Restore a partially extracted archive
 
-Interrupted? Run the exact same command again. Progress lives in two files next \
-to the archive (<archive>.hatchzip and <archive>.hatchzip-tail); don't delete them \
-while an extraction is unfinished. To stop for good instead, run restore: the \
-entries not yet extracted become a normal archive again.
+To resume an interrupted extraction, run the same command again. Progress is \
+stored in two files next to the archive (<archive>.hatchzip and \
+<archive>.hatchzip-tail); do not delete them while an extraction is incomplete. \
+To stop permanently instead, run restore: the entries not yet extracted become a \
+standard archive again.
 
 Exit status:
   0    success
   1    failure (progress, if any, is saved)
   2    invalid command line
-  3    not enough free space; nothing was changed
-  4    the archive is damaged; nothing was deleted
-  5    the archive is password protected and no right password was given
-  130  paused with Ctrl+C; run the same command to continue
+  3    insufficient disk space; the archive was not modified
+  4    the archive is damaged; no files were removed
+  5    the archive is password protected and no correct password was provided
+  130  paused with Ctrl+C; run the same command to resume
 
-Encrypted archives (ZIP with ZipCrypto or AES, 7z with AES): HatchZip asks for the \
-password, or takes --password or the HATCHZIP_PASSWORD environment variable. It \
-proves the password on one file before anything is deleted. The password is never \
-saved, so continuing an interrupted run asks again.";
+Encrypted archives (ZIP with ZipCrypto or AES, 7z with AES): HatchZip prompts for \
+the password, or reads --password or the HATCHZIP_PASSWORD environment variable. The \
+password is verified on one file before the archive is modified. It is never \
+stored, so resuming an interrupted extraction prompts again.";
 
 #[derive(Parser)]
 #[command(
@@ -74,26 +75,26 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Command {
-    /// Extract an archive, deleting it as it goes
+    /// Extract an archive, removing it progressively
     #[command(
         visible_alias = "x",
-        long_about = "Extract an archive, deleting it as it goes.\n\n\
-            Prints the space plan and asks before starting. If interrupted by Ctrl+C, a \
-            crash or a full disk, run the same command again to continue."
+        long_about = "Extract an archive, removing it progressively.\n\n\
+            Prints the space plan and asks for confirmation before starting. After an \
+            interruption by Ctrl+C, a crash or a full disk, run the same command to resume."
     )]
     Extract {
         #[command(flatten)]
         target: Target,
-        /// Read the whole archive and check every file before deleting anything
+        /// Verify every entry before modifying the archive
         #[arg(long)]
         verify_first: bool,
         #[command(flatten)]
         space: Space,
-        /// Don't ask for confirmation (required when not run from a terminal)
+        /// Skip the confirmation prompt (required outside a terminal)
         #[arg(short, long)]
         yes: bool,
     },
-    /// Show whether an archive fits on this disk, without changing anything
+    /// Show the space plan for an archive without modifying it
     #[command(visible_alias = "c")]
     Check {
         #[command(flatten)]
@@ -101,7 +102,7 @@ pub enum Command {
         #[command(flatten)]
         space: Space,
     },
-    /// List what an archive contains
+    /// List the entries of an archive
     #[command(visible_alias = "l")]
     List {
         /// The archive, or any part of a split archive
@@ -109,7 +110,7 @@ pub enum Command {
         #[command(flatten)]
         secret: Secret,
     },
-    /// Check every file in an archive for damage, without writing anything
+    /// Verify every entry of an archive without writing files
     #[command(visible_alias = "t")]
     Test {
         /// The archive, or any part of a split archive
@@ -117,18 +118,18 @@ pub enum Command {
         #[command(flatten)]
         secret: Secret,
     },
-    /// Turn a half-extracted archive back into a normal one other tools open
+    /// Restore a partially extracted archive to a standard archive
     #[command(
-        long_about = "Turn a half-extracted archive back into a normal one other tools open.\n\n\
-            An interrupted extraction leaves the archive holding only the entries not yet \
-            extracted, with its index saved next to it, so only HatchZip can open it. restore \
-            appends a new index for those entries, so 7-Zip, WinRAR, unzip or tar open it \
-            again. Nothing is moved: it needs only the space the new index takes. Files \
-            already extracted stay in the output folder. If restore is interrupted, run it \
-            again, or run extract to continue extracting instead."
+        long_about = "Restore a partially extracted archive to a standard archive.\n\n\
+            An interrupted extraction leaves the archive containing only the entries not yet \
+            extracted, with its index saved alongside, so only HatchZip can open it. restore \
+            appends a new index for those entries, so 7-Zip, WinRAR, unzip and tar can open it \
+            again. No data is moved; only the space for the new index is required. Files \
+            already extracted remain in the destination folder. If restore is interrupted, run \
+            it again, or run extract to resume the extraction instead."
     )]
     Restore {
-        /// The half-extracted archive, or any part of a split archive
+        /// The partially extracted archive, or any part of a split archive
         archive: PathBuf,
     },
     /// Print a shell completion script
@@ -148,7 +149,7 @@ pub enum Command {
 pub struct Target {
     /// The archive, or any part of a split archive
     pub archive: PathBuf,
-    /// Where to put the files [default: a folder named after the archive, next to it]
+    /// Destination folder [default: a folder named after the archive, next to it]
     #[arg(short, long, value_name = "DIR")]
     pub output: Option<PathBuf>,
     #[command(flatten)]
@@ -157,8 +158,8 @@ pub struct Target {
 
 #[derive(Args)]
 pub struct Secret {
-    /// Password for an encrypted archive. Without it HatchZip asks, hiding
-    /// what you type; prefer that, since this is visible to other programs
+    /// Password for an encrypted archive. If omitted, HatchZip prompts for it
+    /// with hidden input, which is preferred: this value is visible to other programs
     #[arg(
         short,
         long,
@@ -171,7 +172,7 @@ pub struct Secret {
 
 #[derive(Args)]
 pub struct Space {
-    /// Free space HatchZip never uses, so the disk never fills to zero
+    /// Disk space reserved during extraction, so the disk never fills completely
     #[arg(long, value_name = "SIZE", default_value = "2GB", value_parser = parse_size)]
     pub keep_free: u64,
 }
@@ -186,14 +187,14 @@ pub fn parse_size(s: &str) -> Result<u64, String> {
     let (num, unit) = s.split_at(split);
     let num: f64 = num
         .parse()
-        .map_err(|_| format!("'{s}' is not a size like 500MB or 2GB"))?;
+        .map_err(|_| format!("'{s}' is not a valid size, such as 500MB or 2GB"))?;
     let mult = match unit.trim().to_ascii_uppercase().as_str() {
         "" | "B" => 1.0,
         "K" | "KB" => 1e3,
         "M" | "MB" => 1e6,
         "G" | "GB" => 1e9,
         "T" | "TB" => 1e12,
-        _ => return Err(format!("unknown unit in '{s}'; use B, KB, MB, GB or TB")),
+        _ => return Err(format!("unknown unit in '{s}'. Use B, KB, MB, GB or TB")),
     };
     Ok((num * mult) as u64)
 }

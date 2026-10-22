@@ -47,15 +47,15 @@ pub fn open(
             && std::path::absolute(o)? != journal.output
         {
             bail!(
-                "this archive is already half extracted into {}; finish it there first",
+                "this archive is already partially extracted to {}. Complete or restore that extraction first",
                 journal.output.display()
             );
         }
         if journal.restoring.is_some() {
             if !writable {
                 bail!(
-                    "a restore of this archive was interrupted; run restore again to finish \
-                     it, or extract to continue extracting"
+                    "a restore of this archive was interrupted. Run restore again to complete \
+                     it, or run extract to resume the extraction"
                 );
             }
             crate::restore::recover(&mut journal, paths)?;
@@ -144,8 +144,8 @@ fn check_collisions(job: &Job, out: &Path) -> Result<()> {
             && !(meta.is_dir() && item.kind == crate::archive::Kind::Dir)
         {
             bail!(
-                "{} already exists, and HatchZip never overwrites files. \
-                 Move it, or extract somewhere else",
+                "{} already exists. HatchZip does not overwrite existing files. \
+                 Move the file or choose another destination",
                 dest.display()
             );
         }
@@ -163,7 +163,7 @@ fn check_collisions(job: &Job, out: &Path) -> Result<()> {
                 && !meta.is_dir()
             {
                 bail!(
-                    "{} is a file, but the archive needs a folder there",
+                    "{} is a file, but the archive requires a folder at that location",
                     out.join(parent).display()
                 );
             }

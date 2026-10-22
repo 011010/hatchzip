@@ -32,7 +32,7 @@ export struct TaskView {
     is-test: bool,
     heading: string,
     detail: string,
-    // "Needs 3.5 MB free, 7.8 GB is free now.", once the space is checked.
+    // "Required: 3.5 MB. Available: 7.7 GB.", once the space is checked.
     space: string,
     fraction: float,
     amounts: string,
@@ -84,7 +84,7 @@ export component SpacePanel inherits VerticalLayout {
             height: 16px;
         }
         Text {
-            text: "Checking";
+            text: "Calculating…";
             color: Theme.muted;
             vertical-alignment: center;
         }
@@ -92,24 +92,24 @@ export component SpacePanel inherits VerticalLayout {
     if root.plan.ready: VerticalLayout {
         spacing: 8px;
         Row {
-            label: "Free now";
+            label: "Available";
             value: root.plan.free;
         }
         Row {
-            label: "Other apps need";
+            label: "Required, standard extraction";
             value: root.plan.normal;
         }
         Row {
-            label: "HatchZip needs";
+            label: "Required, HatchZip";
             value: root.plan.needed;
             strong: true;
         }
         Row {
-            label: "Kept free";
+            label: "Reserved";
             value: root.plan.keep;
         }
         Row {
-            label: "Free when done";
+            label: "Available after extraction";
             value: root.plan.after;
         }
         Rectangle {
@@ -203,7 +203,7 @@ export component TaskButtons inherits HorizontalLayout {
     spacing: 8px;
 
     if root.task.can-give-back: Button {
-        text: "Stop and give me my archive back";
+        text: "Restore archive";
         clicked => {
             root.give-back();
         }
@@ -223,7 +223,7 @@ export component TaskButtons inherits HorizontalLayout {
         }
     }
     if root.task.phase == Phase.working || root.task.phase == Phase.pausing: Button {
-        text: root.task.phase == Phase.pausing ? "Pausing" : "Pause";
+        text: root.task.phase == Phase.pausing ? "Pausing…" : "Pause";
         enabled: root.task.phase == Phase.working;
         clicked => {
             root.pause();
@@ -237,7 +237,7 @@ export component TaskButtons inherits HorizontalLayout {
         }
     }
     if root.task.can-retry && (root.task.phase == Phase.failed || root.task.phase == Phase.no-space): Button {
-        text: root.task.phase == Phase.no-space ? "Check again" : "Try again";
+        text: root.task.phase == Phase.no-space ? "Check again" : "Retry";
         clicked => {
             root.resume();
         }
@@ -285,12 +285,12 @@ export component PasswordPrompt inherits Rectangle {
                 padding: Theme.gutter;
                 spacing: 10px;
                 Text {
-                    text: "Password needed";
+                    text: "Password required";
                     font-size: 15px;
                     font-weight: 600;
                 }
                 Text {
-                    text: root.name + " is protected. Type its password to open it.";
+                    text: "Enter the password for " + root.name + ".";
                     color: Theme.muted;
                     wrap: word-wrap;
                 }
@@ -302,7 +302,7 @@ export component PasswordPrompt inherits Rectangle {
                     }
                 }
                 if root.wrong: Text {
-                    text: "Wrong password. Try again.";
+                    text: "Incorrect password.";
                     color: Theme.danger;
                 }
                 HorizontalLayout {

@@ -102,7 +102,7 @@ impl Job {
         let current = storage.current_len()?;
         if current < journal.committed_len {
             bail!(
-                "{} is shorter than HatchZip left it; refusing to touch it",
+                "{} is shorter than HatchZip left it and will not be modified",
                 storage.primary().display()
             );
         }
@@ -117,8 +117,8 @@ impl Job {
             // for any other one means the journal and archive disagree.
             if job.units.first().map(|u| u.start) != Some(r.unit) {
                 bail!(
-                    "the journal of {} records a half-extracted file that isn't the next one \
-                     in the archive; refusing to touch it",
+                    "the journal of {} records a partially extracted file that is not the next one \
+                     in the archive. The archive will not be modified",
                     job.storage.primary().display()
                 );
             }
@@ -137,7 +137,7 @@ impl Job {
             for part in item.path.iter() {
                 if let Some(why) = platform::name_problem(&part.to_string_lossy()) {
                     bail!(
-                        "'{}' can't be created here: {why}. Nothing was changed",
+                        "'{}' cannot be created at this location: {why}. The archive was not modified",
                         item.path.display()
                     );
                 }
@@ -146,7 +146,7 @@ impl Job {
             // file inside a parallel batch.
             if item.kind != Kind::Dir && !seen.insert(item.path.to_string_lossy().to_lowercase()) {
                 bail!(
-                    "'{}' appears twice in the archive (ignoring case); refusing to guess which one wins",
+                    "'{}' appears more than once in the archive (ignoring case); extraction refused",
                     item.path.display()
                 );
             }
@@ -460,14 +460,14 @@ fn open_part(dest: &Path, part: &Path, written: u64) -> Result<File> {
         .open(part)
         .with_context(|| {
             format!(
-                "{} is missing, and the archive bytes it was extracted from are already \
-                 freed, so this file can't be finished",
+                "{} is missing, and the archive data it was extracted from is already \
+                 released, so this file cannot be completed",
                 part.display()
             )
         })?;
     if file.metadata()?.len() < written {
         bail!(
-            "{} is shorter than when its progress was saved; refusing to continue",
+            "{} is shorter than when its progress was saved; the extraction cannot continue",
             part.display()
         );
     }
@@ -591,7 +591,7 @@ impl Run<'_> {
             return match self.job.stream_of(i) {
                 Some(s) => Ok(Some(s)),
                 None => bail!(
-                    "the journal says '{}' is half extracted, but it can't be resumed",
+                    "the journal records '{}' as partially extracted, but it cannot be resumed",
                     self.job.units[i].items[0].path.display()
                 ),
             };
@@ -673,7 +673,7 @@ impl Run<'_> {
             }
             written += n as u64;
             if written > item.size {
-                bail!("it is larger than the archive says it is");
+                bail!("it is larger than the archive records");
             }
             file.write_all(&buf[..n])?;
             crc.update(&buf[..n]);
@@ -703,10 +703,10 @@ impl Run<'_> {
                     let avail = fsutil::available_space(out)?.saturating_sub(self.keep_free);
                     if avail < 2 * BUF_SIZE as u64 {
                         bail!(
-                            "stopped inside it: its compressed data has no point to resume from \
-                             in the last {}, so its archive space can't be freed yet. Nothing \
-                             is lost. Free up {} (what is left of this file) and run the same \
-                             command again to continue.",
+                            "not enough disk space to continue: the compressed data of this entry has \
+                             no resume point in the last {}, so its archive space cannot be \
+                             released yet. {} more is required (the remainder of this file). \
+                             Progress is saved; free up space and resume the extraction.",
                             human(since_point),
                             human(item.size - written),
                         );
@@ -715,7 +715,7 @@ impl Run<'_> {
             }
         }
         if written != item.size {
-            bail!("it is smaller than the archive says it is");
+            bail!("it is smaller than the archive records");
         }
         if let Some(expected) = stream.crc
             && crc.finalize() != expected
@@ -798,8 +798,9 @@ impl Run<'_> {
         };
         if need > avail {
             bail!(
-                "stopped inside '{}': the next part needs {} and only {} is free (keeping {} \
-                 spare).\nNothing is lost. Free up {} and run the same command again to continue.",
+                "not enough disk space to continue: the next part of '{}' requires {} and {} is \
+                 available ({} reserved).\n{} more is required. Progress is saved; free up space \
+                 and resume the extraction.",
                 item.path.display(),
                 human(need),
                 human(avail),
@@ -825,8 +826,9 @@ impl Run<'_> {
                 many => format!("the next block of {} files", many.len()),
             };
             bail!(
-                "stopped before {what}: it needs {} and only {} is free (keeping {} spare).\n\
-                 Nothing is lost. Free up {} and run the same command again to continue.",
+                "not enough disk space to continue: {what} requires {} and {} is available \
+                 ({} reserved).\n{} more is required. Progress is saved; free up space and \
+                 resume the extraction.",
                 human(first),
                 human(avail),
                 human(self.keep_free),
@@ -1007,13 +1009,13 @@ impl DiskSink<'_> {
             }
             written += n as u64;
             if written > item.size {
-                bail!("it is larger than the archive says it is");
+                bail!("it is larger than the archive records");
             }
             dst.write_all(&self.buf[..n])?;
             (self.on_bytes)(n as u64);
         }
         if written != item.size {
-            bail!("it is smaller than the archive says it is");
+            bail!("it is smaller than the archive records");
         }
         if let Some(t) = item.mtime {
             dst.set_modified(t)?;
@@ -1078,7 +1080,7 @@ impl Sink for VerifySink<'_> {
         }
         if item.kind == Kind::File && read != item.size {
             bail!(
-                "'{}' is shorter than the archive says it is",
+                "'{}' is shorter than the archive records",
                 item.path.display()
             );
         }

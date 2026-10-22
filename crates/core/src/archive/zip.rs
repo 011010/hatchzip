@@ -33,8 +33,8 @@ pub fn open(
         None => {
             if zip.has_overlapping_entries()? {
                 bail!(
-                    "entries in this archive overlap each other, which in-place extraction \
-                     can't handle safely"
+                    "entries in this archive overlap, which in-place extraction \
+                     cannot handle safely"
                 );
             }
             let mut end = 0;
@@ -52,7 +52,7 @@ pub fn open(
         let e = meta.entry(index)?;
         let name = e.name().map(|n| n.into_owned()).unwrap_or_default();
         let path = e.enclosed_name().ok_or_else(|| {
-            anyhow!("'{name}' would be written outside the output folder; refusing")
+            anyhow!("'{name}' would be written outside the destination folder; extraction refused")
         })?;
         let kind = if e.is_dir() {
             Kind::Dir
@@ -117,10 +117,12 @@ impl Format for Zip {
         let mut zip = unsafe {
             ZipArchive::unsafe_new_with_metadata(self.storage.reader(None), self.meta.clone())
         };
-        let data_start = zip
-            .by_index_raw(unit.key)?
-            .data_start()
-            .ok_or_else(|| anyhow!("can't find where '{}' begins", unit.items[0].path.display()))?;
+        let data_start = zip.by_index_raw(unit.key)?.data_start().ok_or_else(|| {
+            anyhow!(
+                "cannot locate the start of '{}'",
+                unit.items[0].path.display()
+            )
+        })?;
         Ok(Some(Stream {
             data_start,
             packed: e.compressed_size(),
@@ -174,7 +176,8 @@ fn u64_at(b: &[u8], at: usize) -> Option<u64> {
 /// they are: the local header offsets in them still point at the same bytes,
 /// since nothing below `keep` moves.
 pub fn rebuild_index(tail: &Tail, keep: u64) -> Result<Vec<u8>> {
-    let damaged = || anyhow!("the saved ZIP index is damaged; run extract again to finish");
+    let damaged =
+        || anyhow!("the saved ZIP index is damaged. Run extract to complete the extraction");
     let t = &tail.bytes;
 
     // The comment length must fit what is left, so a signature inside the

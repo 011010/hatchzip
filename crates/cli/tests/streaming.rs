@@ -308,10 +308,10 @@ fn needed(archive: &Path, env: &[(&str, &str)]) -> f64 {
     let stdout = String::from_utf8_lossy(&run.stdout).into_owned();
     let line = stdout
         .lines()
-        .find(|l| l.contains("HatchZip needs"))
+        .find(|l| l.trim_start().starts_with("required"))
         .unwrap_or_else(|| panic!("no plan in:\n{stdout}"));
     let words: Vec<&str> = line.split_whitespace().collect();
-    let at = words.iter().position(|w| *w == "needs").unwrap();
+    let at = words.iter().position(|w| *w == "required").unwrap();
     let value: f64 = words[at + 1]
         .trim_matches(|c: char| !c.is_ascii_digit() && c != '.')
         .parse()
@@ -415,7 +415,7 @@ fn restore_refuses_an_archive_with_a_partly_freed_entry() {
         }
         assert!(!run.status.success(), "{point}: restore should refuse");
         let stderr = String::from_utf8_lossy(&run.stderr);
-        assert!(stderr.contains("can't be restored"), "{point}: {stderr}");
+        assert!(stderr.contains("cannot be restored"), "{point}: {stderr}");
         assert_eq!(
             fs::read(&archive).unwrap(),
             before,

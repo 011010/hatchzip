@@ -118,11 +118,11 @@ hatchzip check game.zip
 ```
 
 ```
-game.zip  180.2 MB, unpacks to 200.0 MB in 22 entries
-  free space now        50.5 MB
-  normal extractors     200.0 MB free
-  HatchZip needs        29.9 MB free (+5.0 MB kept spare)
-  free after            30.6 MB
+game.zip  180.2 MB zip, 200.0 MB uncompressed in 22 entries
+  available                    50.5 MB
+  standard extraction needs    200.0 MB
+  required                     29.9 MB (+5.0 MB reserved)
+  available after              30.6 MB
 ```
 
 `check` reads the archive's index and the disk's free space and changes nothing.
@@ -135,7 +135,7 @@ hatchzip extract game.zip -o D:\Games\Foo # somewhere else
 hatchzip x game.7z.001                    # split archive; any part's name works
 ```
 
-HatchZip prints the same space plan, asks for confirmation, then extracts. When it finishes, the archive is gone and the files are in the output folder. For a split archive, each volume is deleted as soon as everything in it is extracted.
+HatchZip prints the same space plan, asks for confirmation, then extracts. When the extraction is complete, the archive has been removed and the files are in the output folder. For a split archive, each volume is deleted as soon as everything in it is extracted.
 
 | Option | Effect |
 |---|---|

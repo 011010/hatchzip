@@ -43,18 +43,16 @@ pub fn open(
     let archive = Archive::read(&mut reader, &password).map_err(|e| match e {
         Error::PasswordRequired => anyhow::Error::new(PasswordNeeded),
         Error::BadSignature(_) | Error::UnsupportedVersion { .. } => {
-            anyhow!("this is not a 7z archive HatchZip can read: {e}")
+            anyhow!("not a readable 7z archive: {e}")
         }
         // An encrypted header that won't parse is almost always the wrong
         // password; damage can't be told apart from it.
         _ if !password.is_empty() => anyhow::Error::new(WrongPassword),
-        e => anyhow!("this is not a 7z archive HatchZip can read: {e}"),
+        e => anyhow!("not a readable 7z archive: {e}"),
     })?;
 
     if archive.files.iter().any(|f| f.is_anti_item()) {
-        bail!(
-            "this 7z archive holds update deletions (anti-items), which HatchZip doesn't support"
-        );
+        bail!("this 7z archive contains deletion records (anti-items), which are not supported");
     }
 
     let packed = SIGNATURE_HEADER_SIZE + archive.pack_pos();
@@ -119,7 +117,7 @@ pub fn open(
 fn item(f: &ArchiveEntry) -> Result<Item> {
     let path = safe_path(f.name()).ok_or_else(|| {
         anyhow!(
-            "'{}' would be written outside the output folder; refusing",
+            "'{}' would be written outside the destination folder; extraction refused",
             f.name()
         )
     })?;
@@ -216,8 +214,8 @@ impl Worker for SevenZWorker<'_> {
 pub fn rebuild_header(storage: &Storage, tail: Arc<Tail>, keep: u64) -> Result<(Vec<u8>, Vec<u8>)> {
     let unusual = || {
         anyhow!(
-            "this 7z archive is laid out in a way restore can't rebuild yet; \
-             run extract again to finish"
+            "the layout of this 7z archive cannot be restored. \
+             Run extract to complete the extraction"
         )
     };
     let mut reader = storage.reader(Some(tail));

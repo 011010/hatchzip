@@ -32,7 +32,7 @@ fn run(launch: Launch) -> Result<()> {
         }
         Launch::UnregisterShell => {
             shell::unregister()?;
-            println!("Removed HatchZip from the right-click menu.");
+            println!("Context menu entries removed.");
             return Ok(());
         }
         _ => {}

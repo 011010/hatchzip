@@ -144,7 +144,7 @@ fn main_window_flow(scheme: ColorScheme, tag: &str) {
     assert!(
         ui.get_plan()
             .verdict
-            .starts_with("Not enough space. Free up ")
+            .starts_with("Insufficient disk space. ")
     );
     shot(ui.window(), &format!("{tag}-3-no-fit"));
 
@@ -165,7 +165,7 @@ fn main_window_flow(scheme: ColorScheme, tag: &str) {
     wait_until("the test", move || {
         w.unwrap().get_task().phase == Phase::Done
     });
-    assert!(ui.get_task().message.contains("All 35 entries are intact"));
+    assert!(ui.get_task().message == "Test passed: 35 entries verified.");
     shot(ui.window(), &format!("{tag}-4-tested"));
     ui.invoke_back();
     assert_eq!(ui.get_task().phase, Phase::Idle);
@@ -185,7 +185,12 @@ fn main_window_flow(scheme: ColorScheme, tag: &str) {
     );
     assert_eq!(
         ui.get_task().message,
-        format!("Done. Everything is in {}.", out.display())
+        "All entries were extracted. The archive was removed."
+    );
+    assert_eq!(ui.get_task().heading, "Extraction complete");
+    assert_eq!(
+        ui.get_task().detail,
+        format!("Destination: {}", out.display())
     );
     shot(ui.window(), &format!("{tag}-5-done"));
 
@@ -216,7 +221,7 @@ fn task_window_flow(scheme: ColorScheme, tag: &str) {
     assert!(dir.path().join("northwind/Northwind/README.txt").exists());
     assert!(!archive.exists());
     assert!(
-        ui.get_task().space.starts_with("Needs "),
+        ui.get_task().space.starts_with("Required: "),
         "the plan stays in view: {}",
         ui.get_task().space
     );
@@ -240,7 +245,7 @@ fn task_window_flow(scheme: ColorScheme, tag: &str) {
     });
     assert_eq!(
         ui.get_task().message,
-        "No password was given, so nothing was changed."
+        "Test cancelled. The archive was not modified."
     );
     ui.hide().unwrap();
 }
@@ -286,7 +291,7 @@ fn password_flow(scheme: ColorScheme, tag: &str) {
         ui.get_task().phase == Phase::Done || ui.get_password_shown()
     });
     assert!(!ui.get_password_shown(), "asked twice");
-    assert!(ui.get_task().message.contains("All 35 entries are intact"));
+    assert!(ui.get_task().message == "Test passed: 35 entries verified.");
     ui.hide().unwrap();
 }
 
@@ -320,7 +325,9 @@ fn give_back_flow(scheme: ColorScheme, tag: &str) {
         w.unwrap().get_task().phase == Phase::Done
     });
     assert!(
-        ui.get_task().message.contains("is a normal archive again"),
+        ui.get_task()
+            .message
+            .starts_with("Archive restored. It contains the 35 entries not yet extracted."),
         "{}",
         ui.get_task().message
     );
@@ -353,7 +360,7 @@ fn shell_switch_flow(scheme: ColorScheme, tag: &str, data: &Path) {
     wait_until("the menu to be added", move || {
         w.unwrap().get_notice() != ""
     });
-    assert_eq!(ui.get_notice(), "HatchZip is now in the right-click menu.");
+    assert_eq!(ui.get_notice(), "Context menu entries added.");
     assert!(!ui.get_notice_bad());
     // The startup check, answering late, didn't flip the switch back.
     assert!(ui.get_shell_menu_on());
@@ -383,22 +390,23 @@ fn task_window_states(scheme: ColorScheme, tag: &str) {
     ui.show().unwrap();
     let base = TaskView {
         heading: "Extracting Northwind-1.4.7z".into(),
-        detail: "Into /home/sam/Games/Northwind-1.4".into(),
+        detail: "Destination: /home/sam/Games/Northwind-1.4".into(),
+        space: "Required: 3.1 GB. Available: 21.3 GB.".into(),
         fraction: 0.42,
-        amounts: "Extracted 12.6 GB of 30.0 GB".into(),
-        archive_left: "Archive left on disk: 17.1 GB".into(),
+        amounts: "12.6 GB of 30.0 GB".into(),
+        archive_left: "Archive remaining: 17.1 GB".into(),
         ..Default::default()
     };
     ui.set_task(TaskView {
         phase: Phase::Working,
-        rate: "182.4 MB/s, 2 min left".into(),
+        rate: "182.4 MB/s, 2 minutes remaining".into(),
         ..base.clone()
     });
     shot(ui.window(), &format!("{tag}-8-task-working"));
     ui.set_task(TaskView {
         phase: Phase::Paused,
-        message: "Paused. Nothing is lost: resume now or later, and it picks up where it stopped."
-            .into(),
+        heading: "Extraction paused".into(),
+        message: "Progress is saved. The extraction can be resumed now or later.".into(),
         ..base.clone()
     });
     shot(ui.window(), &format!("{tag}-9-task-paused"));
@@ -414,9 +422,9 @@ fn task_window_states(scheme: ColorScheme, tag: &str) {
     });
     ui.set_task(TaskView {
         phase: Phase::NoSpace,
-        heading: "Not enough space for Northwind-1.4.7z".into(),
+        heading: "Insufficient disk space".into(),
         can_retry: true,
-        message: "Not enough space. Free up 11.1 GB more.".into(),
+        message: "Insufficient disk space. 11.1 GB more is required.".into(),
         ..base
     });
     shot(ui.window(), &format!("{tag}-10-task-no-space"));

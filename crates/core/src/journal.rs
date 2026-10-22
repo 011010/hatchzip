@@ -160,7 +160,7 @@ impl Journal {
             };
             bail!(
                 "{} was written by {which} HatchZip version (journal format {version}); \
-                 finish the extraction with that version",
+                 complete the extraction with that version",
                 paths.journal.display()
             );
         }

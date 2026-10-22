@@ -374,7 +374,7 @@ fn restores_a_zip() {
         crash_extract(&archive, &out, "after-journal", 12);
         let run = restore(&archive, &[]);
         assert_ok(&run);
-        assert!(String::from_utf8_lossy(&run.stdout).contains("Restored"));
+        assert!(String::from_utf8_lossy(&run.stdout).contains("Archive restored"));
 
         let listing = read_zip(fs::read(&archive).unwrap());
         assert_split_between(&out, &listing, &files);

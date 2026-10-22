@@ -74,7 +74,7 @@ impl Storage {
             platform::open_exclusive(path).map_err(|e| match e.kind() {
                 io::ErrorKind::WouldBlock => {
                     anyhow!(
-                        "{} is in use by another program or HatchZip run",
+                        "{} is in use by another program or HatchZip process",
                         path.display()
                     )
                 }
@@ -121,7 +121,7 @@ impl Storage {
             };
             if actual > p.len {
                 bail!(
-                    "{} grew since extraction started; refusing to touch it",
+                    "{} has grown since extraction started and will not be modified",
                     p.path.display()
                 );
             }
@@ -321,7 +321,7 @@ fn volume_set(path: &Path) -> Result<Vec<PathBuf>> {
     };
     if n != 1 {
         bail!(
-            "{} is not the first part; open {} instead",
+            "{} is not the first part. Open {} instead",
             path.display(),
             numbered(&base, width, 1).display()
         );
