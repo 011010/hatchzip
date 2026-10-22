@@ -29,7 +29,7 @@ The protocol: flush the outputs, write and flush the journal, then punch up to t
 | `.tar.zst` | Per frame only with libzstd. The `zstd` CLI writes one frame even with `-T0`, so typical files have no restart point. | `ruzstd` (MIT) keeps exactly the needed state in `DecoderScratch` and can stop at block boundaries, but it is crate-private. | Large. A ruzstd fork with save and load, plus the window (2 MiB at default levels, up to 128 MiB with `--long`). |
 | RAR | Per volume. UnRAR opens files by name, with no reader callback and no offsets. | `unrar` wraps the UnRAR C library. `rars` (Apache-2.0, pure Rust, takes `Read + Seek`) is new and its own README asks for more testing. | Medium for volumes. Solid RAR can't be punched safely, because UnRAR's state can't be saved. |
 
-## Licenses for a commercial product
+## Dependency licenses
 
 All candidate crates are permissive: zip (MIT), flate2 (MIT or Apache), zlib-rs and libz-rs-sys (Zlib), zstd and zstd-safe (BSD-3), ruzstd (MIT), lzma-rust2 (Apache-2.0), liblzma (MIT or Apache, building only the 0BSD liblzma sources), sevenz-rust2 (Apache-2.0), zesven (MIT or Apache), tar (MIT or Apache). No GPL-only, LGPL-only or non-commercial terms appear in any dependency tree.
 

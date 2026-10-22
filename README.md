@@ -15,7 +15,7 @@
 
 <p align="center">
   <a href="https://github.com/xevrion/hatchzip/actions/workflows/ci.yml"><img src="https://github.com/xevrion/hatchzip/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-FSL--1.1--ALv2-blue.svg" alt="FSL-1.1-ALv2 licensed" /></a>
+  <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="MIT or Apache-2.0 licensed" /></a>
   <img src="https://img.shields.io/badge/platform-linux%20%7C%20windows%20%7C%20macos-blue.svg" alt="Linux, Windows and macOS" />
 </p>
 
@@ -164,8 +164,10 @@ ZIP, 7z and tar all store their contents as a sequence of independent pieces: fi
 
 ## License
 
-HatchZip is source available under the [Functional Source License 1.1, Apache 2.0 future license](LICENSE). You may use, study, modify and share it for free, including at work, but you may not sell it or offer it as part of a competing product or service. Every release becomes Apache 2.0 two years after it is published.
+HatchZip is licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT), at your option.
 
 ## Contributing
 
-Bug reports, especially from filesystems and operating systems not covered by CI, are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first; contributions require agreeing to the terms described there.
+Bug reports, especially from filesystems and operating systems not covered by CI, are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first.
+
+Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in HatchZip by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.

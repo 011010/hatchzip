@@ -22,15 +22,7 @@ Thank you for your interest in contributing. HatchZip deletes people's archives 
 
 ## Contribution terms
 
-HatchZip is licensed under the [Functional Source License](LICENSE) and is also offered commercially by its author. To keep that possible, every contribution has to be licensable on the same terms.
-
-By submitting a pull request, you agree that:
-
-1. You wrote the contribution, or otherwise have the right to submit it.
-2. You license it to the project under the terms in [LICENSE](LICENSE), and you also grant the project's author a perpetual, worldwide, irrevocable, royalty-free license to use, modify, sublicense and relicense it, including in commercial and closed-source versions of HatchZip.
-3. You keep the copyright to your contribution.
-
-A formal contributor license agreement may replace this section in the future.
+HatchZip is dual licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at the user's option. Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in HatchZip by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
 
 ## Development setup
 
