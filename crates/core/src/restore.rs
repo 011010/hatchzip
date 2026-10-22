@@ -1,0 +1,222 @@
+//! Turning a half-extracted archive back into a normal one.
+//!
+//! After an interrupted extraction the archive is a prefix of the original
+//! that holds exactly the entries still to do, and its index lives in the
+//! saved tail. Restore appends a new index for those entries, so any tool
+//! opens the archive again. Nothing below `committed_len` moves, which is why
+//! it needs no more free space than the new index takes.
+//!
+//! The order, and why each step is safe to interrupt:
+//!
+//! 1. Undo any earlier restore that was interrupted (see [`recover`]), and
+//!    finish a pending truncation, so the archive is exactly what extraction
+//!    left: `committed_len` bytes.
+//! 2. Build the new index in memory. Anything restore refuses, it refuses
+//!    here, before writing anything.
+//! 3. Delete output files of batches that were never committed, as a resume
+//!    does: those entries are still in the archive. Make the links the
+//!    journal holds for entries already cut off.
+//! 4. Save the journal with `restoring` set to the bytes step 6 overwrites.
+//!    From here on, any HatchZip run that finds the journal first cuts the
+//!    archive back to `committed_len` and puts those bytes back.
+//! 5. Append the new index at `committed_len` and flush it.
+//! 6. Overwrite what has to change below it (only the 7z start header) and
+//!    flush it.
+//! 7. Open the result as a fresh archive with the same parsers extraction
+//!    uses, and check it lists exactly the entries left. If not, undo.
+//! 8. Delete the journal, then the saved tail. A journal without its tail
+//!    can't be loaded, so the journal goes first; a tail left behind by a
+//!    crash in between is never read again.
+
+use std::collections::HashMap;
+use std::fs;
+use std::io::{self, Read, Seek, SeekFrom};
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context, Result, bail};
+
+use crate::archive::storage::Storage;
+use crate::archive::{self, Kind};
+use crate::engine::{self, Job};
+use crate::fsutil;
+use crate::journal::{Journal, Link, Paths};
+use crate::session;
+
+pub struct Restored {
+    /// The first volume of the restored archive.
+    pub archive: PathBuf,
+    pub format: &'static str,
+    /// Entries the restored archive holds: the ones not yet extracted.
+    pub entries: usize,
+    /// Where the extracted entries stay.
+    pub output: PathBuf,
+}
+
+/// Restores the half-extracted archive `archive` names (any volume of a
+/// split set works).
+pub fn restore(archive: &Path) -> Result<Restored> {
+    let (primary, paths) = session::locate(archive)?;
+    if !paths.exists() {
+        bail!(
+            "{} is not half extracted, so there is nothing to restore",
+            primary.display()
+        );
+    }
+    let (mut journal, tail) = Journal::load(&paths)?;
+    if !journal.parts[0].0.exists() {
+        bail!("every entry is already extracted; run extract to finish cleaning up");
+    }
+    recover(&mut journal, &paths)?;
+    // Restoring rewrites the index only and never decrypts file data, so no
+    // password is needed, except for a 7z whose header itself is encrypted.
+    let job = Job::resume(&journal, tail.clone(), true, None)?;
+    if job.units.is_empty() {
+        bail!("every entry is already extracted; run extract to finish");
+    }
+    let out = journal.output.clone();
+    let keep = journal.committed_len;
+
+    let remaining: HashMap<&Path, &archive::Item> = job
+        .units
+        .iter()
+        .flat_map(|u| &u.items)
+        .map(|i| (i.path.as_path(), i))
+        .collect();
+    // Links are made at the very end of an extraction, so the journal holds
+    // every link whose entry is already cut off. A tar hard link whose
+    // target is still in the archive can't be made yet; it goes back in.
+    let (back_in, make): (Vec<&Link>, Vec<&Link>) = journal
+        .links
+        .iter()
+        .partition(|l| l.hard && remaining.contains_key(l.target.as_path()));
+    let mut expected: Vec<(PathBuf, Kind, u64)> = job
+        .units
+        .iter()
+        .flat_map(|u| &u.items)
+        .map(|i| (i.path.clone(), i.kind.clone(), i.size))
+        .collect();
+    expected.extend(back_in.iter().map(|l| {
+        let size = remaining[l.target.as_path()].size;
+        (l.path.clone(), Kind::HardLink(l.target.clone()), size)
+    }));
+    expected.sort_by(|a, b| a.0.cmp(&b.0));
+
+    // Nothing was cut off yet, so the archive is still the original, index
+    // and all.
+    let untouched = keep == job.storage.original_len();
+    let index = if untouched {
+        None
+    } else {
+        let hard: Vec<(&Path, &Path)> = back_in
+            .iter()
+            .map(|l| (l.path.as_path(), l.target.as_path()))
+            .collect();
+        Some(archive::rebuild_index(
+            job.format_name,
+            &job.storage,
+            tail,
+            keep,
+            &hard,
+        )?)
+    };
+
+    session::clear_uncommitted(&job, &out)?;
+    let make: Vec<Link> = make.into_iter().cloned().collect();
+    engine::make_links(&make, &out)?;
+
+    if let Some(index) = index {
+        let mut undo = Vec::with_capacity(index.patches.len());
+        for (at, bytes) in &index.patches {
+            let mut old = vec![0; bytes.len()];
+            let mut r = job.storage.reader(None);
+            r.seek(SeekFrom::Start(*at))?;
+            r.read_exact(&mut old)
+                .with_context(|| format!("reading {}", primary.display()))?;
+            undo.push((*at, old));
+        }
+        journal.restoring = Some(undo);
+        journal.save(&paths)?;
+
+        job.storage
+            .write_at(keep, &index.append)
+            .context("writing the new index")?;
+        engine::crash_point("restore-appended");
+        for (at, bytes) in &index.patches {
+            job.storage
+                .write_at(*at, bytes)
+                .context("writing the new index")?;
+        }
+        engine::crash_point("restore-written");
+
+        let found = reopen(&primary);
+        if !matches!(&found, Ok(f) if *f == expected) {
+            drop(job);
+            recover(&mut journal, &paths)?;
+            let why = match found {
+                Ok(_) => "it doesn't list the same entries as what is left".to_string(),
+                Err(e) => format!("{e:#}"),
+            };
+            bail!(
+                "the restored archive failed its check ({why}), so the restore was undone. \
+                 Nothing is lost; run extract again to finish, and please report this"
+            );
+        }
+    }
+    let format = job.format_name;
+    drop(job);
+
+    remove(&paths.journal)?;
+    fsutil::sync_dir(paths.journal.parent().unwrap_or(Path::new(".")))?;
+    remove(&paths.tail)?;
+    Ok(Restored {
+        archive: primary,
+        format,
+        entries: expected.len(),
+        output: out,
+    })
+}
+
+/// Opens the archive as a fresh one, the way a later extraction would, and
+/// lists what is in it.
+fn reopen(primary: &Path) -> Result<Vec<(PathBuf, Kind, u64)>> {
+    let job = Job::open(primary, false, None)?;
+    let mut found: Vec<_> = job
+        .units
+        .iter()
+        .flat_map(|u| &u.items)
+        .map(|i| (i.path.clone(), i.kind.clone(), i.size))
+        .collect();
+    found.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(found)
+}
+
+/// Puts an archive whose restore was interrupted back the way extraction
+/// left it: cuts off whatever restore appended past `committed_len` and puts
+/// back the bytes it overwrote below. Every run that opens a half-extracted
+/// archive for writing does this first, so `extract` continues and `restore`
+/// starts over.
+pub(crate) fn recover(journal: &mut Journal, paths: &Paths) -> Result<()> {
+    let Some(undo) = journal.restoring.take() else {
+        return Ok(());
+    };
+    let storage = Storage::from_parts(&journal.parts, true)?;
+    storage
+        .cut_to(journal.committed_len)
+        .context("undoing an interrupted restore")?;
+    for (at, bytes) in &undo {
+        storage
+            .write_at(*at, bytes)
+            .context("undoing an interrupted restore")?;
+    }
+    drop(storage);
+    journal.save(paths)
+}
+
+fn remove(path: &Path) -> Result<()> {
+    match fs::remove_file(path) {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => {
+            Err(e).with_context(|| format!("removing {}", path.display()))
+        }
+        _ => Ok(()),
+    }
+}

@@ -9,6 +9,7 @@ use clap_complete::Shell;
 pub const EXIT_FAILURE: u8 = 1;
 pub const EXIT_NO_SPACE: u8 = 3;
 pub const EXIT_DAMAGED: u8 = 4;
+pub const EXIT_PASSWORD: u8 = 5;
 pub const EXIT_PAUSED: u8 = 130;
 
 const ABOUT: &str = "Extract huge archives in place: the archive shrinks as your files hatch.";
@@ -32,10 +33,12 @@ Examples:
   hatchzip x game.7z.001 -o D:\\Games   Split archive, any part name works
   hatchzip extract big.zip --verify-first --keep-free 10GB
   hatchzip test game.7z                Check every file for damage, write nothing
+  hatchzip restore game.zip            Stopped halfway? Make what is left a normal archive
 
 Interrupted? Run the exact same command again. Progress lives in two files next \
 to the archive (<archive>.hatchzip and <archive>.hatchzip-tail); don't delete them \
-while an extraction is unfinished.
+while an extraction is unfinished. To stop for good instead, run restore: the \
+entries not yet extracted become a normal archive again.
 
 Exit status:
   0    success
@@ -43,7 +46,13 @@ Exit status:
   2    invalid command line
   3    not enough free space; nothing was changed
   4    the archive is damaged; nothing was deleted
-  130  paused with Ctrl+C; run the same command to continue";
+  5    the archive is password protected and no right password was given
+  130  paused with Ctrl+C; run the same command to continue
+
+Encrypted archives (ZIP with ZipCrypto or AES, 7z with AES): HatchZip asks for the \
+password, or takes --password or the HATCHZIP_PASSWORD environment variable. It \
+proves the password on one file before anything is deleted. The password is never \
+saved, so continuing an interrupted run asks again.";
 
 #[derive(Parser)]
 #[command(
@@ -97,11 +106,29 @@ pub enum Command {
     List {
         /// The archive, or any part of a split archive
         archive: PathBuf,
+        #[command(flatten)]
+        secret: Secret,
     },
     /// Check every file in an archive for damage, without writing anything
     #[command(visible_alias = "t")]
     Test {
         /// The archive, or any part of a split archive
+        archive: PathBuf,
+        #[command(flatten)]
+        secret: Secret,
+    },
+    /// Turn a half-extracted archive back into a normal one other tools open
+    #[command(
+        long_about = "Turn a half-extracted archive back into a normal one other tools open.\n\n\
+            An interrupted extraction leaves the archive holding only the entries not yet \
+            extracted, with its index saved next to it, so only HatchZip can open it. restore \
+            appends a new index for those entries, so 7-Zip, WinRAR, unzip or tar open it \
+            again. Nothing is moved: it needs only the space the new index takes. Files \
+            already extracted stay in the output folder. If restore is interrupted, run it \
+            again, or run extract to continue extracting instead."
+    )]
+    Restore {
+        /// The half-extracted archive, or any part of a split archive
         archive: PathBuf,
     },
     /// Print a shell completion script
@@ -124,6 +151,22 @@ pub struct Target {
     /// Where to put the files [default: a folder named after the archive, next to it]
     #[arg(short, long, value_name = "DIR")]
     pub output: Option<PathBuf>,
+    #[command(flatten)]
+    pub secret: Secret,
+}
+
+#[derive(Args)]
+pub struct Secret {
+    /// Password for an encrypted archive. Without it HatchZip asks, hiding
+    /// what you type; prefer that, since this is visible to other programs
+    #[arg(
+        short,
+        long,
+        env = "HATCHZIP_PASSWORD",
+        hide_env_values = true,
+        value_name = "PASSWORD"
+    )]
+    pub password: Option<String>,
 }
 
 #[derive(Args)]

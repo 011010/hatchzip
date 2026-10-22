@@ -16,58 +16,71 @@
 <meta property="og:title" content="HatchZip">
 <meta property="og:description" content="Extract huge archives without needing double the disk space. Free and open source, for Windows, macOS and Linux.">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="style.css?v=1">
+<link rel="stylesheet" href="style.css?v=2">
 </head>
 <body>
+<div class="page">
+<aside class="side">
+<a class="brand" href="./"><img src="favicon.svg" alt="" width="48" height="48"><span>HatchZip</span></a>
+<nav aria-label="On this page">
+<ul>
+<li><a href="#download">Download</a></li>
+<li><a href="#features">What it does</a></li>
+<li><a href="#results">Results</a></li>
+<li><a href="#limits">Limits</a></li>
+<li><a href="https://github.com/xevrion/hatchzip/blob/main/docs/how-it-works.md">How it works</a></li>
+<li><a href="https://github.com/xevrion/hatchzip">Source code</a></li>
+<li><a href="https://github.com/xevrion/hatchzip/issues">Report a bug</a></li>
+</ul>
+</nav>
+</aside>
+
+<div class="content">
 <header>
 <h1>HatchZip</h1>
 <p class="lead">Extract huge archives without needing double the disk space.</p>
 </header>
 <main>
 <p>A 180 GB archive that unpacks to 200 GB needs 380 GB of disk with WinRAR, 7-Zip or <code>unzip</code>, because the archive and the extracted files have to exist at the same time. HatchZip needs a little over 200 GB: it extracts from the end of the archive and cuts each finished part off the archive file, so the space comes back as it goes.</p>
-<p>Free and open source, for Windows, macOS and Linux. <a href="https://github.com/xevrion/hatchzip/blob/main/docs/how-it-works.md">How it works</a>.</p>
+<p>Free and open source, for Windows, macOS and Linux.</p>
 
 <section aria-labelledby="download">
 <h2 id="download">Download</h2>
-<div class="scroll" tabindex="0" role="region" aria-label="Command line downloads">
-<table>
+<table class="stack">
 <caption>Command line</caption>
 <thead>
 <tr><th scope="col">Platform</th><th scope="col">File</th><th scope="col">Type</th></tr>
 </thead>
 <tbody>
-<tr><th scope="row">Windows x64</th><td><a href="https://github.com/xevrion/hatchzip/releases/latest/download/hatchzip-x86_64-windows.zip">hatchzip-x86_64-windows.zip</a></td><td>zip</td></tr>
-<tr><th scope="row">macOS Apple Silicon</th><td><a href="https://github.com/xevrion/hatchzip/releases/latest/download/hatchzip-aarch64-macos.tar.gz">hatchzip-aarch64-macos.tar.gz</a></td><td>tar.gz</td></tr>
-<tr><th scope="row">macOS Intel</th><td><a href="https://github.com/xevrion/hatchzip/releases/latest/download/hatchzip-x86_64-macos.tar.gz">hatchzip-x86_64-macos.tar.gz</a></td><td>tar.gz</td></tr>
-<tr><th scope="row">Linux x64</th><td><a href="https://github.com/xevrion/hatchzip/releases/latest/download/hatchzip-x86_64-linux.tar.gz">hatchzip-x86_64-linux.tar.gz</a></td><td>tar.gz</td></tr>
-<tr><th scope="row">Linux ARM64</th><td><a href="https://github.com/xevrion/hatchzip/releases/latest/download/hatchzip-aarch64-linux.tar.gz">hatchzip-aarch64-linux.tar.gz</a></td><td>tar.gz</td></tr>
+<tr><th scope="row">Windows x64</th><td data-label="File"><a href="https://github.com/xevrion/hatchzip/releases/latest/download/hatchzip-x86_64-windows.zip">hatchzip-x86_64-windows.zip</a></td><td data-label="Type">zip</td></tr>
+<tr><th scope="row">macOS Apple Silicon</th><td data-label="File"><a href="https://github.com/xevrion/hatchzip/releases/latest/download/hatchzip-aarch64-macos.tar.gz">hatchzip-aarch64-macos.tar.gz</a></td><td data-label="Type">tar.gz</td></tr>
+<tr><th scope="row">macOS Intel</th><td data-label="File"><a href="https://github.com/xevrion/hatchzip/releases/latest/download/hatchzip-x86_64-macos.tar.gz">hatchzip-x86_64-macos.tar.gz</a></td><td data-label="Type">tar.gz</td></tr>
+<tr><th scope="row">Linux x64</th><td data-label="File"><a href="https://github.com/xevrion/hatchzip/releases/latest/download/hatchzip-x86_64-linux.tar.gz">hatchzip-x86_64-linux.tar.gz</a></td><td data-label="Type">tar.gz</td></tr>
+<tr><th scope="row">Linux ARM64</th><td data-label="File"><a href="https://github.com/xevrion/hatchzip/releases/latest/download/hatchzip-aarch64-linux.tar.gz">hatchzip-aarch64-linux.tar.gz</a></td><td data-label="Type">tar.gz</td></tr>
 </tbody>
 </table>
-</div>
 
-<div class="scroll" tabindex="0" role="region" aria-label="Desktop app downloads">
-<table>
+<table class="stack soon">
 <caption>Desktop app (coming soon)</caption>
 <thead>
 <tr><th scope="col">Platform</th><th scope="col">File</th><th scope="col">Type</th></tr>
 </thead>
-<tbody class="soon">
-<tr><th scope="row">Windows x64</th><td>HatchZip-x64-setup.exe <small>coming soon</small></td><td>Installer</td></tr>
-<tr><th scope="row">macOS Apple Silicon</th><td>HatchZip-aarch64.dmg <small>coming soon</small></td><td>Disk image</td></tr>
-<tr><th scope="row">macOS Intel</th><td>HatchZip-x86_64.dmg <small>coming soon</small></td><td>Disk image</td></tr>
-<tr><th scope="row">Linux x64</th><td>hatchzip_amd64.deb <small>coming soon</small></td><td>deb package</td></tr>
-<tr><th scope="row">Linux x64</th><td>hatchzip-x86_64.rpm <small>coming soon</small></td><td>rpm package</td></tr>
-<tr><th scope="row">Linux x64</th><td>HatchZip-x86_64.AppImage <small>coming soon</small></td><td>AppImage</td></tr>
+<tbody>
+<tr><th scope="row">Windows x64</th><td data-label="File">HatchZip-x64-setup.exe <small>coming soon</small></td><td data-label="Type">Installer</td></tr>
+<tr><th scope="row">macOS Apple Silicon</th><td data-label="File">HatchZip-aarch64.dmg <small>coming soon</small></td><td data-label="Type">Disk image</td></tr>
+<tr><th scope="row">macOS Intel</th><td data-label="File">HatchZip-x86_64.dmg <small>coming soon</small></td><td data-label="Type">Disk image</td></tr>
+<tr><th scope="row">Linux x64</th><td data-label="File">hatchzip_amd64.deb <small>coming soon</small></td><td data-label="Type">deb package</td></tr>
+<tr><th scope="row">Linux x64</th><td data-label="File">hatchzip-x86_64.rpm <small>coming soon</small></td><td data-label="Type">rpm package</td></tr>
+<tr><th scope="row">Linux x64</th><td data-label="File">HatchZip-x86_64.AppImage <small>coming soon</small></td><td data-label="Type">AppImage</td></tr>
 </tbody>
 </table>
-</div>
 
 <p>Or install from a terminal. Linux and macOS:</p>
 <pre><code>curl -fsSL https://raw.githubusercontent.com/xevrion/hatchzip/main/install.sh | sh</code></pre>
 <p>Windows, in PowerShell:</p>
 <pre><code>irm https://raw.githubusercontent.com/xevrion/hatchzip/main/install.ps1 | iex</code></pre>
 <p>Or <code>cargo install hatchzip</code> (coming soon).</p>
-<p>Then run <code>hatchzip check game.zip</code> to see whether it fits, and <code>hatchzip extract game.zip</code> to extract it.</p>
+<p>Then run <code>hatchzip check game.zip</code> to see whether it fits, and <code>hatchzip extract game.zip</code> to extract it. <code>hz</code> works as a short name, and <code>man hatchzip</code> has the full manual.</p>
 <p><a href="https://github.com/xevrion/hatchzip/releases">All releases</a></p>
 </section>
 
@@ -79,6 +92,8 @@
 <li>Keeps 2 GB of free space by default, so the disk never fills to zero. Change it with <code>--keep-free</code>.</li>
 <li>Can be stopped with Ctrl+C, or crash, at any moment. Run the same command again and it picks up where it left off.</li>
 <li>Checks each file's CRC-32 as it extracts. A damaged file stops the run, and it stays in the archive.</li>
+<li>Never overwrites a file that is already there, so "extract here" is safe.</li>
+<li>Opens password-protected ZIP and 7z archives. It checks the password on one file before anything is deleted, and never saves it.</li>
 <li>Works on any filesystem that can shrink a file: ext4, btrfs, XFS, NTFS, APFS, and exFAT and FAT32 USB drives.</li>
 </ul>
 </section>
@@ -86,20 +101,18 @@
 <section aria-labelledby="results">
 <h2 id="results">Measured results</h2>
 <p>The same 200 MB of game data (21 files), packed by the real tools, extracted on a 220 MiB disk with about 50 MB free:</p>
-<div class="scroll" tabindex="0" role="region" aria-label="Measured results">
-<table>
+<table class="stack">
 <thead>
 <tr><th scope="col">Archive</th><th scope="col"><code>unzip</code> / <span class="nw">7-Zip</span></th><th scope="col">HatchZip</th></tr>
 </thead>
 <tbody>
-<tr><th scope="row">ZIP, 180 MB</th><td><code>unzip</code> ran out of space at file 6 of 21</td><td>Finished, every file byte-identical</td></tr>
-<tr><th scope="row">7z from <span class="nw">7-Zip</span> 25.01, <code>-ms=20m</code> (10 solid blocks)</th><td>Needs 380 MB</td><td>Finished in 0.64 s, every file byte-identical</td></tr>
-<tr><th scope="row">7z split into 5 volumes of 40 MB</th><td>Needs 380 MB</td><td>Finished; volumes deleted one at a time, peak 210 MB used</td></tr>
-<tr><th scope="row">tar from GNU tar, 200 MB</th><td>Needs 400 MB</td><td>Finished in 0.12 s, every file byte-identical</td></tr>
-<tr><th scope="row">7z from <span class="nw">7-Zip</span> with default settings (1 solid block)</th><td>Needs 380 MB</td><td>Refused before touching anything: one solid block can't be freed until all of it is out, so it needs 200 MB free</td></tr>
+<tr><th scope="row">ZIP, 180 MB</th><td data-label="unzip / 7-Zip"><code>unzip</code> ran out of space at file 6 of 21</td><td data-label="HatchZip">Finished, every file byte-identical</td></tr>
+<tr><th scope="row">7z from <span class="nw">7-Zip</span> 25.01, <code>-ms=20m</code> (10 solid blocks)</th><td data-label="unzip / 7-Zip">Needs 380 MB</td><td data-label="HatchZip">Finished in 0.64 s, every file byte-identical</td></tr>
+<tr><th scope="row">7z split into 5 volumes of 40 MB</th><td data-label="unzip / 7-Zip">Needs 380 MB</td><td data-label="HatchZip">Finished; volumes deleted one at a time, peak 210 MB used</td></tr>
+<tr><th scope="row">tar from GNU tar, 200 MB</th><td data-label="unzip / 7-Zip">Needs 400 MB</td><td data-label="HatchZip">Finished in 0.12 s, every file byte-identical</td></tr>
+<tr><th scope="row">7z from <span class="nw">7-Zip</span> with default settings (1 solid block)</th><td data-label="unzip / 7-Zip">Needs 380 MB</td><td data-label="HatchZip">Refused before touching anything: one solid block can't be freed until all of it is out, so it needs 200 MB free</td></tr>
 </tbody>
 </table>
-</div>
 <p>ZIP extraction of the same data took 0.25 to 0.35 s, against 1.48 to 1.50 s for <code>unzip</code> 6.00, including an fsync <code>unzip</code> skips. For crash safety, the process was killed at both unsafe moments of a batch at many points of each format's run; every resume finished with identical output.</p>
 <p class="note">Measured on Fedora 43, Intel Core i7-14700HX, SK Hynix NVMe SSD, warm page cache; the disk-space runs used a 220 MiB tmpfs to stand in for a full laptop disk, the speed runs ext4. Speed comes from decompressing files in parallel, so an archive holding one giant file extracts at the speed of a single core.</p>
 </section>
@@ -108,7 +121,7 @@
 <h2 id="limits">Limits</h2>
 <ul>
 <li>A 7z made with 7-Zip's default settings can be one solid block. HatchZip can only free it once all of it is out, so it needs free space for the whole block. <code>hatchzip check</code> tells you before anything changes.</li>
-<li>Compressed tar (<code>.tar.gz</code>, <code>.tar.zst</code>, <code>.tar.xz</code>), RAR and password-protected archives are not supported yet. They are refused before extraction.</li>
+<li>Compressed tar (<code>.tar.gz</code>, <code>.tar.zst</code>, <code>.tar.xz</code>) and RAR are not supported yet. They are refused before extraction.</li>
 <li>The archive is used up as it extracts. If the download itself is damaged, the files before the damage come out and the archive is partly gone. Use <code>--verify-first</code> when you can't download it again.</li>
 </ul>
 </section>
@@ -118,5 +131,7 @@
 <p>HatchZip is licensed under <a href="https://github.com/xevrion/hatchzip/blob/main/LICENSE-MIT">MIT</a> OR <a href="https://github.com/xevrion/hatchzip/blob/main/LICENSE-APACHE">Apache-2.0</a>. <a href="https://github.com/xevrion/hatchzip">Source on GitHub</a>. <a href="https://github.com/xevrion/hatchzip/issues">Report a bug</a>.</p>
 <p>Made by Yash Bavadiya (<a href="https://x.com/xevrion_the1">@xevrion_the1</a>).</p>
 </footer>
+</div>
+</div>
 </body>
 </html>

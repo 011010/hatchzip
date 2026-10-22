@@ -37,6 +37,9 @@ jobs:
           persist-credentials: false
       # rustup is on the runner, rust-toolchain.toml picks the version
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      # The GUI links fontconfig; everything else Slint needs is loaded at
+      # run time.
+      - run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets --locked -- -D warnings
 
@@ -59,6 +62,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev
       # The crash tests abort a child process midway on purpose and then
       # resume it, so an abort message in the log is expected, not a failure.
       # Every suite runs even after one fails, so a platform bug shows all

@@ -41,6 +41,12 @@ pub struct Journal {
     /// Links are made last, so nothing extracted can be written through one
     /// and every hard link's target already exists.
     pub links: Vec<Link>,
+    /// Set while `restore` turns the archive back into a normal one: the
+    /// bytes it overwrites below `committed_len`, so that an interrupted
+    /// restore can be undone by putting them back and cutting off whatever it
+    /// appended.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restoring: Option<Vec<(u64, Vec<u8>)>>,
 }
 
 pub struct Paths {
@@ -102,6 +108,7 @@ impl Journal {
             total_size: plan.total_size,
             committed_len: storage.original_len(),
             links: Vec::new(),
+            restoring: None,
         };
         journal.save(paths)?;
         Ok(journal)

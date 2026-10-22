@@ -3,7 +3,9 @@ use std::io;
 use std::os::fd::AsRawFd;
 use std::path::Path;
 
-pub use super::unix::{apply_mode, create_symlink, open_exclusive, same_filesystem, sync_dir};
+pub use super::unix::{
+    apply_mode, create_symlink, name_problem, open_exclusive, same_filesystem, sync_dir,
+};
 
 /// One `syncfs` per batch replaces an fsync per file, which matters when a
 /// batch holds thousands of small files.

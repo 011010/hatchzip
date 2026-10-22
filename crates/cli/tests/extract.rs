@@ -398,3 +398,32 @@ fn restores_symlinks_and_permissions_but_not_setuid() {
         Path::new("tool")
     );
 }
+
+/// Names that are fine on Linux and macOS but that Windows can't create.
+#[test]
+fn windows_only_names_are_refused_up_front_on_windows() {
+    let tmp = TempDir::new().unwrap();
+    let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+    for name in ["game/CON.txt", "game/notes."] {
+        zip.start_file(name, SimpleFileOptions::default()).unwrap();
+        zip.write_all(b"made on linux").unwrap();
+    }
+    let archive = tmp.path().join("odd.zip");
+    fs::write(&archive, zip.finish().unwrap().into_inner()).unwrap();
+    let before = fs::read(&archive).unwrap();
+    let out = tmp.path().join("out");
+
+    let run = extract(&archive, &out, &[]);
+    if cfg!(windows) {
+        assert!(!run.status.success());
+        assert!(String::from_utf8_lossy(&run.stderr).contains("can't be created here"));
+        assert_eq!(fs::read(&archive).unwrap(), before);
+        assert!(!side_files(&archive)[0].exists());
+    } else {
+        assert_ok(&run);
+        assert_eq!(
+            fs::read(out.join("game/CON.txt")).unwrap(),
+            b"made on linux"
+        );
+    }
+}

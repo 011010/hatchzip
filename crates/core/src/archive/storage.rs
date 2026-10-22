@@ -169,6 +169,92 @@ impl Storage {
         Ok(())
     }
 
+    /// Like [`set_len`](Self::set_len), but also cuts volumes that grew past
+    /// their original length. Only for undoing an interrupted restore, which
+    /// is the one thing that appends to an archive: the volume it appended to
+    /// may have been whole, and `set_len` never touches whole volumes.
+    pub fn cut_to(&self, len: u64) -> Result<()> {
+        for (i, p) in self.parts.iter().enumerate().rev() {
+            let keep = len.saturating_sub(p.start).min(p.len);
+            if i > 0 && keep == 0 {
+                match fs::remove_file(&p.path) {
+                    Err(e) if e.kind() != io::ErrorKind::NotFound => {
+                        return Err(e).with_context(|| format!("deleting {}", p.path.display()));
+                    }
+                    _ => {}
+                }
+                continue;
+            }
+            let shrink = |f: &File| -> io::Result<()> {
+                if f.metadata()?.len() > keep {
+                    f.set_len(keep)?;
+                    f.sync_all()?;
+                }
+                Ok(())
+            };
+            let done = if i == 0 {
+                shrink(&self.first)
+            } else {
+                match OpenOptions::new().write(true).open(&p.path) {
+                    Ok(f) => shrink(&f),
+                    Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+                    Err(e) => Err(e),
+                }
+            };
+            done.with_context(|| format!("shortening {}", p.path.display()))?;
+        }
+        Ok(())
+    }
+
+    /// Writes `bytes` at `offset` of the joined archive and flushes them to
+    /// disk. Bytes inside the archive go to the volume that holds them; bytes
+    /// past its current end go to the last volume still there, which grows.
+    pub fn write_at(&self, offset: u64, bytes: &[u8]) -> Result<()> {
+        let end = self.current_len()?;
+        if offset > end {
+            bail!(
+                "{} is shorter than expected; refusing to write past its end",
+                self.primary().display()
+            );
+        }
+        let last = self.parts.partition_point(|p| p.start < end).max(1) - 1;
+        let mut at = offset;
+        let mut rest = bytes;
+        while !rest.is_empty() {
+            let i = if at >= end {
+                last
+            } else {
+                self.parts.partition_point(|p| p.start <= at) - 1
+            };
+            let p = &self.parts[i];
+            let room = if i == last {
+                rest.len()
+            } else {
+                ((p.start + p.len - at) as usize).min(rest.len())
+            };
+            let (now, later) = rest.split_at(room);
+            self.write_part(i, at - p.start, now)
+                .with_context(|| format!("writing to {}", p.path.display()))?;
+            at += room as u64;
+            rest = later;
+        }
+        Ok(())
+    }
+
+    fn write_part(&self, i: usize, at: u64, bytes: &[u8]) -> io::Result<()> {
+        let write = |mut f: &File| -> io::Result<()> {
+            f.seek(SeekFrom::Start(at))?;
+            io::Write::write_all(&mut f, bytes)?;
+            f.sync_all()
+        };
+        if i == 0 {
+            // On Windows the locked handle is the only one allowed to write.
+            write(&self.first)
+        } else {
+            write(&OpenOptions::new().write(true).open(&self.parts[i].path)?)
+        }
+    }
+
     /// Deletes whatever is left of every part.
     pub fn remove(self) -> Result<()> {
         let Self { parts, first } = self;
