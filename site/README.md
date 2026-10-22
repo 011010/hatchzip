@@ -1,0 +1,59 @@
+# Website
+
+The HatchZip website: one static page, no build step, no JavaScript, no requests to other sites.
+
+| File | Purpose |
+|---|---|
+| `index.html` | The page |
+| `style.css` | All styles, light and dark |
+| `404.html` | Page shown for unknown addresses |
+| `favicon.svg` | Browser tab icon |
+| `robots.txt`, `sitemap.xml` | For search engines. `DOMAIN` is a placeholder. |
+| `_headers` | Security and cache headers for Cloudflare Pages and Netlify |
+
+## Preview locally
+
+```sh
+python3 -m http.server 8000 --bind 127.0.0.1 --directory site
+```
+
+Then open http://127.0.0.1:8000. The 404 page is not served for unknown paths by this server; open `/404.html` directly.
+
+## Before going live
+
+- The download links point at `releases/latest/download/<file>` and the install commands at `install.sh` and `install.ps1` on `main`. Both work only once the first release and the install scripts exist.
+- Once the domain is decided, replace `DOMAIN` in `sitemap.xml`, uncomment the `Sitemap:` line in `robots.txt`, and uncomment the canonical and `og:url` tags at the top of `index.html`.
+- After any change to `style.css`, bump the `?v=` number where `index.html` and `404.html` link it. The CSS is cached for a year.
+
+## Option A: GitHub Pages
+
+1. In the repository, open Settings, Pages, and set Source to "GitHub Actions".
+2. Open the Actions tab, pick the `pages` workflow, and click "Run workflow" on `main`.
+3. The site is published at `https://xevrion.github.io/hatchzip/`. The run's summary shows the address.
+
+The workflow (`.github/workflows/pages.yml`) only runs when started by hand. To deploy on every push to `main` that touches the site, add this under `on:`:
+
+```yaml
+  push:
+    branches: [main]
+    paths: ['site/**']
+```
+
+Notes:
+
+- GitHub Pages ignores `_headers`. The CSP and referrer policy still apply through the `<meta>` tags in the HTML, but framing protection (`frame-ancestors`, `X-Frame-Options`) and the other headers are only sent by Cloudflare Pages or Netlify.
+- `404.html` links its stylesheet and home page with absolute paths (`/style.css`), which are correct at the root of a domain. Under `xevrion.github.io/hatchzip/` the 404 page shows without styles until a custom domain is set (Settings, Pages, Custom domain). The main page uses relative paths and works either way.
+
+## Option B: Cloudflare Pages
+
+Free, and it applies `_headers`. Run these from the repository root:
+
+```sh
+npx wrangler login
+npx wrangler pages project create hatchzip --production-branch main
+npx wrangler pages deploy site --project-name hatchzip --branch main
+```
+
+The site is published at `https://hatchzip.pages.dev` (the create command prints the exact address if that name is taken). Run the last command again to deploy a change. A custom domain is added in the Cloudflare dashboard under Workers and Pages, hatchzip, Custom domains.
+
+`wrangler pages deploy site` uploads every file in this folder, including this README, which then is reachable at `/README.md`. That is harmless, since it is public in the repository anyway.

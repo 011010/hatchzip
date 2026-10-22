@@ -1,0 +1,121 @@
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff;
+  --fg: #1a1a1a;
+  --muted: #555555;
+  --link: #0645ad;
+  --line: #c8c8c8;
+  --head: #f2f2f2;
+  --code: #f4f4f4;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #121212;
+    --fg: #e6e6e6;
+    --muted: #a8a8a8;
+    --link: #8ab4f8;
+    --line: #444444;
+    --head: #1e1e1e;
+    --code: #1e1e1e;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  margin: 0 auto;
+  max-width: 720px;
+  padding: 24px 16px 40px;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 1rem;
+  line-height: 1.6;
+}
+
+h1 { font-size: 2rem; line-height: 1.2; margin: 0 0 4px; }
+h2 { font-size: 1.25rem; line-height: 1.3; margin: 32px 0 8px; }
+
+.lead { font-size: 1.125rem; margin: 0 0 16px; }
+.note, small, footer { color: var(--muted); }
+.note { font-size: 0.875rem; }
+
+a { color: var(--link); text-underline-offset: 2px; }
+
+a:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--link);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+code, pre {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 0.875em;
+}
+
+code {
+  background: var(--code);
+  padding: 1px 4px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+pre {
+  background: var(--code);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 8px 12px;
+  margin: 0 0 16px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+pre code { padding: 0; background: none; font-size: 1em; white-space: inherit; }
+
+ul { padding-left: 24px; }
+li { margin: 4px 0; }
+
+.scroll {
+  overflow-x: auto;
+  margin: 0 0 16px;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.9375rem;
+}
+
+caption {
+  text-align: left;
+  font-weight: 600;
+  padding: 0 0 4px;
+}
+
+th, td {
+  border: 1px solid var(--line);
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+thead th { background: var(--head); }
+tbody th { font-weight: normal; }
+td a, .nw { white-space: nowrap; }
+th code, td code { background: none; padding: 0; }
+
+footer {
+  margin-top: 40px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  font-size: 0.875rem;
+}
+
+footer p { margin: 4px 0; }
