@@ -72,6 +72,10 @@ uninstall() {
     step "Removing HatchZip"
     rm -f "$BIN_DIR/hatchzip" "$MAN_DIR/hatchzip.1" \
         "$BASH_DIR/hatchzip" "$ZSH_DIR/_hatchzip" "$FISH_DIR/hatchzip.fish"
+    # Only our own hz: a symlink pointing at hatchzip.
+    if [ "$(readlink "$BIN_DIR/hz" 2>/dev/null)" = hatchzip ]; then
+        rm -f "$BIN_DIR/hz" "$MAN_DIR/hz.1" "$BASH_DIR/hz" "$ZSH_DIR/_hz" "$FISH_DIR/hz.fish"
+    fi
     say "Removed. Half-finished extractions keep their .hatchzip files next to the archive."
 }
 
@@ -128,8 +132,20 @@ cp "$src/completions/hatchzip.bash" "$BASH_DIR/hatchzip"
 cp "$src/completions/_hatchzip" "$ZSH_DIR/_hatchzip"
 cp "$src/completions/hatchzip.fish" "$FISH_DIR/hatchzip.fish"
 
+# `hz` is the short name, unless some other program already answers to it.
+other_hz=$(command -v hz 2>/dev/null || true)
+if [ -n "$other_hz" ] && [ "$other_hz" != "$BIN_DIR/hz" ]; then
+    say "Skipping the short name hz: $other_hz already uses it."
+else
+    ln -sf hatchzip "$BIN_DIR/hz"
+    ln -sf hatchzip.1 "$MAN_DIR/hz.1"
+    "$BIN_DIR/hz" completions bash > "$BASH_DIR/hz"
+    "$BIN_DIR/hz" completions zsh > "$ZSH_DIR/_hz"
+    "$BIN_DIR/hz" completions fish > "$FISH_DIR/hz.fish"
+fi
+
 say ""
-say "$("$BIN_DIR/hatchzip" --version) installed."
+say "$("$BIN_DIR/hatchzip" --version) installed. Run it as hatchzip or hz; man hatchzip has the manual."
 case ":$PATH:" in
     *":$BIN_DIR:"*) ;;
     *)

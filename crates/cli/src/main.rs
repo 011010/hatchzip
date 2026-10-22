@@ -60,7 +60,18 @@ fn run(command: Command) -> Result<ExitCode> {
         Command::List { archive } => list(&archive),
         Command::Test { archive } => test_command(&archive),
         Command::Completions { shell } => {
-            clap_complete::generate(shell, &mut Cli::command(), "hatchzip", &mut io::stdout());
+            // Named after however we were called, so `hz completions bash`
+            // completes the `hz` alias.
+            let name = std::env::args_os()
+                .next()
+                .and_then(|a| {
+                    Path::new(&a)
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().into_owned())
+                })
+                .filter(|n| n == "hz")
+                .unwrap_or_else(|| "hatchzip".into());
+            clap_complete::generate(shell, &mut Cli::command(), name, &mut io::stdout());
             Ok(ExitCode::SUCCESS)
         }
         Command::Man => {
