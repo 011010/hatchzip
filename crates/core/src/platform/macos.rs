@@ -1,8 +1,11 @@
+use std::fs::File;
 use std::io;
+use std::os::fd::AsRawFd;
 use std::path::Path;
 
 pub use super::unix::{
-    apply_mode, create_symlink, name_problem, open_exclusive, same_filesystem, sync_dir,
+    allocated_bytes, apply_mode, create_symlink, name_problem, open_exclusive, same_filesystem,
+    sync_dir,
 };
 
 /// macOS has no `syncfs`. `File::sync_all` issues `F_FULLFSYNC` there, which
@@ -11,4 +14,52 @@ pub const SYNC_EACH_FILE: bool = true;
 
 pub fn sync_batch(_output: &Path) -> io::Result<()> {
     Ok(())
+}
+
+fn block_size(file: &File) -> io::Result<u64> {
+    let mut st: libc::statfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::fstatfs(file.as_raw_fd(), &mut st) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(u64::from(st.f_bsize).max(512))
+}
+
+/// Frees `len` bytes at `offset` without changing the file's length. Returns
+/// `Ok(false)` when the filesystem can't (HFS+, FAT32, exFAT). `F_PUNCHHOLE`
+/// refuses ranges that aren't whole blocks, so the range shrinks inwards to
+/// block boundaries: punching less than asked is always safe.
+pub fn punch_hole(file: &File, offset: u64, len: u64) -> io::Result<bool> {
+    let bs = block_size(file)?;
+    let start = offset.next_multiple_of(bs);
+    let end = (offset + len) / bs * bs;
+    if start >= end {
+        return Ok(true);
+    }
+    let (Ok(off), Ok(len)) = (i64::try_from(start), i64::try_from(end - start)) else {
+        return Err(io::ErrorKind::InvalidInput.into());
+    };
+    let arg = libc::fpunchhole_t {
+        fp_flags: 0,
+        reserved: 0,
+        fp_offset: off,
+        fp_length: len,
+    };
+    loop {
+        if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_PUNCHHOLE, &arg) } != -1 {
+            return Ok(true);
+        }
+        let e = io::Error::last_os_error();
+        match e.raw_os_error() {
+            Some(libc::EINTR) => continue,
+            // APFS answers ENOSPC for a file that shares blocks with a clone:
+            // punching it would need new space instead of freeing any.
+            Some(libc::ENOTSUP | libc::EINVAL | libc::ENOSPC) => return Ok(false),
+            _ => return Err(e),
+        }
+    }
+}
+
+/// APFS allocates 4 KiB blocks; 64 KiB leaves a margin for anything coarser.
+pub fn punch_granule(_dir: &Path) -> u64 {
+    64 << 10
 }

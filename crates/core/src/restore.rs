@@ -66,6 +66,18 @@ pub fn restore(archive: &Path) -> Result<Restored> {
     if !journal.parts[0].0.exists() {
         bail!("every entry is already extracted; run extract to finish cleaning up");
     }
+    // A streamed entry gives its archive bytes back while it is extracted,
+    // and the journal holds a resume point exactly as long as some are gone.
+    // An entry with holes in it can't go back into an archive.
+    if let Some(r) = &journal.resume {
+        bail!(
+            "{} can't be restored: a large entry was being extracted, and the archive space \
+             of its first {} may already be freed, so it can't be put back. Run extract to \
+             finish the extraction instead",
+            primary.display(),
+            engine::human(r.written)
+        );
+    }
     recover(&mut journal, &paths)?;
     // Restoring rewrites the index only and never decrypts file data, so no
     // password is needed, except for a 7z whose header itself is encrypted.

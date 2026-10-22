@@ -1960,11 +1960,13 @@ dependencies = [
  "crc32fast",
  "fs4",
  "libc",
+ "libz-rs-sys",
  "rayon",
  "serde",
  "serde_json",
  "sevenz-rust2",
  "tar",
+ "windows-sys 0.61.2",
  "zip",
 ]
 
@@ -2886,6 +2888,15 @@ checksum = "3c8469b4a23b962c1396b9b451dda50ef5b283e8dd309d69033475fa9b334324"
 dependencies = [
  "libc",
  "pkg-config",
+]
+
+[[package]]
+name = "libz-rs-sys"
+version = "0.6.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "434324ee61a8e4a05dd3fdf03d51c073ea7fdaf5a35b2ca33c4ca9f3f37def4a"
+dependencies = [
+ "zlib-rs",
 ]
 
 [[package]]

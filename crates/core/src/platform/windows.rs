@@ -82,3 +82,99 @@ pub fn apply_mode(_file: &File, _mode: Option<u32>) -> io::Result<()> {
 pub fn create_symlink(link: &Path, target: &Path) -> io::Result<()> {
     fs::write(link, target.to_string_lossy().as_bytes())
 }
+
+const ERROR_INVALID_FUNCTION: i32 = 1;
+const ERROR_NOT_SUPPORTED: i32 = 50;
+
+/// The punched range shrinks inwards to this, so NTFS doesn't spend writes
+/// zeroing pieces it can't free anyway.
+const PUNCH_ALIGN: u64 = 64 << 10;
+
+/// Frees `len` bytes at `offset` without changing the file's length. Returns
+/// `Ok(false)` when the filesystem can't (FAT32, exFAT).
+pub fn punch_hole(file: &File, offset: u64, len: u64) -> io::Result<bool> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::System::IO::DeviceIoControl;
+    use windows_sys::Win32::System::Ioctl::{
+        FILE_ZERO_DATA_INFORMATION, FSCTL_SET_SPARSE, FSCTL_SET_ZERO_DATA,
+    };
+
+    let start = offset.next_multiple_of(PUNCH_ALIGN);
+    let end = (offset + len) / PUNCH_ALIGN * PUNCH_ALIGN;
+    if start >= end {
+        return Ok(true);
+    }
+    let (Ok(start), Ok(end)) = (i64::try_from(start), i64::try_from(end)) else {
+        return Err(io::ErrorKind::InvalidInput.into());
+    };
+    let handle = file.as_raw_handle();
+    let mut returned = 0u32;
+    let failed = |e: io::Error| match e.raw_os_error() {
+        Some(ERROR_INVALID_FUNCTION | ERROR_NOT_SUPPORTED) => Ok(false),
+        _ => Err(e),
+    };
+    // Without the sparse flag NTFS answers FSCTL_SET_ZERO_DATA by writing
+    // real zeros, which frees nothing.
+    let ok = unsafe {
+        DeviceIoControl(
+            handle,
+            FSCTL_SET_SPARSE,
+            std::ptr::null(),
+            0,
+            std::ptr::null_mut(),
+            0,
+            &mut returned,
+            std::ptr::null_mut(),
+        )
+    };
+    if ok == 0 {
+        return failed(io::Error::last_os_error());
+    }
+    let range = FILE_ZERO_DATA_INFORMATION {
+        FileOffset: start,
+        BeyondFinalZero: end,
+    };
+    let ok = unsafe {
+        DeviceIoControl(
+            handle,
+            FSCTL_SET_ZERO_DATA,
+            (&raw const range).cast(),
+            size_of::<FILE_ZERO_DATA_INFORMATION>() as u32,
+            std::ptr::null_mut(),
+            0,
+            &mut returned,
+            std::ptr::null_mut(),
+        )
+    };
+    if ok == 0 {
+        return failed(io::Error::last_os_error());
+    }
+    Ok(true)
+}
+
+/// NTFS frees sparse ranges in compression units of 16 clusters: 64 KiB with
+/// the default 4 KiB clusters, 1 MiB on volumes formatted with 64 KiB ones.
+pub fn punch_granule(_dir: &Path) -> u64 {
+    1 << 20
+}
+
+/// Bytes the file really occupies on disk, which for a sparse file is less
+/// than its length.
+pub fn allocated_bytes(path: &Path) -> io::Result<u64> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::GetCompressedFileSizeW;
+
+    const INVALID_FILE_SIZE: u32 = u32::MAX;
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
+    let mut high = 0u32;
+    let low = unsafe { GetCompressedFileSizeW(wide.as_ptr(), &mut high) };
+    if low == INVALID_FILE_SIZE {
+        // The low half can legitimately be all ones; only an error code says
+        // the call failed.
+        let e = io::Error::last_os_error();
+        if e.raw_os_error() != Some(0) {
+            return Err(e);
+        }
+    }
+    Ok((u64::from(high) << 32) | u64::from(low))
+}

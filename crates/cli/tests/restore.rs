@@ -328,7 +328,9 @@ fn check_with_7z(restored: &Path, listing: &Listing) {
     assert!(text.contains("Everything is Ok"), "7z t:\n{text}");
     let list = real("7z", &["l", "-slt", "-ba", a]).unwrap();
     assert!(list.status.success());
-    let names = names_from_lines(&String::from_utf8_lossy(&list.stdout), "Path = ");
+    // 7-Zip on Windows lists paths with backslashes.
+    let stdout = String::from_utf8_lossy(&list.stdout).replace('\\', "/");
+    let names = names_from_lines(&stdout, "Path = ");
     assert_eq!(names, listing.names, "7z l");
 }
 

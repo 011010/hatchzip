@@ -237,7 +237,8 @@ pub struct SpacePlan {
 
 pub fn plan(job: &Job, out: &Path, resuming: bool, keep_free: u64) -> Result<SpacePlan> {
     let reclaims = fsutil::same_filesystem(job.storage.primary(), out);
-    let stale: u64 = job.uncommitted(out).iter().map(|(_, n)| n).sum();
+    let stale: u64 =
+        job.uncommitted(out).iter().map(|(_, n)| n).sum::<u64>() + job.past_resume_point(out);
     let free = fsutil::available_space(out)? + stale;
     let (needed, end) = job.space_needed(!resuming, reclaims);
     let fits = free >= needed + keep_free;
