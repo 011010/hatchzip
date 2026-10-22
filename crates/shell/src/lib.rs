@@ -1,0 +1,72 @@
+//! Puts HatchZip in the file manager's right-click menu, per user, without
+//! admin rights. Every entry runs the GUI with one of the command line flags
+//! in [`ACTIONS`], which the GUI treats as already confirmed.
+//!
+//! Registration only ever writes entries under names HatchZip owns, and
+//! [`unregister`] removes exactly those.
+
+mod platform;
+
+use std::path::{Path, PathBuf};
+
+use anyhow::Result;
+
+pub struct Action {
+    /// Stable identifier, used in file and registry key names.
+    pub id: &'static str,
+    pub label: &'static str,
+    pub flag: &'static str,
+}
+
+pub const ACTIONS: &[Action] = &[
+    Action {
+        id: "extract-here",
+        label: "Extract here",
+        flag: "--extract-here",
+    },
+    Action {
+        id: "extract-to",
+        label: "Extract to a new folder",
+        flag: "--extract-to",
+    },
+    Action {
+        id: "test",
+        label: "Test archive",
+        flag: "--test",
+    },
+];
+
+/// File types the menu appears on. `.001` covers the first part of split
+/// archives, which is the part HatchZip is opened with.
+pub const EXTENSIONS: &[&str] = &["zip", "7z", "tar", "001"];
+
+/// Where the per-user menu entries live. [`Dirs::current`] is the real
+/// location; tests point it somewhere temporary.
+#[derive(Clone, Debug)]
+pub struct Dirs {
+    /// `$XDG_DATA_HOME` on Linux. Unused on Windows, where entries go to the
+    /// per-user registry hive.
+    pub data: PathBuf,
+}
+
+impl Dirs {
+    pub fn current() -> Result<Self> {
+        platform::current_dirs()
+    }
+}
+
+/// Adds the menu entries, pointing them at `gui`, the `hatchzip-gui`
+/// executable. Safe to run again, for instance after an update moves it.
+/// Returns a short description of each place an entry was written.
+pub fn register(dirs: &Dirs, gui: &Path) -> Result<Vec<String>> {
+    platform::register(dirs, gui)
+}
+
+/// Removes every entry [`register`] could have written.
+pub fn unregister(dirs: &Dirs) -> Result<()> {
+    platform::unregister(dirs)
+}
+
+pub fn is_registered(dirs: &Dirs) -> bool {
+    platform::is_registered(dirs)
+}
