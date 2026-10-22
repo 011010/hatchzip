@@ -8,8 +8,8 @@ use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use anyhow::{Context, Result, anyhow, bail};
 use rayon::prelude::*;
@@ -36,6 +36,10 @@ pub struct Job {
     /// Where the archive currently ends: its original length, or wherever
     /// the last commit truncated it.
     pub top: u64,
+    /// Whether the archive's filesystem can free bytes inside a file, and
+    /// how much of a punched range it may keep allocated at each end. Probed
+    /// once, on first use.
+    punch: OnceLock<Option<u64>>,
 }
 
 impl Job {
@@ -88,6 +92,24 @@ impl Job {
             units,
             tail_start: opened.tail_start,
             top,
+            punch: OnceLock::new(),
+        })
+    }
+
+    /// `Some(granule)` if holes punched in the archive give its space back,
+    /// where `granule` is how much may stay allocated at each end of a
+    /// punched range. `None` on filesystems that can only truncate, such as
+    /// FAT32 and exFAT, which keep today's whole-unit behavior.
+    pub fn punch_support(&self) -> Option<u64> {
+        *self.punch.get_or_init(|| {
+            if test_knob("HATCHZIP_NO_PUNCH").is_some() {
+                return None;
+            }
+            let dir = match self.storage.primary().parent() {
+                Some(d) if !d.as_os_str().is_empty() => d,
+                _ => Path::new("."),
+            };
+            fsutil::can_punch(dir).then(|| platform::punch_granule(dir))
         })
     }
 

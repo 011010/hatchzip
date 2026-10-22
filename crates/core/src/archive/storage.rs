@@ -169,6 +169,32 @@ impl Storage {
         Ok(())
     }
 
+    /// Gives back the disk space of the bytes in `[from, to)` while every
+    /// offset stays where it was; they read as zeros afterwards. Returns
+    /// false if the filesystem can't. Filesystems free whole blocks only, so
+    /// up to a block at each end may stay allocated until truncation.
+    pub fn punch(&self, from: u64, to: u64) -> Result<bool> {
+        for (i, p) in self.parts.iter().enumerate() {
+            let (start, end) = (from.max(p.start), to.min(p.start + p.len));
+            if start >= end {
+                continue;
+            }
+            let (offset, len) = (start - p.start, end - start);
+            let punched = if i == 0 {
+                platform::punch_hole(&self.first, offset, len)
+            } else {
+                OpenOptions::new()
+                    .write(true)
+                    .open(&p.path)
+                    .and_then(|f| platform::punch_hole(&f, offset, len))
+            };
+            if !punched.with_context(|| format!("freeing space in {}", p.path.display()))? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     /// Deletes whatever is left of every part.
     pub fn remove(self) -> Result<()> {
         let Self { parts, first } = self;

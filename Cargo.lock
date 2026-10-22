@@ -509,6 +509,7 @@ dependencies = [
  "serde_json",
  "sevenz-rust2",
  "tar",
+ "windows-sys",
  "zip",
 ]
 

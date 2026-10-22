@@ -21,3 +21,13 @@ pub use windows::*;
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 compile_error!("HatchZip has no platform module for this system yet; add one in src/platform/");
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    /// Every filesystem a Linux test run lands on (ext4, XFS, btrfs, tmpfs)
+    /// can punch holes, so a probe that says otherwise is broken.
+    #[test]
+    fn linux_temp_dirs_can_punch() {
+        assert!(crate::fsutil::can_punch(&std::env::temp_dir()));
+    }
+}

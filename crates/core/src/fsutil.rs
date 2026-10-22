@@ -51,6 +51,46 @@ pub fn sync_dir(dir: &Path) -> Result<()> {
     platform::sync_dir(dir).with_context(|| format!("syncing directory {}", dir.display()))
 }
 
+/// Whether punching holes in files in `dir` really gives space back. The
+/// answer depends on the filesystem, and a call can succeed without freeing
+/// anything (NTFS on a file not marked sparse), so it is tried on a scratch
+/// file and measured rather than assumed.
+pub fn can_punch(dir: &Path) -> bool {
+    let probe = dir.join(format!(".hatchzip-probe-{}", std::process::id()));
+    let freed = punch_probe(&probe);
+    let _ = fs::remove_file(&probe);
+    freed.unwrap_or(false)
+}
+
+fn punch_probe(path: &Path) -> std::io::Result<bool> {
+    const LEN: u64 = 1 << 20;
+    let mut f = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .open(path)?;
+    // Noise, because btrfs, ZFS and NTFS compress zeros or repeats into
+    // almost nothing, and then there would be nothing to see freed.
+    let mut x: u64 = 0x9E37_79B9_7F4A_7C15;
+    let noise: Vec<u8> = (0..LEN)
+        .map(|_| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x as u8
+        })
+        .collect();
+    f.write_all(&noise)?;
+    f.sync_all()?;
+    let before = platform::allocated_bytes(path)?;
+    if !platform::punch_hole(&f, 0, LEN)? {
+        return Ok(false);
+    }
+    f.sync_all()?;
+    let after = platform::allocated_bytes(path)?;
+    Ok(f.metadata()?.len() == LEN && after + LEN / 2 <= before)
+}
+
 /// ZIP stores local wall-clock time with no zone. We read it as UTC, which is
 /// what most cross-platform extractors settle on.
 pub fn zip_time(dt: zip::DateTime) -> Option<SystemTime> {
@@ -77,4 +117,53 @@ pub fn zip_time(dt: zip::DateTime) -> Option<SystemTime> {
     u64::try_from(secs)
         .ok()
         .map(|s| UNIX_EPOCH + Duration::from_secs(s))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Where the probe says punching works, a punched range must read as
+    /// zeros, give its space back, and leave the length and every other byte
+    /// alone. Where it says it doesn't, the engine never punches.
+    #[test]
+    fn punched_ranges_free_space_and_nothing_else() {
+        let dir = std::env::temp_dir().join(format!("hatchzip-punch-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("data");
+        let len = 8usize << 20;
+        let data: Vec<u8> = (0..len).map(|i| (i * 31 % 251) as u8 + 1).collect();
+        fs::write(&path, &data).unwrap();
+        File::open(&path).unwrap().sync_all().unwrap();
+
+        let supported = can_punch(&dir);
+        eprintln!("punching supported in {}: {supported}", dir.display());
+        if supported {
+            let before = platform::allocated_bytes(&path).unwrap();
+            let f = fs::OpenOptions::new().write(true).open(&path).unwrap();
+            // Deliberately unaligned, as the engine's ranges are.
+            let (from, to) = (1_000_003u64, 5_000_011u64);
+            assert!(platform::punch_hole(&f, from, to - from).unwrap());
+            f.sync_all().unwrap();
+            let after = platform::allocated_bytes(&path).unwrap();
+            let granule = platform::punch_granule(&dir);
+            eprintln!("allocated before {before}, after {after}");
+            assert!(
+                after + (to - from) - 2 * granule <= before,
+                "allocation went from {before} to {after}"
+            );
+            let got = fs::read(&path).unwrap();
+            assert_eq!(got.len(), len);
+            assert_eq!(got[..from as usize], data[..from as usize]);
+            assert_eq!(got[to as usize..], data[to as usize..]);
+            // Platforms that align inwards leave the edges as they were.
+            assert!(
+                got[from as usize..to as usize]
+                    .iter()
+                    .zip(&data[from as usize..to as usize])
+                    .all(|(g, d)| *g == 0 || g == d)
+            );
+        }
+        fs::remove_dir_all(&dir).unwrap();
+    }
 }

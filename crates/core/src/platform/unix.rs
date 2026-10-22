@@ -23,6 +23,12 @@ pub fn open_exclusive(path: &Path) -> io::Result<File> {
     }
 }
 
+/// Bytes the file really occupies on disk. Punching a hole lowers it while
+/// the length stays the same.
+pub fn allocated_bytes(path: &Path) -> io::Result<u64> {
+    Ok(fs::metadata(path)?.blocks() * 512)
+}
+
 pub fn sync_dir(dir: &Path) -> io::Result<()> {
     File::open(dir)?.sync_all()
 }
