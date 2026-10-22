@@ -23,6 +23,12 @@ pub fn open_exclusive(path: &Path) -> io::Result<File> {
     }
 }
 
+/// Unix filesystems take any name without `/` or NUL, which path parsing
+/// already rules out.
+pub fn name_problem(_name: &str) -> Option<&'static str> {
+    None
+}
+
 pub fn sync_dir(dir: &Path) -> io::Result<()> {
     File::open(dir)?.sync_all()
 }

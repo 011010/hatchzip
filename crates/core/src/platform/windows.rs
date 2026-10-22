@@ -22,6 +22,31 @@ pub fn open_exclusive(path: &Path) -> io::Result<File> {
         })
 }
 
+/// Why Windows can't create a file or folder with this name, if it can't.
+/// Checked for every entry before the archive is touched, so a name made on
+/// another system fails up front instead of halfway through a run.
+pub fn name_problem(name: &str) -> Option<&'static str> {
+    const RESERVED: &[&str] = &[
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ];
+    // `CON.txt` is just as reserved as `CON`.
+    let stem = name.split('.').next().unwrap_or(name).trim_end();
+    if RESERVED.iter().any(|r| r.eq_ignore_ascii_case(stem)) {
+        return Some("it is a reserved device name on Windows");
+    }
+    if name.ends_with('.') || name.ends_with(' ') {
+        return Some("Windows drops a trailing dot or space from names");
+    }
+    if name
+        .chars()
+        .any(|c| matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*') || (c as u32) < 32)
+    {
+        return Some("it contains a character Windows doesn't allow in names");
+    }
+    None
+}
+
 /// `FlushFileBuffers` per file is the only durable flush Windows offers.
 pub const SYNC_EACH_FILE: bool = true;
 

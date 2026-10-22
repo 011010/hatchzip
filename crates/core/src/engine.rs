@@ -81,6 +81,14 @@ impl Job {
 
         let mut seen = HashSet::new();
         for item in units.iter().flat_map(|u| &u.items) {
+            for part in item.path.iter() {
+                if let Some(why) = platform::name_problem(&part.to_string_lossy()) {
+                    bail!(
+                        "'{}' can't be created here: {why}. Nothing was changed",
+                        item.path.display()
+                    );
+                }
+            }
             // Case-insensitive filesystems would let two items race for one
             // file inside a parallel batch.
             if item.kind != Kind::Dir && !seen.insert(item.path.to_string_lossy().to_lowercase()) {
