@@ -34,7 +34,10 @@ Ticked when it is merged and tested, not when it is started.
 - [x] Detect half-extracted archives and offer to continue
 - [x] Drag and drop archives onto the window (Windows, macOS, X11; Wayland has no file drops in winit yet)
 - [x] Settings in the window: kept-free space, verify first, output folder
-- [ ] Remember settings between runs
+- [x] Remember settings between runs (keep-free and verify-first, in the per-OS config folder)
+- [x] Password dialog, asking again on a wrong password
+- [x] "Stop and give me my archive back" (restore) on half-extracted and paused archives
+- [x] App icon in the window, and embedded in the Windows exe with a version resource
 - [ ] Contents as a folder tree
 - [x] Light and dark theme following the system
 - [x] Falls back to the software renderer when OpenGL won't start (tested with a broken EGL on Linux)
@@ -45,7 +48,7 @@ Ticked when it is merged and tested, not when it is started.
 
 - [x] Windows Explorer: HatchZip submenu with "Extract here", "Extract to a new folder" and "Test", per user without admin rights (`crates/shell`; registry keys tested in CI, not yet clicked in a real Explorer)
 - [x] Linux: Dolphin service menu, GNOME Files scripts and Nemo actions (`crates/shell`; files tested, not yet clicked)
-- [ ] Wire `crates/shell` into the GUI: `--register-shell` / `--unregister-shell` and a settings switch
+- [x] Wire `crates/shell` into the GUI: `--register-shell` / `--unregister-shell` (no window, for installers) and a switch in the Settings menu (AppImage registers `$APPIMAGE`)
 - [ ] Thunar custom actions
 - [ ] Windows 11 top-level context menu (the classic one sits under "Show more options"); needs a packaged shell extension
 - [ ] macOS: Finder Quick Action (needs a Mac to test)
@@ -63,14 +66,14 @@ Ticked when it is merged and tested, not when it is started.
 - [x] 7z, freed one solid block at a time
 - [x] Uncompressed tar, including long names, symlinks and hard links
 - [x] Split archives (`.001`, `.002`, ...), volumes deleted as they empty
-- [ ] Free space inside one solid block or stream (hole punching plus resume points); fixes 7z made with 7-Zip's default settings
+- [x] Free space inside one large file while extracting it (hole punching plus durable resume points): stored and Deflate ZIP entries, tar entries; Linux and macOS verified in CI, Windows NTFS compiled only
+- [ ] The same inside a 7z solid block (LZMA2 resume points); fixes 7z made with 7-Zip's default settings
 - [ ] `.tar.gz` (resume points at deflate block boundaries)
 - [ ] `.tar.xz` (per xz block)
 - [ ] `.tar.zst`
 - [ ] RAR, starting with deleting finished volumes of `.partN.rar` sets
 - [ ] Native split ZIP (`.z01`, `.z02`, ..., `.zip`)
 - [x] Password-protected ZIP (ZipCrypto, AES) and 7z (AES, encrypted headers too), proven before anything is deleted, never saved (CLI; tested including a real `zip -P` archive through a terminal prompt)
-- [ ] Password dialog in the GUI
 - [x] Codec tests with archives from 7-Zip 25.01: Deflate64, bzip2, LZMA, PPMd in ZIP; LZMA, BCJ+LZMA2, bzip2, Deflate, PPMd in 7z
 - [x] Archives over 4 GiB: entries past the 4 GiB mark, crashed and resumed there (sparse test archive, Linux and macOS)
 - [ ] Tests for XZ in ZIP and Zstandard in 7z (7-Zip itself can't write those)
@@ -87,5 +90,5 @@ Ticked when it is merged and tested, not when it is started.
 - [ ] `--skip-damaged`: save what can be saved as `name.damaged` and keep going
 - [ ] Read each file back before cutting its bytes from the archive, to catch antivirus quarantine and bad writes
 - [x] Windows: reserved names (`CON`, `NUL`, ...), trailing dots and spaces, and forbidden characters are refused before anything is touched
-- [ ] Windows: a test for paths over 260 characters (Rust's standard library handles them, unverified here)
+- [x] Paths over 260 characters extract and resume (test runs on Windows CI too)
 - [ ] Benchmarks on more hardware, including a hard drive and a USB stick
