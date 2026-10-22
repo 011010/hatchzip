@@ -9,12 +9,15 @@ Ticked when it is merged and tested, not when it is started.
 - [x] Space check before touching anything, with a kept-free margin
 - [x] CLI: help with examples, shell completions, man page, exit codes, `--quiet`, `list`, `test`
 - [x] MIT OR Apache-2.0, repository public
-- [ ] CI green on Linux, macOS and Windows
-- [ ] Ctrl+C message tells the truth: it stops mid-file and redoes that batch on resume, it doesn't finish the current files
+- [x] CI green on Linux, macOS and Windows (the full suite, crash tests included, on real Windows and macOS runners)
+- [x] Ctrl+C message tells the truth: it stops mid-file and redoes that batch on resume
+- [x] Extract into a folder that already has other files ("Extract here"), never overwriting one
 - [ ] `hatchzip restore`: turn a half-extracted archive back into a normal ZIP or 7z any tool can open
 - [ ] Decide whether `--verify-first` becomes the default
-- [ ] Prebuilt binaries on GitHub Releases: Windows x64, macOS arm64 and x64, Linux x64 and arm64 (static), with SHA-256 checksums
-- [ ] One-line install: `install.sh` for Linux and macOS, `install.ps1` for Windows
+- [x] Release workflow: static binaries for Windows x64, macOS arm64 and x64, Linux x64 and arm64, smoke tested, with SHA-256 checksums (dry run passed on all five)
+- [ ] First tagged release (`git tag v0.1.0 && git push --tags`)
+- [x] One-line install: `install.sh` for Linux and macOS (tested locally, including a tampered checksum and uninstall), `install.ps1` for Windows
+- [ ] Test `install.ps1` on a real Windows machine against a published release
 - [ ] Real run on an archive over 4 GB (64-bit ZIP offsets) and on a real Windows machine
 - [ ] Demo video: `unzip` fails on a nearly full disk, HatchZip finishes (1920x1080, 60 fps, for X)
 - [ ] Demo GIF at the top of the README
@@ -37,10 +40,12 @@ Ticked when it is merged and tested, not when it is started.
 
 ## Right-click menu and OS integration
 
-- [ ] Windows Explorer: HatchZip submenu with "Extract here", "Extract to \<name\>\\", "Check space" and "Test", registered per user without admin rights
+- [x] Windows Explorer: HatchZip submenu with "Extract here", "Extract to a new folder" and "Test", per user without admin rights (`crates/shell`; registry keys tested in CI, not yet clicked in a real Explorer)
+- [x] Linux: Dolphin service menu, GNOME Files scripts and Nemo actions (`crates/shell`; files tested, not yet clicked)
+- [ ] Wire `crates/shell` into the GUI: `--register-shell` / `--unregister-shell` and a settings switch
+- [ ] Thunar custom actions
 - [ ] Windows 11 top-level context menu (the classic one sits under "Show more options"); needs a packaged shell extension
-- [ ] Linux: KDE Dolphin service menu, GNOME Files, Nemo and Thunar actions
-- [ ] macOS: Finder Quick Action
+- [ ] macOS: Finder Quick Action (needs a Mac to test)
 - [ ] Windows installer (MSI or NSIS) and winget
 - [ ] macOS: dmg and Homebrew
 - [ ] Linux: deb, rpm, AUR, Flatpak
@@ -60,6 +65,13 @@ Ticked when it is merged and tested, not when it is started.
 - [ ] Native split ZIP (`.z01`, `.z02`, ..., `.zip`)
 - [ ] Password-protected ZIP and 7z
 - [ ] Tests for the codecs decoded but not yet tested: Deflate64, LZMA, XZ, PPMd in ZIP; LZMA, BCJ, bzip2, Deflate, PPMd, Zstandard in 7z
+
+## Website
+
+- [x] Plain static page in the spirit of 7-zip.org: downloads, what it does, measured results, limits (`site/`, about 11 KB, no JavaScript, strict CSP)
+- [ ] Pick and buy the domain, then fill in the canonical URL, sitemap and Open Graph URL
+- [ ] Deploy (GitHub Pages workflow is ready and manual-only; Cloudflare Pages also works)
+- [ ] Screenshots of the GUI once it exists
 
 ## Safety and polish
 
