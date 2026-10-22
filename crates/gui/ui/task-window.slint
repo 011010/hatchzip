@@ -1,0 +1,84 @@
+import { Palette } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Phase, PlanView, TaskView, Progress, Outcome, Busy, TaskButtons } from "parts.slint";
+
+// The small window a right-click opens. It does one thing and closes.
+export component TaskWindow inherits Window {
+    in property <TaskView> task;
+    in property <PlanView> plan;
+
+    callback pause();
+    callback resume();
+    callback open-folder();
+    callback dismiss();
+
+    title: root.task.heading;
+    preferred-width: 480px;
+    // Tall enough for the longest state, so the window never has to grow
+    // while it is on screen.
+    preferred-height: 230px;
+    min-width: 420px;
+    background: Palette.background;
+
+    VerticalLayout {
+        padding: Theme.gutter;
+        spacing: 12px;
+
+        VerticalLayout {
+            spacing: 4px;
+            Text {
+                text: root.task.heading;
+                font-size: 15px;
+                font-weight: 600;
+                overflow: elide;
+            }
+            Text {
+                text: root.task.detail;
+                color: Theme.muted;
+                overflow: elide;
+            }
+        }
+
+        if root.task.phase == Phase.checking: Busy {
+            text: "Checking space";
+        }
+        if root.task.phase == Phase.verifying || root.task.phase == Phase.working || root.task.phase == Phase.pausing || root.task.phase == Phase.paused: Progress {
+            task: root.task;
+        }
+        if root.task.phase == Phase.no-space: Text {
+            text: "Free now: " + root.plan.free + ". HatchZip needs " + root.plan.needed + ", plus " + root.plan.keep + " kept free.";
+            color: Theme.muted;
+            wrap: word-wrap;
+        }
+        Outcome {
+            task: root.task;
+        }
+        if root.task.phase == Phase.no-space && root.plan.note != "": Text {
+            text: root.plan.note;
+            wrap: word-wrap;
+            color: Theme.muted;
+            font-size: Theme.small-size;
+        }
+
+        Rectangle {
+            vertical-stretch: 1;
+        }
+
+        TaskButtons {
+            task: root.task;
+            closable: true;
+            pause => {
+                root.pause();
+            }
+            resume => {
+                root.resume();
+            }
+            open-folder => {
+                root.open-folder();
+            }
+            close => {
+                root.dismiss();
+            }
+        }
+    }
+}

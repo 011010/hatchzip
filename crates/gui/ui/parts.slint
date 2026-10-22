@@ -1,0 +1,240 @@
+import { Button, ProgressIndicator, Spinner, Palette } from "std-widgets.slint";
+import { Theme, Meter } from "theme.slint";
+
+export enum Phase {
+    // Nothing running: the main window shows its settings and buttons.
+    idle,
+    checking,
+    verifying,
+    working,
+    pausing,
+    paused,
+    done,
+    failed,
+    no-space,
+}
+
+export struct PlanView {
+    ready: bool,
+    free: string,
+    normal: string,
+    needed: string,
+    keep: string,
+    after: string,
+    fits: bool,
+    verdict: string,
+    note: string,
+    meter: float,
+}
+
+export struct TaskView {
+    phase: Phase,
+    is-test: bool,
+    heading: string,
+    detail: string,
+    fraction: float,
+    amounts: string,
+    rate: string,
+    archive-left: string,
+    message: string,
+    can-open-folder: bool,
+    can-retry: bool,
+}
+
+component Row inherits HorizontalLayout {
+    in property <string> label;
+    in property <string> value;
+    in property <bool> strong;
+    spacing: 12px;
+    Text {
+        text: root.label;
+        color: Theme.muted;
+        horizontal-stretch: 1;
+        overflow: elide;
+    }
+    Text {
+        text: root.value;
+        horizontal-alignment: right;
+        font-weight: root.strong ? 600 : 400;
+    }
+}
+
+// What the disk looks like before, during and after. Plain numbers first,
+// the verdict last, so the eye lands on the answer.
+export component SpacePanel inherits VerticalLayout {
+    in property <PlanView> plan;
+    padding: Theme.gutter;
+    spacing: 10px;
+    alignment: start;
+
+    Text {
+        text: "Disk space";
+        font-weight: 600;
+    }
+    if !root.plan.ready: HorizontalLayout {
+        alignment: start;
+        spacing: 8px;
+        Spinner {
+            indeterminate: true;
+            width: 16px;
+            height: 16px;
+        }
+        Text {
+            text: "Checking";
+            color: Theme.muted;
+            vertical-alignment: center;
+        }
+    }
+    if root.plan.ready: VerticalLayout {
+        spacing: 8px;
+        Row {
+            label: "Free now";
+            value: root.plan.free;
+        }
+        Row {
+            label: "Other apps need";
+            value: root.plan.normal;
+        }
+        Row {
+            label: "HatchZip needs";
+            value: root.plan.needed;
+            strong: true;
+        }
+        Row {
+            label: "Kept free";
+            value: root.plan.keep;
+        }
+        Row {
+            label: "Free when done";
+            value: root.plan.after;
+        }
+        Rectangle {
+            height: 4px;
+        }
+        Meter {
+            value: root.plan.meter;
+            bad: !root.plan.fits;
+        }
+        Text {
+            text: root.plan.verdict;
+            wrap: word-wrap;
+            font-weight: 600;
+            color: root.plan.fits ? Palette.foreground : Theme.danger;
+        }
+        if root.plan.note != "": Text {
+            text: root.plan.note;
+            wrap: word-wrap;
+            color: Theme.muted;
+            font-size: Theme.small-size;
+        }
+    }
+}
+
+// The bar and numbers of a run. Shared by the main window and the small task
+// window, so both read the same.
+export component Progress inherits VerticalLayout {
+    in property <TaskView> task;
+    spacing: 8px;
+
+    ProgressIndicator {
+        progress: root.task.fraction;
+        indeterminate: root.task.phase == Phase.checking;
+    }
+    HorizontalLayout {
+        spacing: 12px;
+        Text {
+            text: root.task.amounts;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+        Text {
+            text: root.task.rate;
+            color: Theme.muted;
+            horizontal-alignment: right;
+        }
+    }
+    if root.task.archive-left != "": Text {
+        text: root.task.archive-left;
+        color: Theme.muted;
+        font-size: Theme.small-size;
+    }
+}
+
+// The message under a finished, paused or failed run.
+export component Outcome inherits Text {
+    in property <TaskView> task;
+    text: root.task.message;
+    wrap: word-wrap;
+    color: root.task.phase == Phase.failed || root.task.phase == Phase.no-space ? Theme.danger : Palette.foreground;
+}
+
+export component Busy inherits HorizontalLayout {
+    in property <string> text;
+    alignment: start;
+    spacing: 8px;
+    Spinner {
+        indeterminate: true;
+        width: 16px;
+        height: 16px;
+    }
+    Text {
+        text: root.text;
+        color: Theme.muted;
+        vertical-alignment: center;
+    }
+}
+
+export component TaskButtons inherits HorizontalLayout {
+    in property <TaskView> task;
+    // The task window offers Close; the main window has its own way out.
+    in property <bool> closable;
+    callback pause();
+    callback resume();
+    callback open-folder();
+    callback close();
+    callback back();
+
+    alignment: end;
+    spacing: 8px;
+
+    if !root.closable && (root.task.phase == Phase.paused || root.task.phase == Phase.failed || root.task.phase == Phase.no-space || (root.task.phase == Phase.done && !root.task.can-open-folder)): Button {
+        text: "Back";
+        clicked => {
+            root.back();
+        }
+    }
+    // Checking and testing are safe to cut short, so they can be cancelled.
+    if root.closable && root.task.phase != Phase.working && root.task.phase != Phase.pausing: Button {
+        text: root.task.phase == Phase.checking || root.task.phase == Phase.verifying ? "Cancel" : "Close";
+        clicked => {
+            root.close();
+        }
+    }
+    if root.task.phase == Phase.working || root.task.phase == Phase.pausing: Button {
+        text: root.task.phase == Phase.pausing ? "Pausing" : "Pause";
+        enabled: root.task.phase == Phase.working;
+        clicked => {
+            root.pause();
+        }
+    }
+    if root.task.phase == Phase.paused: Button {
+        text: "Resume";
+        primary: true;
+        clicked => {
+            root.resume();
+        }
+    }
+    if root.task.can-retry && (root.task.phase == Phase.failed || root.task.phase == Phase.no-space): Button {
+        text: root.task.phase == Phase.no-space ? "Check again" : "Try again";
+        clicked => {
+            root.resume();
+        }
+    }
+    if root.task.phase == Phase.done && root.task.can-open-folder: Button {
+        text: "Open folder";
+        primary: true;
+        clicked => {
+            root.open-folder();
+        }
+    }
+}
