@@ -57,6 +57,7 @@ Debug builds read these environment variables. Release builds ignore them.
 |---|---|
 | `HATCHZIP_BATCH_ENTRIES=<n>` | Cap batches at `n` entries, to exercise many commits on a small archive |
 | `HATCHZIP_CRASH_AT=after-extract` or `after-journal` | Abort the process at that point of a batch |
+| `HATCHZIP_CRASH_AT=restore-appended` or `restore-written` | Abort `restore` after it appended the new index, or after it also rewrote the 7z start header |
 | `HATCHZIP_CRASH_AFTER=<n>` | Let that point pass `n` times before aborting |
 
 ### Testing against a nearly full disk
@@ -77,6 +78,7 @@ The workspace has two crates: `crates/core` (`hatchzip-core`, the engine as a li
 | Path | Contents |
 |---|---|
 | `crates/core/src/session.rs` | Opening an archive fresh or half extracted, the space plan, starting a run; shared by every front end |
+| `crates/core/src/restore.rs` | Turning a half-extracted archive back into a normal one, and undoing an interrupted restore |
 | `crates/core/src/engine.rs` | Format-independent planning, batch extraction, commit and truncation |
 | `crates/core/src/journal.rs` | The journal and the saved tail |
 | `crates/core/src/archive/mod.rs` | The `Format`, `Worker` and `Sink` interface every format implements, format detection, path safety |
@@ -89,6 +91,7 @@ The workspace has two crates: `crates/core` (`hatchzip-core`, the engine as a li
 | `crates/cli/tests/extract.rs` | ZIP end to end tests, including the crash tests |
 | `crates/cli/tests/formats.rs` | 7z, tar and split archives through the same checks |
 | `crates/cli/tests/cli.rs` | Exit codes, quiet mode, listing, completions and man page |
+| `crates/cli/tests/restore.rs` | `restore` for every format, checked by independent readers and the real `unzip`, `7z` and `tar` |
 | `docs/` | [How it works](docs/how-it-works.md), [format notes](docs/formats.md) |
 
 ### Adding a format

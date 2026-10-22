@@ -114,6 +114,16 @@ hatchzip extract game.zip
 
 The same applies after a crash, a power cut, or running out of space because something else filled the disk. Progress lives in two small files next to the archive, `game.zip.hatchzip` and `game.zip.hatchzip-tail`. **Do not delete them while an extraction is unfinished**: they hold the archive's index, which is no longer inside the archive itself.
 
+### Stop for good
+
+To give up on an unfinished extraction instead, restore the archive:
+
+```sh
+hatchzip restore game.zip
+```
+
+What is left of the archive becomes a normal archive again, holding exactly the entries not yet extracted, which 7-Zip, WinRAR, `unzip` or `tar` open as usual. The files already extracted stay in the output folder. Restore only appends a new index, so it needs only the free space that index takes, and if it is interrupted, running it again finishes it.
+
 ### List and test
 
 ```sh
