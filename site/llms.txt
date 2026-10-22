@@ -1,0 +1,35 @@
+# HatchZip
+
+> HatchZip extracts ZIP, 7z, tar and split archives in place: it extracts from the end of the archive and cuts each finished part off the archive file, so it needs free space for the extracted files only, not for the files and the archive together. Free and open source (MIT OR Apache-2.0), for Windows, macOS and Linux. Command line `hatchzip` (short name `hz`) and a desktop app.
+
+The archive is used up as it extracts: when the run finishes, only the extracted files are left. It checks that the extraction fits before it changes anything, and an interrupted run resumes when the same command is run again.
+
+## Install
+
+- Linux and macOS: `curl -fsSL https://raw.githubusercontent.com/xevrion/hatchzip/main/install.sh | sh` (installs `hatchzip` and `hz` for the current user, no root; checks SHA-256)
+- Windows (PowerShell): `irm https://raw.githubusercontent.com/xevrion/hatchzip/main/install.ps1 | iex`
+- With Rust: `cargo install hatchzip`
+- Desktop app: [Windows setup](https://github.com/xevrion/hatchzip/releases/latest/download/HatchZip-x64-setup.exe), [macOS Apple Silicon](https://github.com/xevrion/hatchzip/releases/latest/download/HatchZip-aarch64.dmg), [macOS Intel](https://github.com/xevrion/hatchzip/releases/latest/download/HatchZip-x86_64.dmg), [Linux AppImage](https://github.com/xevrion/hatchzip/releases/latest/download/HatchZip-x86_64.AppImage), [.deb](https://github.com/xevrion/hatchzip/releases/latest/download/hatchzip_amd64.deb), [.rpm](https://github.com/xevrion/hatchzip/releases/latest/download/hatchzip-x86_64.rpm)
+
+## Use
+
+- `hatchzip check game.zip`: shows whether it fits, changes nothing (exit 3 if it doesn't fit)
+- `hatchzip extract game.zip -y`: extracts into `game/` next to the archive and removes the archive as it goes; `-y` skips the confirmation for unattended use
+- `hatchzip extract game.zip -o DIR`: extract somewhere else
+- `hatchzip extract game.zip --verify-first`: read everything once before deleting anything
+- `hatchzip restore game.zip`: turn a half-extracted archive back into a normal archive
+- `hatchzip list game.zip`, `hatchzip test game.zip`: list or verify without changing anything
+- Passwords: `--password` or the `HATCHZIP_PASSWORD` environment variable
+- Exit codes: 0 done, 1 error, 2 usage, 3 not enough space, 4 damaged archive, 5 password needed or wrong, 130 stopped (run again to resume)
+
+## Limits
+
+- A 7z made with 7-Zip's default settings is one solid block; it needs free space for that whole block, and `check` says so first.
+- `.tar.gz`, `.tar.xz`, `.tar.zst` and RAR are not supported yet.
+
+## Docs
+
+- [README](https://github.com/xevrion/hatchzip/blob/main/README.md)
+- [How it works](https://github.com/xevrion/hatchzip/blob/main/docs/how-it-works.md)
+- [Formats](https://github.com/xevrion/hatchzip/blob/main/docs/formats.md)
+- [Releases](https://github.com/xevrion/hatchzip/releases)

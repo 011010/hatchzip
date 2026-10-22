@@ -27,6 +27,16 @@ A 180 GB game download that unpacks to 200 GB needs 380 GB of disk with WinRAR, 
 
 It checks that the extraction will fit before it changes anything, keeps a safety margin of free space the whole way through, and can be stopped or crash at any moment and pick up where it left off. It reads ZIP, 7z, tar and split archives.
 
+### Get it
+
+No coding needed. **[Download for Windows](https://github.com/xevrion/hatchzip/releases/latest/download/HatchZip-x64-setup.exe)** (Windows 10 and 11), or for [macOS (Apple Silicon)](https://github.com/xevrion/hatchzip/releases/latest/download/HatchZip-aarch64.dmg), [macOS (Intel)](https://github.com/xevrion/hatchzip/releases/latest/download/HatchZip-x86_64.dmg) and [Linux](#installation).
+
+1. Run the installer. Windows may show "Windows protected your PC" because HatchZip is not code-signed yet: choose **More info**, then **Run anyway**.
+2. Right-click the archive, choose **HatchZip**, then **Extract here**. On Windows 11 the menu is under **Show more options**.
+3. Or open HatchZip from the Start menu, open the archive, and choose **Extract**.
+
+HatchZip shows whether the files will fit before it changes anything. The archive is used up as the files come out, so when it finishes, only the extracted files are left.
+
 ## Highlights
 
 The same 200 MB of game data (21 files), packed by the real tools, extracted on a 220 MiB disk with about 50 MB free:

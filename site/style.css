@@ -41,12 +41,11 @@ body {
 }
 
 /* A fixed menu on the left and the text beside it, the way 7-Zip's own site
-   is laid out. The text column stays at a comfortable reading width. */
+   is laid out, across the full width of the window. Running text stays at a
+   comfortable line length; tables use the whole width. */
 .page {
-  max-width: 1120px;
-  margin: 0 auto;
   display: grid;
-  grid-template-columns: 220px minmax(0, 1fr);
+  grid-template-columns: 240px minmax(0, 1fr);
   min-height: 100vh;
 }
 
@@ -92,12 +91,62 @@ body {
 .side nav a:hover { background: var(--head); text-decoration: underline; }
 
 .content {
-  padding: 24px 40px 40px;
-  max-width: 860px;
+  padding: 32px clamp(16px, 4vw, 64px) 48px;
 }
+
+.content p, .content ul, .content ol, .content pre { max-width: 90ch; }
 
 h1 { font-size: 2rem; line-height: 1.2; margin: 0 0 4px; }
 h2 { font-size: 1.25rem; line-height: 1.3; margin: 32px 0 8px; }
+h3 { font-size: 1rem; line-height: 1.3; margin: 24px 0 8px; }
+
+/* Title on the left, the GitHub link on the right; stacked on phones. */
+.top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px 24px;
+}
+
+a.gh {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--side);
+  color: var(--fg);
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+a.gh:hover { background: var(--head); text-decoration: underline; }
+
+img.shot {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 16px 0 24px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+/* The download most visitors need, one per system. */
+.gets { display: flex; flex-wrap: wrap; gap: 8px; }
+a.get {
+  display: inline-block;
+  min-width: 120px;
+  text-align: center;
+  padding: 10px 20px;
+  border-radius: 4px;
+  background: var(--link);
+  color: var(--bg);
+  font-weight: bold;
+  text-decoration: none;
+}
+a.get:hover { text-decoration: underline; }
 
 .lead { font-size: 1.125rem; margin: 0 0 16px; }
 .note, small, footer { color: var(--muted); }
@@ -135,7 +184,7 @@ pre {
 
 pre code { padding: 0; background: none; font-size: 1em; white-space: inherit; }
 
-ul { padding-left: 24px; }
+ul, ol { padding-left: 24px; }
 li { margin: 4px 0; }
 
 table {
@@ -203,6 +252,8 @@ footer p { margin: 4px 0; }
 /* Small phones: each table row becomes a small card, so nothing has to
    scroll sideways. */
 @media (max-width: 560px) {
+  .gets a.get { flex: 1 1 0; min-width: 0; padding: 10px 8px; }
+
   table.stack thead { display: none; }
 
   table.stack,

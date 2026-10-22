@@ -13,8 +13,17 @@
 <meta property="og:type" content="website">
 <meta property="og:title" content="HatchZip">
 <meta property="og:description" content="Extract huge archives without needing double the disk space. Free and open source, for Windows, macOS and Linux.">
+<meta property="og:image" content="https://xevrion.github.io/hatchzip/img/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="HatchZip: extract huge archives without double the disk space.">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="alternate" type="text/plain" href="llms.txt" title="HatchZip for language models">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"SoftwareApplication","name":"HatchZip","description":"Extracts ZIP, 7z, tar and split archives in place, so you only need free space for the files, not for the files and the archive.","applicationCategory":"UtilitiesApplication","operatingSystem":"Windows, macOS, Linux","url":"https://xevrion.github.io/hatchzip/","downloadUrl":"https://github.com/xevrion/hatchzip/releases/latest","license":"https://github.com/xevrion/hatchzip/blob/main/LICENSE-MIT","isAccessibleForFree":true,"offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"author":{"@type":"Person","name":"Yash Bavadiya","url":"https://x.com/xevrion_the1"},"codeRepository":"https://github.com/xevrion/hatchzip"}
+</script>
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="style.css?v=2">
+<link rel="stylesheet" href="style.css?v=3">
 </head>
 <body>
 <div class="page">
@@ -34,16 +43,40 @@
 </aside>
 
 <div class="content">
-<header>
+<header class="top">
+<div>
 <h1>HatchZip</h1>
 <p class="lead">Extract huge archives without needing double the disk space.</p>
+</div>
+<a class="gh" href="https://github.com/xevrion/hatchzip"><svg viewBox="0 0 16 16" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg><span>Star on GitHub</span></a>
 </header>
 <main>
 <p>A 180 GB archive that unpacks to 200 GB needs 380 GB of disk with WinRAR, 7-Zip or <code>unzip</code>, because the archive and the extracted files have to exist at the same time. HatchZip needs a little over 200 GB: it extracts from the end of the archive and cuts each finished part off the archive file, so the space comes back as it goes.</p>
 <p>Free and open source, for Windows, macOS and Linux.</p>
+<img class="shot" src="img/how.webp" width="960" height="540" alt="An animation: HatchZip extracts the last part of the archive into the folder, then cuts that part off the archive, so the disk never holds the archive and all the files at once.">
 
 <section aria-labelledby="download">
 <h2 id="download">Download</h2>
+<p class="gets">
+<a class="get" href="https://github.com/xevrion/hatchzip/releases/latest/download/HatchZip-x64-setup.exe">Windows</a>
+<a class="get" href="https://github.com/xevrion/hatchzip/releases/latest/download/HatchZip-aarch64.dmg">macOS</a>
+<a class="get" href="https://github.com/xevrion/hatchzip/releases/latest/download/HatchZip-x86_64.AppImage">Linux</a>
+</p>
+<p class="note">Windows 10 and 11, 64-bit. The macOS download is for Macs with Apple Silicon (M1 and later); for an older Intel Mac, get the <a href="https://github.com/xevrion/hatchzip/releases/latest/download/HatchZip-x86_64.dmg">Intel version</a>. The Linux download is an AppImage that runs on most distributions; <a href="#all-downloads">.deb and .rpm packages</a> are below.</p>
+
+<h3>How to use it</h3>
+<ol>
+<li>Install it. HatchZip is not code-signed yet, so Windows may show "Windows protected your PC": choose More info, then Run anyway. On a Mac, open the app once, then allow it in System Settings, Privacy &amp; Security.</li>
+<li>Right-click the archive, choose HatchZip, then Extract here (Windows and Linux). On Windows 11 the menu is under Show more options.</li>
+<li>Or open the HatchZip app, open the archive or drag it onto the window, and choose Extract.</li>
+</ol>
+<p>HatchZip shows whether the files will fit before it changes anything. The archive is used up as the files come out, so when it finishes, only the extracted files are left.</p>
+<picture>
+<source srcset="img/app-dark.png" media="(prefers-color-scheme: dark)">
+<img class="shot" src="img/app-light.png" width="980" height="660" alt="The HatchZip window with an archive open: the list of files on the left, and on the right the disk space it needs, compared with a standard extraction.">
+</picture>
+
+<h3 id="all-downloads">All downloads</h3>
 <table class="stack">
 <caption>Command line</caption>
 <thead>
