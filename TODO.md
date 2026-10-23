@@ -24,6 +24,14 @@ Ticked when it is merged and tested, not when it is started.
 - [x] Publish to crates.io so `cargo install hatchzip` works (`hatchzip` and `hatchzip-core` 0.1.0; installed from crates.io in a clean folder)
 - [ ] Open a handful of `good first issue` issues from the lists below
 
+## Requested after launch
+
+- [ ] `.tar.gz` and `.tar.zst`, for datasets (see Formats)
+- [ ] Multi-part RAR (`.part1.rar`, ...) and native split ZIP (`.z01`, ...) (see Formats)
+- [ ] Check the volumes against an `.sfv` file next to the archive before starting, and stop if one doesn't match
+- [ ] Extract several archives one after another from one command or one right-click, checking the space for each
+- [ ] Android app (the engine is a library; Android's storage access rules are the open question)
+
 ## GUI, like WinRAR and 7-Zip
 
 - [x] Split the code into a workspace: `core` library, `cli`, `shell`, `gui`
