@@ -19,6 +19,7 @@ So HatchZip works from the end. Each format describes its archive as a list of *
 | ZIP | One entry (local header plus data) | Entries in order, then the central directory, the index, at the very end. A self-extracting stub may come first. |
 | 7z | One solid block, or one file in a non-solid archive | A 32-byte signature header, the packed blocks in order, then the header (the index) at the end. |
 | tar | One entry, including any long-name or pax records before it | Header and data records in order, then zero blocks. There is no index. |
+| `.tar.gz` | The whole archive, extracted from the front instead; see [Compressed tar](#compressed-tar) | One compressed stream holding a tar |
 
 Units are extracted in reverse order of their position in the file. After each batch the archive is truncated to where the lowest unit of the batch begins.
 
@@ -46,16 +47,16 @@ From then on the archive is parsed through `storage::Reader`, which serves the l
 
 | Field | Meaning |
 |---|---|
-| `format` | `zip`, `7z` or `tar`, so a resume never has to guess from a half-eaten file |
+| `format` | `zip`, `7z`, `tar` or `tar.gz`, so a resume never has to guess from a half-eaten file |
 | `parts` | Every volume with its original length |
 | `tail_start`, `tail_crc` | Where the saved tail belongs, and its checksum |
 | `output` | The output folder, so a resume can't be pointed elsewhere |
 | `total_size` | Total output size, for progress |
 | `committed_len` | The archive length after the latest commit. Every unit starting at or past it is done. |
 | `links` | Symlinks and hard links to create at the very end |
-| `resume` | While a large file is streamed: its unit, how many bytes of it are flushed, the bit of the archive decoding restarts at, and the CRC-32 so far. See below. |
+| `resume` | While a large file is streamed: its unit, how many bytes of it are flushed, the bit of the archive decoding restarts at, and the CRC-32 so far. For a compressed tar, also `stream`, the decoder's and the tar parser's state. See below. |
 
-The journal is at version 3 since `resume` was added. Version 2 journals load as they are; older builds refuse version 3, which matters, because they would delete the half-written file whose archive bytes are already gone.
+The journal is at version 3 since `resume` was added. Version 2 journals load as they are; older builds refuse version 3, which matters, because they would delete the half-written file whose archive bytes are already gone. `resume.stream` came later without a new version: only `tar.gz` journals have it, and builds that don't know that format refuse the journal before reading it.
 
 There is no separate "done" counter: units start at distinct offsets, so `committed_len` alone says which are finished. The journal is always replaced atomically: written to a temporary file, flushed, renamed over the old one, and the directory flushed.
 
@@ -96,6 +97,37 @@ Hole punching is detected by punching a 1 MiB scratch file next to the archive a
 The rule: **the archive is never punched past the last durable resume point**, and a point is only durable once the output it vouches for is flushed. A half-streamed file is never deleted as uncommitted output. `restore` refuses an archive whose journal holds a resume point, since an entry with holes in it can't be put back. The test suite kills the process at each of the three steps of a point at several points, for a stored ZIP entry, a deflated ZIP entry and a tar entry, and around the final commit (`crates/cli/tests/streaming.rs`); a unit test resumes a deflate stream from every block boundary at levels 6 and 9 (`crates/core/src/archive/resumable.rs`).
 
 A deflate block can be as long as its encoder likes. zlib-ng and zlib-rs write level 1 as one block, which has no point to resume from but its start; such a file frees nothing until it ends, and if the space runs out first the run stops and says how much to free. zlib-rs at levels 6 and 9 wrote a block boundary about every 300 KB of output on the unit test's data, and the ZIP entries written by the zip crate and by Python's `zipfile` in the tests above had boundaries throughout; other encoders are not measured.
+
+## Compressed tar
+
+A `.tar.gz` is one deflate stream, or several gzip members back to back, holding the whole tar, and it can only be decoded from the front. So it is not split into units extracted from the end: the whole archive is one unit, extracted front to back, and the compressed bytes behind the decoder are freed by punching holes, at resume points as in the previous section. The archive keeps its length until the end, when the unit commits through the ordinary steps 3 to 5, truncating it to nothing, and the empty file is deleted.
+
+Before anything is touched, HatchZip decodes the whole stream once (`targz::open`). That lists the entries for the checks in [Rejected before starting](#rejected-before-starting), verifies every gzip member's CRC-32 and length against its trailer, and measures what the space check needs. A damaged archive is refused here, unchanged. The extraction then decodes it a second time. A resumed run makes the same pass from its resume point, since the bytes before it may be gone, so damage found on resume also stops the run before it changes anything.
+
+A resume point can be any deflate block boundary or the start of any gzip member, except inside an entry's header records. Every 256 MiB of output, at the next such point:
+
+1. **Flush** the file being written, every file finished since the last point, and their folders: one `syncfs` on Linux; elsewhere each file is flushed as it is finished, and the folders at the point.
+2. **Journal the point** in `resume`: the bit decoding restarts at, and in `resume.stream` whether that is a member start, the CRC-32 and length of the member's output so far, the member's last 32 KiB of output (the deflate window), the offset in the tar, and where in the tar the point falls: between entries, inside a file's data (`resume.written` says how much of it is written), inside padding or data that extracts to nothing, or past the end marker. Links found since the last point go into the same write. The window spans tar headers and several files, so unlike a single ZIP entry's it can't be read back from one output file; it is stored in the journal, as 64 KiB of hex.
+3. **Punch** the archive from where this run last punched up to the byte holding that bit. A run's first punch starts at 0, in case the last run stopped between steps 2 and 3.
+
+| Interrupted | State on disk | What a resume does |
+|---|---|---|
+| Before the first point is journaled | Some output, nothing punched | Deletes that output, all of it still in the archive, and starts over |
+| After the flush, before the journal write | Output past the point in force, which is the previous one | Deletes the files that come after that point, cuts the file the point is inside back to its recorded length, and decodes from the point |
+| After the journal write, before or after the punch | The new point is durable | The same, from the new point, never reading before it |
+| Around the final commit | As for every batch | As for every batch |
+
+Without hole punching (FAT32, exFAT) the stream is extracted the same way and resume points are still journaled, so a crash still resumes from the last one, but nothing is freed until the end: the space check asks for room for every file next to the whole archive, and `check` says why. When the output is on another disk, nothing is punched either, since it would not help there.
+
+`restore` refuses a `.tar.gz` whose journal holds a resume point: some of the stream may be released, and a compressed tar can't be rebuilt from what is left. Before the first point nothing was released, so restore removes the partial output and the journal and leaves the original archive.
+
+The space check counts, for the stream, the highest the files written so far ever run ahead of the compressed bytes consumed, over every point the scan met; plus one step; plus the most file output the scan saw between two consecutive points, since a step can only end at a point; plus a read buffer and a granule at each end of the punched range; never more than all the files. Links are made at the end, once the archive is gone. The scan meets exactly the points the extraction will, since both decode from the same place with the same buffer sizes.
+
+Measured on an 820 MiB tmpfs holding a 385.9 MB `.tar.gz` made by GNU tar 1.35 and gzip 1.13 (`-6`) from 501.1 MB in 2,016 entries (seven 50 MB random files, six 25 MB text files, 2,000 small JSON files), with 473.9 MB free: GNU `tar -xzf` ran out of space. `hatchzip check` asked for 400.2 MB plus the 5 MB kept free; during the extraction the lowest free space, sampled every 10 ms, was 111.8 MB, a peak of 362.1 MB. It finished in 1.0 s with 351.6 MB free, as the check said, and every file's SHA-256 matched. With punching disabled (`HATCHZIP_NO_PUNCH`, debug build) the check asks for 508.2 MB and refuses on that disk; on a 1000 MiB tmpfs that run peaked at 508.2 MB.
+
+pax global headers, which `git archive` writes at the start of every tarball, are skipped, in plain tar as well.
+
+`crates/cli/tests/targz.rs` kills the process at each of the three steps of a point at several points, repeatedly within one run, around the final commit, in multi-member and split archives and in archives from GNU tar, gzip and pigz, and checks after each crash that nothing past the journaled point was touched and, where `HATCHZIP_EXPECT_PUNCH` is set, that the space before it was given back. Unit tests in `resumable.rs` resume a multi-member gzip stream from every point it reports and decode it with input buffers down to one byte.
 
 ## Crash safety
 
@@ -157,7 +189,8 @@ These are refused while the archive is still untouched:
 - ZIP entries whose bytes overlap other entries. Overlapping archives are a known zip bomb technique, and truncating one entry's span would destroy another's data.
 - tar entry types HatchZip can't create safely: device files, FIFOs, sparse files.
 - 7z anti-items (deletions recorded by archive updates).
-- Compressed tar streams and RAR, which need a different technique.
+- In a `.tar.gz`: damage anywhere in the stream, a gzip member whose CRC-32 or length doesn't match, data after the end of the tar or after the gzip stream other than zeros (it would be lost with the archive), and header records over 1 MiB.
+- Gzip files that don't hold a tar, compressed tar other than gzip (`.tar.zst`, `.tar.xz`, `.tar.bz2`), and RAR.
 - A non-empty output folder, so that a resume can safely delete anything it finds for uncommitted units.
 
 ## Operating systems

@@ -25,7 +25,7 @@
 
 A 180 GB game download that unpacks to 200 GB needs 380 GB of disk with WinRAR, 7-Zip or `unzip`, because the archive and everything extracted from it have to exist at the same time. HatchZip needs a little over 200 GB. It extracts the archive from the end and cuts each finished part off the archive file as it goes, so the space the archive gives back is reused for the next files.
 
-It checks that the extraction will fit before it changes anything, keeps a safety margin of free space the whole way through, and can be stopped or crash at any moment and pick up where it left off. It reads ZIP, 7z, tar and split archives.
+It checks that the extraction will fit before it changes anything, keeps a safety margin of free space the whole way through, and can be stopped or crash at any moment and pick up where it left off. It reads ZIP, 7z, tar, `.tar.gz` and split archives.
 
 ### Get it
 
@@ -217,15 +217,16 @@ What it cannot protect against: if the download itself is damaged, the files bef
 | ZIP, ZIP64, self-extracting `.exe` ZIPs | Supported. Tested: Stored, Deflate, Deflate64, bzip2, LZMA, PPMd and Zstandard, including archives made by 7-Zip itself, and entries past the 4 GiB mark. XZ is decoded by the same library but not yet tested here. | One file |
 | 7z, solid and non-solid | Supported. Tested with archives made by 7-Zip 25.01: LZMA2 (its default), LZMA, BCJ with LZMA2, bzip2, Deflate and PPMd. Zstandard is decoded by the same library but not yet tested here. | One solid block |
 | tar (uncompressed) | Supported, including long names, symlinks and hard links | One file |
+| `.tar.gz`, `.tgz` | Supported, including multi-member gzip (`bgzip`, `pigz -i`) and split `.tar.gz.001` sets. Extracted from the front, freeing the compressed bytes behind the decoder where the filesystem can punch holes; every gzip CRC-32 and length is checked before anything is touched. Tested with archives from GNU tar with gzip, and pigz. Elsewhere (FAT32, exFAT) it still extracts and resumes, but needs room for the archive and every file at once, and `check` says so. | 256 MiB of output |
 | Split archives (`.001`, `.002`, ...) of ZIP or 7z, as 7-Zip makes them | Supported | One file or block; each volume is deleted once emptied |
 | Password-protected ZIP (ZipCrypto and AES) and 7z (AES, including encrypted file lists) | Supported. HatchZip asks for the password, or takes `--password` or `HATCHZIP_PASSWORD`, and proves it on one file before anything is deleted. It is never saved, so a resumed run asks again. | Same as unencrypted |
-| `.tar.gz`, `.tar.zst`, `.tar.xz` | Refused before extraction, planned. One continuous stream, which needs resumable checkpoints inside it; see [the format notes](docs/formats.md). | |
+| `.tar.zst`, `.tar.xz` | Refused before extraction, planned; see [the format notes](docs/formats.md#tarzst-and-tarxz). | |
 | One huge solid 7z block | Works, but needs free space for the whole block, as the table above shows. Freeing space inside a block is the same planned technique. | |
 | RAR, native split ZIP (`.z01`) | Planned | |
 
 ## How it works
 
-ZIP, 7z and tar all store their contents as a sequence of independent pieces: files for ZIP and tar, solid blocks for 7z. ZIP and 7z keep their index at the very end. HatchZip saves that index to a side file, then extracts pieces starting from the last one in the archive. After each batch it truncates the archive to where that batch began, which every operating system and filesystem supports; for a split archive, that means deleting whole volumes and shortening one. The full design, including the exact order of writes that makes a crash safe, is in [How it works](docs/how-it-works.md).
+ZIP, 7z and tar all store their contents as a sequence of independent pieces: files for ZIP and tar, solid blocks for 7z. ZIP and 7z keep their index at the very end. HatchZip saves that index to a side file, then extracts pieces starting from the last one in the archive. After each batch it truncates the archive to where that batch began, which every operating system and filesystem supports; for a split archive, that means deleting whole volumes and shortening one. A `.tar.gz` is one compressed stream that can only be decoded from the front, so HatchZip extracts it front to back and punches holes in the compressed bytes it has used, at resume points it can restart from after a crash. The full design, including the exact order of writes that makes a crash safe, is in [How it works](docs/how-it-works.md).
 
 ## Star history
 

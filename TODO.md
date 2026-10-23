@@ -26,7 +26,7 @@ Ticked when it is merged and tested, not when it is started.
 
 ## Requested after launch
 
-- [ ] `.tar.gz` and `.tar.zst`, for datasets (see Formats)
+- [ ] `.tar.gz` and `.tar.zst`, for datasets (see Formats). Note: `.tar.gz` is implemented and tested on branch `worktree-agent-a6238de798d0b6129`, not merged yet; `.tar.zst` is researched only.
 - [ ] Multi-part RAR (`.part1.rar`, ...) and native split ZIP (`.z01`, ...) (see Formats)
 - [ ] Check the volumes against an `.sfv` file next to the archive before starting, and stop if one doesn't match
 - [ ] Extract several archives one after another from one command or one right-click, checking the space for each
@@ -78,9 +78,9 @@ Ticked when it is merged and tested, not when it is started.
 - [x] Split archives (`.001`, `.002`, ...), volumes deleted as they empty
 - [x] Free space inside one large file while extracting it (hole punching plus durable resume points): stored and Deflate ZIP entries, tar entries; space really freed on ext4, APFS and NTFS (CI requires it)
 - [ ] The same inside a 7z solid block (LZMA2 resume points); fixes 7z made with 7-Zip's default settings
-- [ ] `.tar.gz` (resume points at deflate block boundaries)
-- [ ] `.tar.xz` (per xz block)
-- [ ] `.tar.zst`
+- [ ] `.tar.gz` (resume points at deflate block boundaries). Note: implemented on branch `worktree-agent-a6238de798d0b6129` with gzip member starts as points too, multi-member gzip, CRC-32 and ISIZE checks, and the no-punch fallback; tick once merged.
+- [ ] `.tar.xz` (per xz block). Note: researched in `docs/formats.md`; medium work for multi-block files, which xz 5.8 writes by default.
+- [ ] `.tar.zst`. Note: researched in `docs/formats.md`; needs a decoder that saves its state for the usual single frame, multi-frame files are the easy case.
 - [ ] RAR, starting with deleting finished volumes of `.partN.rar` sets
 - [ ] Native split ZIP (`.z01`, `.z02`, ..., `.zip`)
 - [x] Password-protected ZIP (ZipCrypto, AES) and 7z (AES, encrypted headers too), proven before anything is deleted, never saved (CLI; tested including a real `zip -P` archive through a terminal prompt)

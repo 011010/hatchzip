@@ -87,12 +87,15 @@ The workspace has two crates: `crates/core` (`hatchzip-core`, the engine as a li
 | `crates/core/src/archive/mod.rs` | The `Format`, `Worker` and `Sink` interface every format implements, format detection, path safety |
 | `crates/core/src/archive/storage.rs` | One file or a split set, the reader that serves the saved tail, and the only code that shrinks or deletes archive bytes |
 | `crates/core/src/archive/{zip,sevenz,tar}.rs` | One file per format: list its units, decode one |
+| `crates/core/src/archive/targz.rs` | `.tar.gz`: one unit decoded front to back, the tar parser and its resume points |
+| `crates/core/src/archive/resumable.rs` | Decoders that restart mid-stream: stored data, raw deflate, gzip members |
 | `crates/core/src/platform/` | Everything that differs between Linux, macOS and Windows |
 | `crates/core/src/fsutil.rs` | Free space, atomic writes, timestamps |
 | `crates/cli/src/cli.rs` | Command line definition, help text and exit codes; also the source of the completions and man page |
 | `crates/cli/src/main.rs` | Commands, the space report, confirmation and progress display |
 | `crates/cli/tests/extract.rs` | ZIP end to end tests, including the crash tests |
 | `crates/cli/tests/formats.rs` | 7z, tar and split archives through the same checks |
+| `crates/cli/tests/streaming.rs`, `crates/cli/tests/targz.rs` | Freeing space inside a large file and inside a `.tar.gz`, killed at every step of a resume point |
 | `crates/cli/tests/cli.rs` | Exit codes, quiet mode, listing, completions and man page |
 | `crates/cli/tests/restore.rs` | `restore` for every format, checked by independent readers and the real `unzip`, `7z` and `tar` |
 | `docs/` | [How it works](docs/how-it-works.md), [format notes](docs/formats.md) |
