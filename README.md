@@ -227,6 +227,16 @@ What it cannot protect against: if the download itself is damaged, the files bef
 
 ZIP, 7z and tar all store their contents as a sequence of independent pieces: files for ZIP and tar, solid blocks for 7z. ZIP and 7z keep their index at the very end. HatchZip saves that index to a side file, then extracts pieces starting from the last one in the archive. After each batch it truncates the archive to where that batch began, which every operating system and filesystem supports; for a split archive, that means deleting whole volumes and shortening one. The full design, including the exact order of writes that makes a crash safe, is in [How it works](docs/how-it-works.md).
 
+## Star history
+
+<a href="https://star-history.com/#xevrion/hatchzip&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=xevrion/hatchzip&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=xevrion/hatchzip&type=Date" />
+    <img alt="Star history of xevrion/hatchzip" src="https://api.star-history.com/svg?repos=xevrion/hatchzip&type=Date" />
+  </picture>
+</a>
+
 ## License
 
 HatchZip is licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT), at your option.
