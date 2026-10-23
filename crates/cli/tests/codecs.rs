@@ -1,13 +1,18 @@
-//! Every compression method the decoders claim, on archives made by the real
-//! 7-Zip 25.01 (`tests/fixtures/codecs/`), each extracted in place and
-//! compared byte for byte with the content the fixtures were made from.
+//! Every compression method the decoders claim, on archives made by real
+//! tools (`tests/fixtures/codecs/`), each extracted in place and compared
+//! byte for byte with the content the fixtures were made from. All of them
+//! come from 7-Zip 25.01 except `zip-xz.zip`, made with 7-Zip 26.05, and
+//! `7z-zstd.7z`, made with py7zr 1.0.0: 7-Zip has no Zstandard coder for
+//! the 7z format, so no 7-Zip build can write that archive.
 //!
 //! The fixtures were made from three files:
 //!   game/text.txt   400 lines of text
 //!   game/noise.bin  3000 bytes from a fixed linear congruential generator
 //!   game/tool.exe   "MZ" and a byte ramp, so the BCJ filter has x86-ish input
-//! with, for example, `7z a -tzip -mm=PPMd zip-ppmd.zip game` and
-//! `7z a -t7z -m0=BCJ -m1=LZMA2 7z-bcj.7z game`.
+//! with, for example, `7z a -tzip -mm=PPMd zip-ppmd.zip game`,
+//! `7z a -t7z -m0=BCJ -m1=LZMA2 7z-bcj.7z game`,
+//! `7z a -tzip -mm=XZ zip-xz.zip game` and, for the py7zr archive,
+//! `SevenZipFile("7z-zstd.7z", "w", filters=[{"id": FILTER_ZSTD}])`.
 
 mod common;
 
@@ -70,6 +75,11 @@ fn zip_lzma() {
 }
 
 #[test]
+fn zip_xz() {
+    extract_fixture("zip-xz.zip");
+}
+
+#[test]
 fn zip_ppmd() {
     extract_fixture("zip-ppmd.zip");
 }
@@ -97,4 +107,9 @@ fn sevenz_deflate() {
 #[test]
 fn sevenz_ppmd() {
     extract_fixture("7z-ppmd.7z");
+}
+
+#[test]
+fn sevenz_zstd() {
+    extract_fixture("7z-zstd.7z");
 }

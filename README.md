@@ -214,8 +214,8 @@ What it cannot protect against: if the download itself is damaged, the files bef
 
 | Format | Status | Freed in steps of |
 |---|---|---|
-| ZIP, ZIP64, self-extracting `.exe` ZIPs | Supported. Tested: Stored, Deflate, Deflate64, bzip2, LZMA, PPMd and Zstandard, including archives made by 7-Zip itself, and entries past the 4 GiB mark. XZ is decoded by the same library but not yet tested here. | One file |
-| 7z, solid and non-solid | Supported. Tested with archives made by 7-Zip 25.01: LZMA2 (its default), LZMA, BCJ with LZMA2, bzip2, Deflate and PPMd. Zstandard is decoded by the same library but not yet tested here. | One solid block |
+| ZIP, ZIP64, self-extracting `.exe` ZIPs | Supported. Tested: Stored, Deflate, Deflate64, bzip2, LZMA, PPMd, XZ and Zstandard, including archives made by 7-Zip itself, and entries past the 4 GiB mark. | One file |
+| 7z, solid and non-solid | Supported. Tested with archives made by 7-Zip 25.01: LZMA2 (its default), LZMA, BCJ with LZMA2, bzip2, Deflate and PPMd; Zstandard with an archive made by py7zr, since 7-Zip has no Zstandard coder for the 7z format. | One solid block |
 | tar (uncompressed) | Supported, including long names, symlinks and hard links | One file |
 | `.tar.gz`, `.tgz` | Supported, including multi-member gzip (`bgzip`, `pigz -i`) and split `.tar.gz.001` sets. Extracted from the front, freeing the compressed bytes behind the decoder where the filesystem can punch holes; every gzip CRC-32 and length is checked before anything is touched. Tested with archives from GNU tar with gzip, and pigz. Elsewhere (FAT32, exFAT) it still extracts and resumes, but needs room for the archive and every file at once, and `check` says so. | 256 MiB of output |
 | Split archives (`.001`, `.002`, ...) of ZIP or 7z, as 7-Zip makes them | Supported | One file or block; each volume is deleted once emptied |
