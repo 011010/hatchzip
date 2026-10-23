@@ -70,6 +70,14 @@ pub fn restore(archive: &Path) -> Result<Restored> {
     // and the journal holds a resume point exactly as long as some are gone.
     // An entry with holes in it can't go back into an archive.
     if let Some(r) = &journal.resume {
+        if r.stream.is_some() {
+            bail!(
+                "{} cannot be restored: part of its compressed data may already be released, \
+                 and a compressed tar cannot be rebuilt from what remains. Run extract to \
+                 complete the extraction instead",
+                primary.display()
+            );
+        }
         bail!(
             "{} cannot be restored: a large entry was being extracted, and the archive space \
              of its first {} may already be released. Run extract to complete the \

@@ -84,6 +84,12 @@ pub fn plan_view(plan: &SpacePlan) -> PlanView {
             "The destination is on another drive, so removing the archive does not free space there.",
         );
     }
+    if plan.archive_kept_whole {
+        notes.push(
+            "This drive cannot release space inside a file, so the compressed archive remains \
+             whole until extraction completes.",
+        );
+    }
     let used = plan.needed + plan.keep_free;
     PlanView {
         ready: true,
@@ -242,6 +248,7 @@ mod tests {
             normal_needs: needed * 2,
             reclaims: true,
             solid_block_bound: false,
+            archive_kept_whole: false,
         }
     }
 

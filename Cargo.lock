@@ -1942,6 +1942,7 @@ dependencies = [
  "clap_complete",
  "clap_mangen",
  "ctrlc",
+ "flate2",
  "hatchzip-core",
  "indicatif",
  "rpassword",

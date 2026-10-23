@@ -290,15 +290,40 @@ fn any_volume_name_finds_the_whole_set() {
     assert_consumed(&first);
 }
 
+/// `.tar.gz` has its own suite (`targz.rs`); the other compressed tars are
+/// refused, and so is a gzip stream that doesn't decode.
 #[test]
 fn compressed_tar_streams_are_refused_without_touching_them() {
     let tmp = TempDir::new().unwrap();
-    let archive = tmp.path().join("game.tar.gz");
-    let bytes = b"\x1F\x8B\x08\x00pretend gzip".to_vec();
-    fs::write(&archive, &bytes).unwrap();
-
-    let run = extract(&archive, &tmp.path().join("out"), &[]);
-    assert!(!run.status.success());
-    assert!(String::from_utf8_lossy(&run.stderr).contains("compressed stream"));
-    assert_eq!(fs::read(&archive).unwrap(), bytes);
+    for (name, bytes, says) in [
+        (
+            "game.tar.zst",
+            &b"\x28\xB5\x2F\xFDpretend zstd"[..],
+            "compressed stream",
+        ),
+        (
+            "game.tar.xz",
+            &b"\xFD7zXZ\x00pretend xz"[..],
+            "compressed stream",
+        ),
+        (
+            "game.tar.bz2",
+            &b"BZh9pretend bzip2"[..],
+            "compressed stream",
+        ),
+        (
+            "game.tar.gz",
+            &b"\x1F\x8B\x08\x00pretend gzip"[..],
+            "compressed",
+        ),
+    ] {
+        let archive = tmp.path().join(name);
+        fs::write(&archive, bytes).unwrap();
+        let run = extract(&archive, &tmp.path().join("out"), &[]);
+        assert!(!run.status.success(), "{name}");
+        let stderr = String::from_utf8_lossy(&run.stderr);
+        assert!(stderr.contains(says), "{name}: {stderr}");
+        assert_eq!(fs::read(&archive).unwrap(), bytes, "{name}");
+        assert!(!side_files(&archive)[0].exists());
+    }
 }

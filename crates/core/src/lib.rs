@@ -1,6 +1,7 @@
-//! The engine behind HatchZip: extracts ZIP, 7z and tar archives, split or
-//! not, while truncating the archive behind itself, so the disk only ever has
-//! to hold about the output.
+//! The engine behind HatchZip: extracts ZIP, 7z, tar and `.tar.gz` archives,
+//! split or not, while truncating the archive behind itself (or, for a
+//! `.tar.gz`, punching out what it has decoded), so the disk only ever has to
+//! hold about the output.
 //!
 //! Front ends start in [`session`]: locate an archive, open it (fresh or
 //! half-extracted), get a [`session::SpacePlan`], then hand a [`engine::Run`]

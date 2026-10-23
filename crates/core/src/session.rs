@@ -172,7 +172,8 @@ fn check_collisions(job: &Job, out: &Path) -> Result<()> {
     Ok(())
 }
 
-/// `game.zip` and `game.7z.001` both extract into `game`, next to them.
+/// `game.zip`, `game.7z.001` and `game.tar.gz` all extract into `game`, next
+/// to them.
 pub fn default_output(primary: &Path) -> PathBuf {
     let file_name = primary
         .file_name()
@@ -187,7 +188,7 @@ pub fn default_output(primary: &Path) -> PathBuf {
         name = stem.to_string();
     }
     let lower = name.to_ascii_lowercase();
-    for ext in [".zip", ".7z", ".tar", ".exe"] {
+    for ext in [".zip", ".7z", ".tar", ".tar.gz", ".tgz", ".exe"] {
         if lower.ends_with(ext) && name.len() > ext.len() {
             name.truncate(name.len() - ext.len());
             break;
@@ -233,6 +234,11 @@ pub struct SpacePlan {
     /// The shortfall comes from one solid block that can only be freed once
     /// all of it is out.
     pub solid_block_bound: bool,
+    /// The archive is one compressed stream (a `.tar.gz`) on a filesystem
+    /// that can't free space inside a file, such as FAT32 or exFAT, so it
+    /// stays whole until the extraction completes: `needed` is room for
+    /// every extracted file next to it.
+    pub archive_kept_whole: bool,
 }
 
 pub fn plan(job: &Job, out: &Path, resuming: bool, keep_free: u64) -> Result<SpacePlan> {
@@ -251,10 +257,12 @@ pub fn plan(job: &Job, out: &Path, resuming: bool, keep_free: u64) -> Result<Spa
         normal_needs: job.remaining_size(),
         reclaims,
         solid_block_bound: !fits
+            && !job.is_stream()
             && job
                 .units
                 .iter()
                 .any(|u| u.items.len() > 1 && u.size() > free),
+        archive_kept_whole: job.kept_whole(reclaims),
     })
 }
 

@@ -14,6 +14,7 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::archive::storage::{Storage, Tail};
+pub use crate::archive::targz::{StreamPoint, TarAt};
 use crate::fsutil;
 
 /// Version 3 added `resume`. A version 2 journal can't hold one, so it reads
@@ -42,8 +43,16 @@ pub struct Resume {
     /// Where decoding restarts, in bits from the start of the archive. Only
     /// deflate streams ever stop between two bytes.
     pub bit: u64,
-    /// CRC-32 of the first `written` bytes of output.
+    /// CRC-32 of the first `written` bytes of output. Unused for a
+    /// compressed tar, whose checksums are per gzip member, in `stream`.
     pub crc: u32,
+    /// For a compressed tar, where one stream holds every entry: the
+    /// decoder's and the tar parser's state at `bit`. `written` is then how
+    /// much of the entry being extracted is in its part file, if the point
+    /// lies inside a file. Older builds don't know the format and refuse the
+    /// journal before reading this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream: Option<Box<StreamPoint>>,
 }
 
 #[derive(Serialize, Deserialize)]

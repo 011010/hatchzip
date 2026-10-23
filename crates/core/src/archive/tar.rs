@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 use std::io::{Cursor, Read, Seek, SeekFrom};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -41,70 +41,18 @@ pub fn open(storage: &Arc<Storage>, tail: Option<Arc<Tail>>) -> Result<Opened> {
         .context("reading the tar headers")?
     {
         let e = entry.context("reading the tar headers")?;
-        let header = e.header();
-        let name = String::from_utf8_lossy(&e.path_bytes()).into_owned();
         // The unit starts where the previous entry ended, so any long-name
-        // or pax records in between belong to it.
+        // or pax records in between belong to it, and so does an entry that
+        // is skipped.
         let start = end;
         end = e.raw_file_position() + e.size().next_multiple_of(512);
-
-        let kind = match header.entry_type() {
-            EntryType::Regular | EntryType::Continuous => Kind::File,
-            EntryType::Directory => Kind::Dir,
-            EntryType::Symlink => Kind::Symlink,
-            EntryType::Link => {
-                let target = e
-                    .link_name()?
-                    .map(|t| t.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                Kind::HardLink(safe_path(&target).ok_or_else(|| {
-                    anyhow!("hard link '{name}' points outside the destination folder; extraction refused")
-                })?)
-            }
-            EntryType::GNUSparse => {
-                bail!("'{name}' is a sparse file, which is not supported")
-            }
-            other => bail!("'{name}' is a {other:?} entry, which cannot be created"),
+        let Some((item, target)) = describe(&e, &mut sizes)? else {
+            continue;
         };
-        let Some(path) = safe_path(&name) else {
-            // "./" at the top of many tarballs names the output folder itself.
-            if kind == Kind::Dir {
-                continue;
-            }
-            bail!("'{name}' would be written outside the destination folder; extraction refused");
-        };
-        let target = match kind {
-            Kind::Symlink => Some(
-                e.link_name_bytes()
-                    .map(|b| b.into_owned())
-                    .unwrap_or_default(),
-            ),
-            _ => None,
-        };
-        let size = match &kind {
-            Kind::File => e.size(),
-            Kind::Symlink => target.as_ref().map_or(0, |t| t.len() as u64),
-            // Linked files are copied if the filesystem can't hard link, so
-            // the space check counts them at the target's size.
-            Kind::HardLink(t) => sizes.get(t).copied().unwrap_or(0),
-            Kind::Dir => 0,
-        };
-        sizes.insert(path.clone(), size);
-        let mtime = header
-            .mtime()
-            .ok()
-            .map(|s| UNIX_EPOCH + Duration::from_secs(s));
-        let mode = header.mode().ok();
         units.push(Unit {
             start,
             key: entries.len(),
-            items: vec![Item {
-                path,
-                size,
-                kind,
-                mode,
-                mtime,
-            }],
+            items: vec![item],
             encrypted: false,
         });
         entries.push(Entry {
@@ -123,6 +71,80 @@ pub fn open(storage: &Arc<Storage>, tail: Option<Arc<Tail>>) -> Result<Opened> {
         units,
         tail_start: resuming.unwrap_or(end),
     })
+}
+
+/// What a tar entry extracts to, and a symlink's target, which tar keeps in
+/// the header rather than the data. `None` for entries that extract to
+/// nothing: "./", and pax global headers, which carry defaults such as the
+/// commit id `git archive` records. Shared with compressed tar, so both
+/// refuse and accept exactly the same entries. `sizes` holds the size of
+/// every path seen so far, for hard links.
+pub(super) fn describe<R: Read>(
+    e: &::tar::Entry<'_, R>,
+    sizes: &mut HashMap<PathBuf, u64>,
+) -> Result<Option<(Item, Option<Vec<u8>>)>> {
+    let header = e.header();
+    let name = String::from_utf8_lossy(&e.path_bytes()).into_owned();
+    let kind = match header.entry_type() {
+        EntryType::Regular | EntryType::Continuous => Kind::File,
+        EntryType::Directory => Kind::Dir,
+        EntryType::Symlink => Kind::Symlink,
+        EntryType::Link => {
+            let target = e
+                .link_name()?
+                .map(|t| t.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            Kind::HardLink(safe_path(&target).ok_or_else(|| {
+                anyhow!(
+                    "hard link '{name}' points outside the destination folder; extraction refused"
+                )
+            })?)
+        }
+        EntryType::XGlobalHeader => return Ok(None),
+        EntryType::GNUSparse => {
+            bail!("'{name}' is a sparse file, which is not supported")
+        }
+        other => bail!("'{name}' is a {other:?} entry, which cannot be created"),
+    };
+    let Some(path) = safe_path(&name) else {
+        // "./" at the top of many tarballs names the output folder itself.
+        if kind == Kind::Dir {
+            return Ok(None);
+        }
+        bail!("'{name}' would be written outside the destination folder; extraction refused");
+    };
+    let target = match kind {
+        Kind::Symlink => Some(
+            e.link_name_bytes()
+                .map(|b| b.into_owned())
+                .unwrap_or_default(),
+        ),
+        _ => None,
+    };
+    let size = match &kind {
+        Kind::File => e.size(),
+        Kind::Symlink => target.as_ref().map_or(0, |t| t.len() as u64),
+        // Linked files are copied if the filesystem can't hard link, so
+        // the space check counts them at the target's size.
+        Kind::HardLink(t) => sizes.get(t).copied().unwrap_or(0),
+        Kind::Dir => 0,
+    };
+    sizes.insert(path.clone(), size);
+    let mtime = header
+        .mtime()
+        .ok()
+        .map(|s| UNIX_EPOCH + Duration::from_secs(s));
+    let mode = header.mode().ok();
+    Ok(Some((
+        Item {
+            path,
+            size,
+            kind,
+            mode,
+            mtime,
+        },
+        target,
+    )))
 }
 
 impl Format for Tar {

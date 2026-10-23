@@ -6,6 +6,7 @@ pub mod resumable;
 mod sevenz;
 pub mod storage;
 mod tar;
+pub mod targz;
 mod zip;
 
 use std::io::Read;
@@ -13,9 +14,11 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 
+use crate::journal::Resume;
 use storage::{Storage, Tail};
+use targz::Solid;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -90,6 +93,13 @@ pub trait Format: Send + Sync {
     fn stream(&self, _unit: &Unit) -> Result<Option<Stream>> {
         Ok(None)
     }
+
+    /// For an archive that is one compressed stream, decodable only from the
+    /// front: its single unit, extracted front to back while the bytes behind
+    /// the decoder are freed.
+    fn solid(&self) -> Option<&Solid> {
+        None
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -129,22 +139,24 @@ pub struct Opened {
 }
 
 /// Parses the archive. `resume` carries the format recorded by an earlier
-/// run and the tail it saved; a fresh run sniffs the format instead. The
-/// password is only needed for encrypted archives; whether it is right is
-/// found out when a unit is decoded (see `Job::check_password`).
+/// run, the tail it saved and its resume point, which a compressed tar is
+/// read from; a fresh run sniffs the format instead. The password is only
+/// needed for encrypted archives; whether it is right is found out when a
+/// unit is decoded (see `Job::check_password`).
 pub fn open(
     storage: &Arc<Storage>,
-    resume: Option<(&str, Arc<Tail>)>,
+    resume: Option<(&str, Arc<Tail>, Option<&Resume>)>,
     password: Option<&str>,
 ) -> Result<Opened> {
-    let (name, tail) = match resume {
-        Some((name, tail)) => (name.to_string(), Some(tail)),
-        None => (sniff(storage)?.to_string(), None),
+    let (name, tail, point) = match resume {
+        Some((name, tail, point)) => (name.to_string(), Some(tail), point),
+        None => (sniff(storage)?.to_string(), None, None),
     };
     match name.as_str() {
         "zip" => zip::open(storage, tail, password),
         "7z" => sevenz::open(storage, tail, password),
         "tar" => tar::open(storage, tail),
+        targz::NAME => targz::open(storage, point),
         other => bail!("unknown archive format '{other}' in the journal"),
     }
 }
@@ -190,23 +202,49 @@ fn sniff(storage: &Storage) -> Result<&'static str> {
     if starts(b"7z\xBC\xAF\x27\x1C") {
         return Ok("7z");
     }
-    if head.len() >= 263 && &head[257..262] == b"ustar" {
+    let is_tar = |head: &[u8]| head.len() >= 263 && &head[257..262] == b"ustar";
+    if is_tar(head) {
         return Ok("tar");
     }
-    if starts(b"\x1F\x8B")
-        || starts(b"\x28\xB5\x2F\xFD")
-        || starts(b"\xFD7zXZ\x00")
-        || starts(b"BZh")
-    {
+    let ext = storage.primary().to_string_lossy().to_ascii_lowercase();
+    if starts(b"\x1F\x8B") {
+        // Look inside: a plain .gz of one file is not an archive.
+        let mut gz = resumable::Gzip::new(
+            storage.reader(None),
+            storage.original_len(),
+            &resumable::GzPoint::start(),
+        )?;
+        let mut first = [0u8; 512];
+        let mut n = 0;
+        while n < first.len() {
+            match gz
+                .read(&mut first[n..])
+                .context("reading the start of the compressed stream")?
+            {
+                0 => break,
+                k => n += k,
+            }
+        }
+        let named = [".tar.gz", ".tgz", ".taz"]
+            .iter()
+            .any(|e| ext.ends_with(e) || ext.contains(&format!("{e}.")));
+        if is_tar(&first[..n]) || named {
+            return Ok(targz::NAME);
+        }
         bail!(
-            "this is a compressed stream (.gz, .zst, .xz or .bz2). In-place extraction of \
-             compressed streams is not supported"
+            "this is a gzip-compressed file that does not contain a tar archive. Only \
+             compressed tar archives (.tar.gz) can be extracted"
+        );
+    }
+    if starts(b"\x28\xB5\x2F\xFD") || starts(b"\xFD7zXZ\x00") || starts(b"BZh") {
+        bail!(
+            "this is a compressed stream (.zst, .xz or .bz2). In-place extraction of these \
+             compressed streams is not supported yet"
         );
     }
     if starts(b"Rar!\x1A\x07") {
         bail!("RAR archives are not supported");
     }
-    let ext = storage.primary().to_string_lossy().to_ascii_lowercase();
     if ext.ends_with(".tar") || ext.contains(".tar.") {
         return Ok("tar");
     }

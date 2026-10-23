@@ -161,6 +161,11 @@ fn report(job: &Job, out: &Path, journal: Option<&Journal>, keep_free: u64) -> R
             "  {DIM}note: the destination is on another drive, so removing the archive does not free space there{DIM:#}"
         );
     }
+    if plan.archive_kept_whole {
+        say!(
+            "  {DIM}note: this drive cannot release space inside a file, so the compressed archive remains whole until extraction completes and room is required for the archive and every extracted file{DIM:#}"
+        );
+    }
     if plan.fits {
         say!("  available after              {}", human(plan.free_after));
     } else {

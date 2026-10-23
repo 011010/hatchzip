@@ -276,6 +276,7 @@ mod tests {
             normal_needs: 41_500_000,
             reclaims: true,
             solid_block_bound: false,
+            archive_kept_whole: false,
         }));
         assert_eq!(t.view.space, "Required: 3.5 MB. Available: 7.8 GB.");
         assert_eq!(t.view.phase, Phase::Checking, "it fits, so it carries on");
@@ -350,6 +351,7 @@ mod tests {
             normal_needs: 9_000_000_000,
             reclaims: true,
             solid_block_bound: true,
+            archive_kept_whole: false,
         }));
         assert_eq!(t.view.phase, Phase::NoSpace);
         assert!(t.view.can_retry);

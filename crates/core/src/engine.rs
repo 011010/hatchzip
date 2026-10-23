@@ -11,6 +11,12 @@
 //! point is journaled, and only then are the archive bytes before that point
 //! punched out. The archive's length stays the same until the unit commits
 //! through the ordinary path.
+//!
+//! A compressed tar is one stream that decodes only from the front, so it is
+//! one unit holding every entry, always streamed, front to back, with resume
+//! points between the files as well as inside them (see
+//! [`Run::stream_solid`]). Without hole punching it still streams, so a
+//! crash resumes from the last point, but nothing is freed until the end.
 
 use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
@@ -24,8 +30,9 @@ use rayon::prelude::*;
 
 use crate::archive::resumable::{self, Decoder};
 use crate::archive::storage::{Storage, Tail};
+use crate::archive::targz::{Event, Profile, Walker};
 use crate::archive::{self, Codec, Format, Item, Kind, Sink, Stream, Unit};
-use crate::journal::{Journal, Link, Paths, Resume};
+use crate::journal::{Journal, Link, Paths, Resume, TarAt};
 use crate::{fsutil, platform};
 
 /// Larger batches extract in parallel better, smaller ones redo less work
@@ -110,7 +117,8 @@ impl Job {
             // The last run committed a batch but stopped before truncating.
             storage.set_len(journal.committed_len)?;
         }
-        let opened = archive::open(&storage, Some((&journal.format, tail)), password)?;
+        let point = journal.resume.as_ref();
+        let opened = archive::open(&storage, Some((&journal.format, tail, point)), password)?;
         let mut job = Self::build(storage, opened, journal.committed_len)?;
         if let Some(r) = &journal.resume {
             // Only the highest uncommitted unit is ever streamed, so a point
@@ -182,6 +190,18 @@ impl Job {
 
     pub fn encrypted(&self) -> bool {
         self.units.iter().any(|u| u.encrypted)
+    }
+
+    /// The archive is one compressed stream, extracted front to back.
+    pub fn is_stream(&self) -> bool {
+        self.format.solid().is_some()
+    }
+
+    /// The archive is one compressed stream that stays whole until the run
+    /// ends, because the filesystem can't free space inside it: the disk
+    /// has to hold the archive and every extracted file at once.
+    pub fn kept_whole(&self, reclaims: bool) -> bool {
+        self.is_stream() && reclaims && self.punch_support().is_none()
     }
 
     /// Proves the password before anything is deleted: decrypts the smallest
@@ -275,6 +295,12 @@ impl Job {
         let mut peak = extra;
         for (i, u) in self.units.iter().enumerate() {
             let span = self.span(i) as i128;
+            if let Some(solid) = self.format.solid() {
+                let (rise, net) = self.solid_cost(i, &solid.profile, span, reclaims);
+                peak = peak.max(extra + rise);
+                extra += net;
+                continue;
+            }
             if let Some(s) = self.streams(i, reclaims) {
                 let (rise, net) = self.stream_cost(i, &s, span, reclaims);
                 peak = peak.max(extra + rise);
@@ -342,18 +368,63 @@ impl Job {
         (rise, net)
     }
 
+    /// What streaming a compressed tar, `units[i]`, costs in free space:
+    /// `(rise, net)` as for [`stream_cost`](Self::stream_cost).
+    ///
+    /// Before each resume point is taken, the files hold what they held at
+    /// the point before, `lead` at most ahead of the compressed bytes freed
+    /// up to it, plus what was written since: under a step, plus the output
+    /// to the next point after the step is full, at most `gap`. The scan
+    /// measured both at the very points the run will meet. A read buffer
+    /// and a granule at each end of the punched range come on top. Links are
+    /// made at the end, once the archive is gone.
+    fn solid_cost(&self, i: usize, p: &Profile, span: i128, reclaims: bool) -> (i128, i128) {
+        let out_left = (p.files + p.links) as i128;
+        // Assumed punched already, as for a single streamed file.
+        let freed = self.resumed(i).map_or(0, |r| r.bit / 8) as i128;
+        let net = if reclaims {
+            out_left - (span - freed)
+        } else {
+            out_left
+        };
+        let rise = match self.punch_support() {
+            Some(granule) if reclaims => {
+                let ahead = stream_step() + p.gap + BUF_SIZE as u64 + 2 * granule;
+                (p.lead.max(0) + ahead as i128).min(p.files as i128)
+            }
+            // Nothing is freed until the run commits, so every file is on
+            // disk next to the whole archive.
+            _ => out_left,
+        };
+        (rise.max(net), net)
+    }
+
+    /// The entry a resume point stopped inside of, if any: the first item of
+    /// the first unit, whose part file holds `written` bytes.
+    fn open_entry(&self) -> Option<&Item> {
+        let r = self.resume.as_ref()?;
+        let inside = match &r.stream {
+            Some(s) => matches!(s.at, TarAt::File { .. }),
+            None => true,
+        };
+        if !inside {
+            return None;
+        }
+        self.units.first().and_then(|u| u.items.first())
+    }
+
     /// Output a crashed run wrote for units it never committed. The output
     /// folder started empty, so anything at those paths is ours. A
     /// half-streamed file is not in the list: its archive bytes may be gone,
-    /// so it is the only copy of its first part.
+    /// so it is the only copy of its first part. For a compressed tar that
+    /// is the entry its point is in; the files after the point are still in
+    /// the archive.
     pub fn uncommitted(&self, out: &Path) -> Vec<(PathBuf, u64)> {
+        let open = self.open_entry().is_some();
         let mut found = Vec::new();
         for (i, u) in self.units.iter().enumerate() {
-            if self.resumed(i).is_some() {
-                continue;
-            }
-            for item in &u.items {
-                if item.kind != Kind::File {
+            for (k, item) in u.items.iter().enumerate() {
+                if item.kind != Kind::File || (open && i == 0 && k == 0) {
                     continue;
                 }
                 let dest = out.join(&item.path);
@@ -372,10 +443,7 @@ impl Job {
     /// Output a crashed stream wrote past its last resume point. It is cut
     /// off before the stream continues, so it counts as free.
     pub fn past_resume_point(&self, out: &Path) -> u64 {
-        let Some(r) = self.resume.as_ref() else {
-            return 0;
-        };
-        let Some(item) = self.units.first().and_then(|u| u.items.first()) else {
+        let (Some(r), Some(item)) = (self.resume.as_ref(), self.open_entry()) else {
             return 0;
         };
         let dest = out.join(&item.path);
@@ -476,6 +544,34 @@ fn open_part(dest: &Path, part: &Path, written: u64) -> Result<File> {
     Ok(file)
 }
 
+/// A file of a compressed tar being written to its part file.
+struct OpenFile {
+    item: Item,
+    dest: PathBuf,
+    part: PathBuf,
+    file: File,
+    written: u64,
+}
+
+impl OpenFile {
+    /// Gives the finished file its metadata and its real name.
+    fn finish(self) -> Result<()> {
+        if self.written != self.item.size {
+            bail!("it is smaller than the archive records");
+        }
+        if let Some(t) = self.item.mtime {
+            self.file.set_modified(t)?;
+        }
+        platform::apply_mode(&self.file, self.item.mode)?;
+        if platform::SYNC_EACH_FILE {
+            self.file.sync_all()?;
+        }
+        drop(self.file);
+        fs::rename(&self.part, &self.dest)?;
+        Ok(())
+    }
+}
+
 /// The output just before `written`, which a deflate stream may refer back
 /// to. It is on disk, flushed before the point was journaled, so the
 /// journal doesn't have to carry it.
@@ -519,6 +615,15 @@ impl Run<'_> {
         while next < self.job.units.len() {
             if self.stop.load(Ordering::Relaxed) {
                 return Ok(Outcome::Paused);
+            }
+            if let Some(solid) = self.job.format.solid() {
+                let walk = solid.walk(self.job.resumed(next))?;
+                let Some(links) = self.stream_solid(next, walk, reclaims, &out)? else {
+                    return Ok(Outcome::Paused);
+                };
+                self.commit(next, next + 1, links, &out)?;
+                next += 1;
+                continue;
             }
             if let Some(stream) = self.stream_now(next, reclaims, &out)? {
                 if !self.stream_unit(next, &stream, &out)? {
@@ -625,6 +730,7 @@ impl Run<'_> {
             written: 0,
             bit: stream.data_start * 8,
             crc: 0,
+            stream: None,
         });
         let started_here = at.written == 0;
         let result = self
@@ -660,7 +766,8 @@ impl Run<'_> {
         let mut since_point = 0;
         let step = stream_step();
         let mut punching = self.job.punch_support();
-        self.ensure_room(out, item, written, punching)?;
+        let what = format!("'{}'", item.path.display());
+        self.ensure_room(out, &what, item.size - written, punching)?;
 
         let mut buf = vec![0; BUF_SIZE];
         loop {
@@ -690,10 +797,11 @@ impl Run<'_> {
                         written,
                         bit,
                         crc: crc.clone().finalize(),
+                        stream: None,
                     };
                     punching = self.save_point(&file, part, out, point, stream, punching)?;
                     since_point = 0;
-                    self.ensure_room(out, item, written, punching)?;
+                    self.ensure_room(out, &what, item.size - written, punching)?;
                 }
                 // A deflate block runs as long as its encoder likes; zlib-ng
                 // and zlib-rs write level 1 as a single block. Until it ends
@@ -782,26 +890,243 @@ impl Run<'_> {
         Ok(punching)
     }
 
-    /// Stops a stream at a resume point, before it writes what doesn't fit.
-    fn ensure_room(
-        &self,
+    /// Extracts a compressed tar, `units[i]`, front to back from `walk`,
+    /// freeing the compressed bytes behind the decoder. Returns the links
+    /// found since the last resume point, for the commit, or `None` if a
+    /// stop request interrupted it; the last point stays in the journal and
+    /// the next run continues there.
+    ///
+    /// Each point follows the order of [`stream_unit`](Self::stream_unit):
+    /// every file written before it is flushed, then the point is journaled,
+    /// with the links found so far, and only then is the archive punched up
+    /// to the byte it restarts in. Files finished after the last point are
+    /// written again on resume, the half-written one is cut back to the
+    /// point.
+    fn stream_solid(
+        &mut self,
+        i: usize,
+        mut walk: Walker,
+        reclaims: bool,
         out: &Path,
-        item: &Item,
-        written: u64,
+    ) -> Result<Option<Vec<Link>>> {
+        let unit = self.job.units[i].start;
+        let step = stream_step();
+        // With the output on another disk, freeing the archive's space
+        // doesn't help it, and the space check didn't count on it.
+        let mut punching = self.job.punch_support().filter(|_| reclaims);
+        let profile = match self.job.format.solid() {
+            Some(s) => s.profile.clone(),
+            None => bail!("the archive is not a compressed stream"),
+        };
+        let mut left = profile.files;
+        // This run hasn't punched anything yet. Its first punch starts at 0,
+        // in case the last run stopped between journaling a point and
+        // punching up to it.
+        let mut punched = 0;
+        let mut since_point = 0u64;
+        let mut checked = 0u64;
+        let mut open: Option<OpenFile> = None;
+        let mut links = Vec::new();
+        let mut dirs = HashSet::new();
+        self.ensure_room(out, "the archive", left, punching)?;
+
+        loop {
+            if self.stop.load(Ordering::Relaxed) {
+                return Ok(None);
+            }
+            match walk.next(BUF_SIZE)? {
+                Event::Entry { item, link, done } => {
+                    let dest = out.join(&item.path);
+                    let what = || format!("extracting '{}'", item.path.display());
+                    match &item.kind {
+                        Kind::Dir => {
+                            fs::create_dir_all(&dest).with_context(what)?;
+                            dirs.insert(dest);
+                        }
+                        Kind::Symlink => {
+                            let target = String::from_utf8(link.unwrap_or_default())
+                                .map_err(|_| anyhow!("the link target is not valid UTF-8"))
+                                .with_context(what)?;
+                            links.push(Link {
+                                path: item.path.clone(),
+                                target: PathBuf::from(target),
+                                hard: false,
+                            });
+                        }
+                        Kind::HardLink(target) => links.push(Link {
+                            path: item.path.clone(),
+                            target: target.clone(),
+                            hard: true,
+                        }),
+                        Kind::File => {
+                            if let Some(parent) = dest.parent() {
+                                fs::create_dir_all(parent).with_context(what)?;
+                            }
+                            let part = part_path(&dest);
+                            let file = open_part(&dest, &part, done).with_context(what)?;
+                            open = Some(OpenFile {
+                                item,
+                                dest,
+                                part,
+                                file,
+                                written: done,
+                            });
+                        }
+                    }
+                }
+                Event::Data(bytes) => {
+                    let f = open
+                        .as_mut()
+                        .ok_or_else(|| anyhow!("the tar stream holds data outside a file"))?;
+                    f.file
+                        .write_all(bytes)
+                        .with_context(|| format!("extracting '{}'", f.item.path.display()))?;
+                    let n = bytes.len() as u64;
+                    f.written += n;
+                    since_point += n;
+                    left = left.saturating_sub(n);
+                    (self.progress.on_bytes)(n);
+                    // A deflate block runs as long as its encoder likes, and
+                    // until it ends there is nowhere to resume from, so nothing
+                    // can be freed: stop before the disk fills.
+                    if punching.is_some()
+                        && since_point >= step
+                        && since_point - checked >= BUF_SIZE as u64
+                    {
+                        checked = since_point;
+                        let avail = fsutil::available_space(out)?.saturating_sub(self.keep_free);
+                        if avail < 2 * BUF_SIZE as u64 {
+                            bail!(
+                                "not enough disk space to continue: the compressed data has no \
+                                 resume point in the last {}, so its space cannot be released \
+                                 yet. {} more is required (the remainder of the archive). \
+                                 Progress is saved; free up space and resume the extraction.",
+                                human(since_point),
+                                human(left),
+                            );
+                        }
+                    }
+                }
+                Event::FileEnd => {
+                    let f = open
+                        .take()
+                        .ok_or_else(|| anyhow!("the tar stream ends a file it never began"))?;
+                    let pad = f.item.size.next_multiple_of(4096) - f.item.size;
+                    let path = f.item.path.clone();
+                    let parent = f.dest.parent().map(Path::to_path_buf);
+                    f.finish()
+                        .with_context(|| format!("extracting '{}'", path.display()))?;
+                    dirs.extend(parent);
+                    since_point += pad;
+                    left = left.saturating_sub(pad);
+                }
+                Event::Point => {
+                    if since_point < step {
+                        continue;
+                    }
+                    let mut point = walk.point()?;
+                    point.unit = unit;
+                    punching = self.solid_point(
+                        point,
+                        open.as_ref(),
+                        &mut links,
+                        &mut dirs,
+                        out,
+                        punching,
+                        &mut punched,
+                    )?;
+                    since_point = 0;
+                    checked = 0;
+                    self.ensure_room(out, "the archive", left, punching)?;
+                }
+                Event::End => break,
+            }
+        }
+        if open.is_some() {
+            bail!("the tar stream ended inside a file");
+        }
+        Ok(Some(links))
+    }
+
+    /// Makes `point` the one a crash resumes from, then frees the archive
+    /// bytes before it. Returns whether to keep punching.
+    #[allow(clippy::too_many_arguments)]
+    fn solid_point(
+        &mut self,
+        point: Resume,
+        open: Option<&OpenFile>,
+        links: &mut Vec<Link>,
+        dirs: &mut HashSet<PathBuf>,
+        out: &Path,
         punching: Option<u64>,
-    ) -> Result<()> {
+        punched: &mut u64,
+    ) -> Result<Option<u64>> {
+        if let Some(f) = open {
+            f.file
+                .sync_all()
+                .context("flushing the extracted file to disk")?;
+            dirs.extend(f.part.parent().map(Path::to_path_buf));
+        }
+        platform::sync_batch(out).context("flushing extracted files to disk")?;
+        if platform::SYNC_EACH_FILE {
+            // Files were flushed as they were finished; their names live in
+            // the folders, which may be new themselves.
+            let mut done = HashSet::new();
+            for d in dirs.drain() {
+                let mut dir = Some(d.as_path());
+                while let Some(d) = dir {
+                    if !done.insert(d.to_path_buf()) {
+                        break;
+                    }
+                    fsutil::sync_dir(d)?;
+                    if d == out {
+                        break;
+                    }
+                    dir = d.parent();
+                }
+            }
+        }
+        dirs.clear();
+        crash_point("stream-after-sync");
+
+        let byte = point.bit / 8;
+        self.journal.links.append(links);
+        self.journal.resume = Some(point.clone());
+        self.journal.save(&self.paths)?;
+        self.job.resume = Some(point);
+        crash_point("stream-after-journal");
+
+        if punching.is_some() {
+            if !self
+                .job
+                .storage
+                .punch(*punched, byte)
+                .context("freeing extracted archive bytes")?
+            {
+                return Ok(None);
+            }
+            *punched = byte;
+            (self.progress.on_commit)(self.job.top - byte);
+        }
+        crash_point("stream-after-punch");
+        Ok(punching)
+    }
+
+    /// Stops a stream at a resume point, before it writes what doesn't fit.
+    /// `left` is the output still to write.
+    fn ensure_room(&self, out: &Path, what: &str, left: u64, punching: Option<u64>) -> Result<()> {
         let avail = fsutil::available_space(out)?.saturating_sub(self.keep_free);
-        let left = (item.size - written).next_multiple_of(4096);
+        let left = left.next_multiple_of(4096);
         let need = match punching {
             Some(granule) => (stream_step() + BUF_SIZE as u64 + 2 * granule).min(left),
             None => left,
         };
         if need > avail {
             bail!(
-                "not enough disk space to continue: the next part of '{}' requires {} and {} is \
+                "not enough disk space to continue: the next part of {} requires {} and {} is \
                  available ({} reserved).\n{} more is required. Progress is saved; free up space \
                  and resume the extraction.",
-                item.path.display(),
+                what,
                 human(need),
                 human(avail),
                 human(self.keep_free),
