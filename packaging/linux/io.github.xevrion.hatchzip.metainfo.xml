@@ -61,6 +61,7 @@
     <mediatype>application/zip</mediatype>
     <mediatype>application/x-7z-compressed</mediatype>
     <mediatype>application/x-tar</mediatype>
+    <mediatype>application/x-compressed-tar</mediatype>
   </provides>
 
   <supports>

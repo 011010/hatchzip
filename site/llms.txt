@@ -25,7 +25,7 @@ The archive is used up as it extracts: when the run finishes, only the extracted
 ## Limits
 
 - A 7z made with 7-Zip's default settings is one solid block; it needs free space for that whole block, and `check` says so first.
-- A `.tar.gz` frees space while it extracts only on filesystems that can free part of a file (ext4, XFS, btrfs, tmpfs). On FAT32 and exFAT it needs room for the archive and the files at once, and `check` says so.
+- A `.tar.gz` frees space while it extracts only on filesystems that can free part of a file (NTFS, APFS, ext4, XFS, btrfs). On FAT32 and exFAT it needs room for the archive and the files at once, and `check` says so.
 - `.tar.xz`, `.tar.zst` and RAR are not supported yet.
 
 ## Docs

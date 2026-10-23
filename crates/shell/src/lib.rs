@@ -37,8 +37,10 @@ pub const ACTIONS: &[Action] = &[
 ];
 
 /// File types the menu appears on. `.001` covers the first part of split
-/// archives, which is the part HatchZip is opened with.
-pub const EXTENSIONS: &[&str] = &["zip", "7z", "tar", "001"];
+/// archives, which is the part HatchZip is opened with. Windows sees only the
+/// last extension of `game.tar.gz`, so `.gz` is listed; a `.gz` that holds no
+/// tar is refused before anything changes.
+pub const EXTENSIONS: &[&str] = &["zip", "7z", "tar", "tgz", "gz", "001"];
 
 /// Where the per-user menu entries live. [`Dirs::current`] is the real
 /// location; tests point it somewhere temporary.

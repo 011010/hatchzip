@@ -26,7 +26,8 @@ Ticked when it is merged and tested, not when it is started.
 
 ## Requested after launch
 
-- [ ] `.tar.gz` and `.tar.zst`, for datasets (see Formats)
+- [x] `.tar.gz`, for datasets
+- [ ] `.tar.zst` and `.tar.xz` (see Formats)
 - [ ] Multi-part RAR (`.part1.rar`, ...) and native split ZIP (`.z01`, ...) (see Formats)
 - [ ] Check the volumes against an `.sfv` file next to the archive before starting, and stop if one doesn't match
 - [ ] Extract several archives one after another from one command or one right-click, checking the space for each
@@ -78,7 +79,7 @@ Ticked when it is merged and tested, not when it is started.
 - [x] Split archives (`.001`, `.002`, ...), volumes deleted as they empty
 - [x] Free space inside one large file while extracting it (hole punching plus durable resume points): stored and Deflate ZIP entries, tar entries; space really freed on ext4, APFS and NTFS (CI requires it)
 - [ ] The same inside a 7z solid block (LZMA2 resume points); fixes 7z made with 7-Zip's default settings
-- [ ] `.tar.gz` and `.tgz`, freeing the compressed bytes behind the decoder, with resume points at deflate block and gzip member boundaries
+- [x] `.tar.gz` and `.tgz`, freeing the compressed bytes behind the decoder, with resume points at deflate block and gzip member boundaries; space really freed on ext4, APFS and NTFS (CI)
 - [ ] `.tar.xz`: every xz block start is a free resume point (xz 5.8 writes 24 MiB blocks by default); a single-block file needs the LZMA state saved. See `docs/formats.md`
 - [ ] `.tar.zst`: easy for multi-frame files (`pzstd`), but the usual single frame needs a decoder that can save its window. See `docs/formats.md`
 - [ ] RAR, starting with deleting finished volumes of `.partN.rar` sets
