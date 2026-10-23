@@ -53,7 +53,11 @@ pub fn punch_hole(file: &File, offset: u64, len: u64) -> io::Result<bool> {
             Some(libc::EINTR) => continue,
             // APFS answers ENOSPC for a file that shares blocks with a clone:
             // punching it would need new space instead of freeing any.
-            Some(libc::ENOTSUP | libc::EINVAL | libc::ENOSPC) => return Ok(false),
+            // macOS 27's FAT32 driver (fskit) answers ENOTTY, where older
+            // releases answered ENOTSUP.
+            Some(libc::ENOTSUP | libc::EINVAL | libc::ENOSPC | libc::ENOTTY) => {
+                return Ok(false);
+            }
             _ => return Err(e),
         }
     }
