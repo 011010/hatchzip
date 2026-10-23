@@ -103,3 +103,4 @@ Ticked when it is merged and tested, not when it is started.
 - [x] Windows: reserved names (`CON`, `NUL`, ...), trailing dots and spaces, and forbidden characters are refused before anything is touched
 - [x] Paths over 260 characters extract and resume (test runs on Windows CI too)
 - [ ] Benchmarks on more hardware, including a hard drive and a USB stick
+- [ ] macOS CI flake: once in a few runs, `archives_from_tar_gzip_and_pigz_extract_and_resume` finds nothing freed after a punch on a fresh `tar -czf` archive (passes on rerun). Find whether `F_PUNCHHOLE` refused (which silently turns freeing off for the rest of the run) or APFS reported the space late, and log it either way
