@@ -31,6 +31,7 @@ Ticked when it is merged and tested, not when it is started.
 - [ ] Check the volumes against an `.sfv` file next to the archive before starting, and stop if one doesn't match
 - [ ] Extract several archives one after another from one command or one right-click, checking the space for each
 - [ ] Android app (the engine is a library; Android's storage access rules are the open question)
+- [ ] The other direction: compress in place when there is no room for a copy. A folder: delete each file once its compressed copy is safely on disk. One huge file: free its start with hole punching as it is compressed, with resume points like extraction has
 
 ## GUI, like WinRAR and 7-Zip
 
