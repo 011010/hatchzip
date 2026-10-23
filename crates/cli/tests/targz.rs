@@ -568,8 +568,12 @@ fn the_space_check_for_a_tar_gz_counts_freeing_only_where_it_works() {
     );
     assert!(whole >= total as f64, "without punching it needs {whole}");
     assert!(said.contains("remains whole"), "{said}");
+    // NTFS frees in units of up to 1 MiB, so the plan keeps a granule at each
+    // end of the punched range there, which eats most of the saving on an
+    // archive this small. It must still need less.
+    let saving = if cfg!(windows) { 0.0 } else { 2e6 };
     assert!(
-        streaming + 2e6 < whole,
+        streaming + saving < whole,
         "with punching it should need less than {whole}, not {streaming}"
     );
 }
