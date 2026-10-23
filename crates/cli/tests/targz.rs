@@ -464,7 +464,11 @@ fn a_damaged_tar_gz_is_refused_before_anything_is_touched() {
     for (expect, bytes) in cases {
         fs::write(&archive, &bytes).unwrap();
         let run = extract(&archive, &out, &stream_env(&[]));
-        assert!(!run.status.success(), "{expect}: should be refused");
+        assert_eq!(
+            run.status.code(),
+            Some(4),
+            "{expect}: should be refused as damaged"
+        );
         let stderr = String::from_utf8_lossy(&run.stderr);
         assert!(stderr.contains(expect), "{expect}: {stderr}");
         assert!(stderr.contains("nothing was changed"), "{stderr}");
@@ -472,7 +476,11 @@ fn a_damaged_tar_gz_is_refused_before_anything_is_touched() {
         assert!(!side_files(&archive)[0].exists());
         assert!(!out.exists());
         let test = hatchzip(&["test", archive.to_str().unwrap()], &[]);
-        assert!(!test.status.success());
+        assert_eq!(
+            test.status.code(),
+            Some(4),
+            "{expect}: test should report damage"
+        );
     }
 }
 

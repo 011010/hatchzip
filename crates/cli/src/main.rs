@@ -16,7 +16,7 @@ use cli::{
     Cli, Command, EXIT_DAMAGED, EXIT_FAILURE, EXIT_NO_SPACE, EXIT_PASSWORD, EXIT_PAUSED, Secret,
     Space, Target,
 };
-use hatchzip_core::archive::{Kind, PasswordNeeded, WrongPassword};
+use hatchzip_core::archive::{Damaged, Kind, PasswordNeeded, WrongPassword};
 use hatchzip_core::engine::{self, Job, Outcome, Progress, Run};
 use hatchzip_core::human;
 use hatchzip_core::journal::{Journal, Paths};
@@ -53,6 +53,10 @@ fn main() -> ExitCode {
             }
             ExitCode::from(EXIT_PASSWORD)
         }
+        Err(e) if e.is::<Damaged>() => {
+            eprintln!("{ERROR}error:{ERROR:#} {e:#}");
+            ExitCode::from(EXIT_DAMAGED)
+        }
         Err(e) => {
             eprintln!("{ERROR}error:{ERROR:#} {e:#}");
             ExitCode::from(EXIT_FAILURE)
@@ -70,6 +74,16 @@ fn open(
     secret: Secret,
 ) -> Result<(State, Paths)> {
     let (primary, paths) = locate(archive)?;
+    // A compressed tar is read in full before anything else, which can take
+    // a while for a big one, so say what is happening.
+    let name = primary.file_name().unwrap_or_default().to_string_lossy();
+    let lower = name.to_ascii_lowercase();
+    if (lower.ends_with(".tar.gz") || lower.ends_with(".tgz"))
+        && io::stderr().is_terminal()
+        && !QUIET.load(Ordering::Relaxed)
+    {
+        eprintln!("Verifying {name}…");
+    }
     let mut tries = 0;
     let (state, _) = session::open_encrypted(
         &primary,

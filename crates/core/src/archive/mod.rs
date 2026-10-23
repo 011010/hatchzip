@@ -76,6 +76,19 @@ impl std::fmt::Display for WrongPassword {
 
 impl std::error::Error for WrongPassword {}
 
+/// The archive is damaged, found while opening it and before anything was
+/// touched. Front ends look for this error to report damage as such.
+#[derive(Debug)]
+pub struct Damaged(pub anyhow::Error);
+
+impl std::fmt::Display for Damaged {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:#}", self.0)
+    }
+}
+
+impl std::error::Error for Damaged {}
+
 impl Unit {
     pub fn size(&self) -> u64 {
         self.items.iter().map(|i| i.size).sum()

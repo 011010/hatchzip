@@ -501,8 +501,9 @@ pub fn open(storage: &Arc<Storage>, from: Option<&Resume>) -> Result<Opened> {
         .unwrap_or_default()
         .to_string_lossy()
         .into_owned();
-    let (items, profile) =
-        scan(&solid, from).with_context(|| format!("checking {name} (nothing was changed)"))?;
+    let (items, profile) = scan(&solid, from)
+        .map_err(|e| anyhow::Error::new(super::Damaged(e)))
+        .with_context(|| format!("checking {name} (nothing was changed)"))?;
     solid.profile = profile;
     Ok(Opened {
         name: NAME,
