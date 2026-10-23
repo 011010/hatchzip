@@ -124,6 +124,8 @@ a.gh {
 }
 a.gh:hover { background: var(--head); text-decoration: underline; }
 
+.links { display: flex; flex-wrap: wrap; gap: 8px; }
+
 img.shot {
   display: block;
   max-width: 100%;
