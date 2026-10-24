@@ -88,7 +88,8 @@ fn assert_refused(archive: &Path, why: &str) {
         ("check --keep-archive", &keep_check),
         ("extract --keep-archive", &keep_run),
     ] {
-        let stderr = String::from_utf8_lossy(&o.stderr);
+        // Windows prints paths with backslashes.
+        let stderr = String::from_utf8_lossy(&o.stderr).replace('\\', "/");
         assert!(!o.status.success(), "{what} should refuse");
         assert!(stderr.contains(why), "{what}: {stderr}");
         assert!(stderr.contains("refused"), "{what}: {stderr}");
@@ -440,7 +441,8 @@ fn a_colliding_archive_among_several_is_refused_untouched() {
         "{}{}",
         String::from_utf8_lossy(&run.stdout),
         String::from_utf8_lossy(&run.stderr)
-    );
+    )
+    .replace('\\', "/");
     assert!(!run.status.success(), "{out}");
     assert!(
         out.contains("'d' is a symbolic link, but 'd/inner.txt' requires a folder"),
