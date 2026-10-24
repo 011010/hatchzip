@@ -18,6 +18,10 @@
 //! [`Run::stream_solid`]). Without hole punching it still streams, so a
 //! crash resumes from the last point, but nothing is freed until the end.
 //!
+//! A format whose decoder finds a unit only by reading everything before it
+//! (RAR, through UnRAR) says so with [`Format::serial`]; its batches are
+//! decoded on one thread, lowest unit first, by one worker.
+//!
 //! An extraction that keeps the archive (`Journal::keep`) runs the same
 //! batches, checks and commits, so it resumes the same way, but never
 //! truncates, punches or deletes: its storage is protected, and the run
@@ -36,7 +40,7 @@ use rayon::prelude::*;
 use crate::archive::resumable::{self, Decoder};
 use crate::archive::storage::{Reads, Storage, Tail};
 use crate::archive::targz::{Event, Profile, Walker};
-use crate::archive::{self, Codec, Format, Item, Kind, Sink, Stream, Unit};
+use crate::archive::{self, Codec, Format, Item, Kind, PasswordCheck, Sink, Stream, Unit};
 use crate::journal::{Journal, Link, Paths, Resume, TarAt};
 use crate::{fsutil, platform};
 
@@ -323,17 +327,20 @@ impl Job {
     /// at first sight; reading the data catches those.
     pub fn check_password(&self) -> Result<()> {
         const ENOUGH: u64 = 64 * 1024 * 1024;
-        let Some(unit) = self
-            .units
-            .iter()
-            .filter(|u| u.encrypted)
-            .min_by_key(|u| u.size())
-        else {
+        let Some(unit) = self.smallest_encrypted() else {
             return Ok(());
+        };
+        let left = match self.format.password_check() {
+            PasswordCheck::Headers => return self.format.prove_password(),
+            PasswordCheck::Sample => ENOUGH,
+            // A wrong password only shows in the checksum at the end, so a
+            // sample would let it through and the run would fail later, after
+            // the archive is partly gone.
+            PasswordCheck::WholeUnit => u64::MAX,
         };
         let mut worker = self.format.worker(1)?;
         let mut sink = ProbeSink {
-            left: ENOUGH,
+            left,
             buf: vec![0; BUF_SIZE],
         };
         match worker.extract(unit, &mut sink) {
@@ -342,6 +349,32 @@ impl Job {
             Err(e) if e.chain().any(|c| c.is::<archive::PasswordNeeded>()) => Err(e),
             Err(_) => Err(archive::WrongPassword.into()),
         }
+    }
+
+    /// The smallest encrypted unit with data: an empty file decodes with
+    /// any password in formats whose only check is the file's checksum.
+    fn smallest_encrypted(&self) -> Option<&Unit> {
+        self.units
+            .iter()
+            .filter(|u| u.encrypted)
+            .min_by_key(|u| (u.size() == 0, u.size()))
+    }
+
+    /// When [`check_password`](Self::check_password) has to decode a whole
+    /// file to prove the password, as for RAR 4: that file and its size, so
+    /// a front end can say the check may take a while.
+    pub fn slow_password_check(&self) -> Option<(&Path, u64)> {
+        if !self.encrypted() || self.format.password_check() != PasswordCheck::WholeUnit {
+            return None;
+        }
+        let unit = self.smallest_encrypted()?;
+        Some((unit.items.first()?.path.as_path(), unit.size()))
+    }
+
+    /// Why the archive can't be extracted in place, if it can't. It can
+    /// still be extracted while it is kept.
+    pub fn in_place_refusal(&self) -> Option<String> {
+        self.format.refuses_in_place()
     }
 
     pub fn item_count(&self) -> usize {
@@ -571,9 +604,41 @@ impl Job {
     /// Reads every unit and lets the decoders check their checksums,
     /// writing nothing.
     pub fn verify(&self, on_bytes: &(dyn Fn(u64) + Sync)) -> Result<()> {
-        let threads = threads_per_unit(self.units.len());
-        let failures: Vec<String> = self
+        let failures = if self.format.serial() {
+            self.verify_serial(on_bytes)?
+        } else {
+            self.verify_parallel(on_bytes)
+        };
+        if failures.is_empty() {
+            return Ok(());
+        }
+        let mut msg = format!("{} damaged:", failures.len());
+        for f in failures.iter().take(10) {
+            msg.push_str("\n  ");
+            msg.push_str(f);
+        }
+        Err(anyhow!(msg))
+    }
+
+    /// One worker walks every unit from the lowest up.
+    fn verify_serial(&self, on_bytes: &(dyn Fn(u64) + Sync)) -> Result<Vec<String>> {
+        let mut worker = self.format.worker(1)?;
+        let mut sink = VerifySink {
+            on_bytes,
+            buf: vec![0; BUF_SIZE],
+        };
+        Ok(self
             .units
+            .iter()
+            .rev()
+            .filter_map(|u| worker.extract(u, &mut sink).err())
+            .map(|e| format!("{e:#}"))
+            .collect())
+    }
+
+    fn verify_parallel(&self, on_bytes: &(dyn Fn(u64) + Sync)) -> Vec<String> {
+        let threads = threads_per_unit(self.units.len());
+        self.units
             .par_iter()
             .map_init(
                 || {
@@ -594,16 +659,7 @@ impl Job {
                 },
             )
             .flatten()
-            .collect();
-        if failures.is_empty() {
-            return Ok(());
-        }
-        let mut msg = format!("{} damaged:", failures.len());
-        for f in failures.iter().take(10) {
-            msg.push_str("\n  ");
-            msg.push_str(f);
-        }
-        Err(anyhow!(msg))
+            .collect()
     }
 }
 
@@ -1303,8 +1359,31 @@ impl Run<'_> {
     /// Returns `None` if a stop request interrupted the batch. Nothing in the
     /// archive has been touched at that point, so the batch simply reruns.
     fn extract_batch(&self, batch: &[Unit], out: &Path) -> Result<Option<Vec<Link>>> {
-        let threads = threads_per_unit(batch.len());
         let on_bytes = &*self.progress.on_bytes;
+        if self.job.format.serial() {
+            let mut sink = DiskSink {
+                out,
+                stop: self.stop,
+                on_bytes,
+                buf: vec![0; BUF_SIZE],
+                links: Vec::new(),
+            };
+            let mut worker = self
+                .job
+                .format
+                .worker(1)
+                .map_err(|e| anyhow!("opening the archive: {e:#}"))?;
+            // Lowest first, so the worker reads the archive front to back.
+            for unit in batch.iter().rev() {
+                match worker.extract(unit, &mut sink) {
+                    Ok(()) => {}
+                    Err(e) if is_interrupt(&e) => return Ok(None),
+                    Err(e) => return Err(e),
+                }
+            }
+            return Ok(Some(sink.links));
+        }
+        let threads = threads_per_unit(batch.len());
         let results: Vec<Result<Vec<Link>>> = batch
             .par_iter()
             .map_init(

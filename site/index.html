@@ -124,6 +124,7 @@
 <h2 id="features">What it does</h2>
 <ul>
 <li>Extracts ZIP (including ZIP64 and self-extracting <code>.exe</code> files), 7z, plain tar, <code>.tar.gz</code> and <code>.tgz</code>, and split archives (<code>.001</code>, <code>.002</code>, ...) of ZIP or 7z.</li>
+<li>Extracts RAR 5 and RAR 4, single files and volume sets (<code>.part1.rar</code>, ... or <code>.rar</code>, <code>.r00</code>, ...), freeing the archive file by file and deleting each volume once it is empty. A solid RAR can only be extracted while keeping the archive. RAR support is in the downloads from this site and the releases page, not in <code>cargo install hatchzip</code>.</li>
 <li>A <code>.tar.gz</code> is read once from start to end before anything changes, so a damaged one is refused untouched. It then gives its space back as it extracts on NTFS (Windows), APFS (macOS), ext4, XFS, btrfs and other filesystems that can free part of a file. On FAT32 and exFAT it still extracts and resumes, but needs room for the archive and the files at once.</li>
 <li>Checks that the extraction will fit before it changes anything.</li>
 <li>Can also extract normally and keep the archive, when there is room for both: <code>--keep-archive</code>, an option in the app, or Extract here (keep archive) in the right-click menu. If keeping it does not fit, it says how much extracting in place needs instead.</li>
@@ -132,7 +133,7 @@
 <li>Can be stopped with Ctrl+C, or crash, at any moment. Run the same command again and it picks up where it left off.</li>
 <li>Checks each file's CRC-32 as it extracts. A damaged file stops the run, and it stays in the archive.</li>
 <li>Never overwrites a file that is already there, so "extract here" is safe.</li>
-<li>Opens password-protected ZIP and 7z archives. It checks the password on one file before anything is deleted, and never saves it.</li>
+<li>Opens password-protected ZIP, 7z and RAR archives. It checks the password before anything is deleted, and never saves it.</li>
 <li>Works on any filesystem that can shrink a file: ext4, btrfs, XFS, NTFS, APFS, and exFAT and FAT32 USB drives.</li>
 </ul>
 </section>
@@ -160,14 +161,15 @@
 <h2 id="limits">Limits</h2>
 <ul>
 <li>A 7z made with 7-Zip's default settings can be one solid block. HatchZip can only free it once all of it is out, so it needs free space for the whole block. <code>hatchzip check</code> tells you before anything changes.</li>
-<li><code>.tar.zst</code>, <code>.tar.xz</code> and RAR are not supported yet. They are refused before extraction.</li>
+<li><code>.tar.zst</code> and <code>.tar.xz</code> are not supported yet. They are refused before extraction.</li>
+<li>A solid RAR decodes front to back in one pass, so it can't be freed as it goes; it is extracted only while keeping the archive. RAR archives with encrypted file names or links are refused before extraction.</li>
 <li>The archive is used up as it extracts. If the download itself is damaged, the files before the damage come out and the archive is partly gone. Use <code>--verify-first</code> when you can't download it again.</li>
 </ul>
 </section>
 </main>
 
 <footer>
-<p>HatchZip is licensed under <a href="https://github.com/xevrion/hatchzip/blob/main/LICENSE-MIT">MIT</a> OR <a href="https://github.com/xevrion/hatchzip/blob/main/LICENSE-APACHE">Apache-2.0</a>. <a href="https://github.com/xevrion/hatchzip">Source on GitHub</a>. <a href="https://github.com/xevrion/hatchzip/issues">Report a bug</a>.</p>
+<p>HatchZip is licensed under <a href="https://github.com/xevrion/hatchzip/blob/main/LICENSE-MIT">MIT</a> OR <a href="https://github.com/xevrion/hatchzip/blob/main/LICENSE-APACHE">Apache-2.0</a>. The downloads decode RAR with UnRAR, under its own <a href="https://github.com/xevrion/hatchzip/blob/main/LICENSE-UNRAR">license</a>. <a href="https://github.com/xevrion/hatchzip">Source on GitHub</a>. <a href="https://github.com/xevrion/hatchzip/issues">Report a bug</a>.</p>
 <p>Made by Yash Bavadiya (<a href="https://x.com/xevrion_the1">@xevrion_the1</a>).</p>
 <p>HatchZip is only distributed from <a href="https://github.com/xevrion/hatchzip/releases">github.com/xevrion/hatchzip</a> and this site. Other sites using the name, such as hatchzip.com, are not affiliated with this project.</p>
 </footer>

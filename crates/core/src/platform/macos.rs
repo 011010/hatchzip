@@ -67,3 +67,26 @@ pub fn punch_hole(file: &File, offset: u64, len: u64) -> io::Result<bool> {
 pub fn punch_granule(_dir: &Path) -> u64 {
     64 << 10
 }
+
+/// An archive path as UnRAR's C interface takes it: a wide string here.
+#[cfg(feature = "rar")]
+pub struct RarName(Vec<unrar_ng_sys::WCHAR>);
+
+#[cfg(feature = "rar")]
+impl RarName {
+    pub fn new(path: &Path) -> io::Result<Self> {
+        // macOS paths are UTF-8, so nothing is lost here.
+        let text = path.to_string_lossy();
+        if text.contains('\0') {
+            return Err(io::ErrorKind::InvalidInput.into());
+        }
+        let mut wide: Vec<unrar_ng_sys::WCHAR> =
+            text.chars().map(|c| c as unrar_ng_sys::WCHAR).collect();
+        wide.push(0);
+        Ok(Self(wide))
+    }
+
+    pub fn open_data(&self, mode: std::ffi::c_uint) -> unrar_ng_sys::OpenArchiveDataEx {
+        unrar_ng_sys::OpenArchiveDataEx::new(self.0.as_ptr(), mode)
+    }
+}

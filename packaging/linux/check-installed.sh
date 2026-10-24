@@ -28,6 +28,9 @@ for f in \
 done
 [ -s /usr/share/zsh/vendor-completions/_hatchzip ] || [ -s /usr/share/zsh/site-functions/_hatchzip ] ||
     fail "no zsh completion"
+# UnRAR's license has to travel with the code compiled from it.
+[ -s /usr/share/doc/hatchzip/LICENSE-UNRAR ] || [ -s /usr/share/licenses/hatchzip/LICENSE-UNRAR ] ||
+    fail "LICENSE-UNRAR is missing"
 
 gzip -t /usr/share/man/man1/hatchzip.1.gz
 gzip -dc /usr/share/man/man1/hatchzip.1.gz | grep -q '^\.TH' || fail "hatchzip.1.gz is not a man page"

@@ -24,8 +24,8 @@ description: |-
   HatchZip extracts an archive from the end and cuts each finished part off
   the archive file as it goes, so it needs free space only for the files
   inside, not for the files and the archive. It checks that the extraction
-  fits before changing anything and resumes after a crash. ZIP, 7z, tar and
-  split archives. Includes the hatchzip command (also as hz) and the
+  fits before changing anything and resumes after a crash. ZIP, 7z, tar,
+  tar.gz, RAR and split archives. Includes the hatchzip command (also as hz) and the
   HatchZip desktop app.
 vendor: HatchZip
 homepage: https://github.com/xevrion/hatchzip
@@ -104,8 +104,16 @@ contents:
   - src: LICENSE-APACHE
     dst: /usr/share/licenses/hatchzip/LICENSE-APACHE
     packager: rpm
+  # The UnRAR source compiled into both programs is under its own license,
+  # which has to travel with them.
+  - src: LICENSE-UNRAR
+    dst: /usr/share/licenses/hatchzip/LICENSE-UNRAR
+    packager: rpm
   - src: packaging/linux/copyright
     dst: /usr/share/doc/hatchzip/copyright
+    packager: deb
+  - src: LICENSE-UNRAR
+    dst: /usr/share/doc/hatchzip/LICENSE-UNRAR
     packager: deb
 
 # No install scripts: dpkg and rpm run the icon cache, desktop database and
@@ -124,6 +132,8 @@ overrides:
     depends:
       - libc6 (>= 2.35)
       - libgcc-s1
+      # UnRAR, the RAR decoder, is C++.
+      - libstdc++6
       - libfontconfig1
     recommends:
       - libxkbcommon0
@@ -142,6 +152,7 @@ overrides:
     depends:
       - libc.so.6(GLIBC_2.35)(64bit)
       - libgcc_s.so.1()(64bit)
+      - libstdc++.so.6()(64bit)
       - libfontconfig.so.1()(64bit)
     recommends:
       - libxkbcommon.so.0()(64bit)

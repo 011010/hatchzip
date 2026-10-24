@@ -25,7 +25,7 @@
 
 A 180 GB game download that unpacks to 200 GB needs 380 GB of disk with WinRAR, 7-Zip or `unzip`, because the archive and everything extracted from it have to exist at the same time. HatchZip needs a little over 200 GB. It extracts the archive from the end and cuts each finished part off the archive file as it goes, so the space the archive gives back is reused for the next files.
 
-It checks that the extraction will fit before it changes anything, keeps a safety margin of free space the whole way through, and can be stopped or crash at any moment and pick up where it left off. It reads ZIP, 7z, tar, `.tar.gz` and split archives.
+It checks that the extraction will fit before it changes anything, keeps a safety margin of free space the whole way through, and can be stopped or crash at any moment and pick up where it left off. It reads ZIP, 7z, tar, `.tar.gz`, RAR volume sets and split archives.
 
 ### Get it
 
@@ -121,7 +121,7 @@ Coming soon: these packages are prepared in [`packaging/`](packaging/README.md#p
 cargo install hatchzip
 ```
 
-This builds the command line tool from [crates.io](https://crates.io/crates/hatchzip). The engine is a library too: [`hatchzip-core`](https://crates.io/crates/hatchzip-core).
+This builds the command line tool from [crates.io](https://crates.io/crates/hatchzip). The engine is a library too: [`hatchzip-core`](https://crates.io/crates/hatchzip-core). It reads every format but RAR; `cargo install hatchzip --features rar` adds RAR support, which compiles UnRAR's C++ source under its own [license](#license) and needs a C++ compiler.
 
 ### From source
 
@@ -133,7 +133,7 @@ cd hatchzip
 cargo build --release
 ```
 
-The binaries are `target/release/hatchzip` and `target/release/hatchzip-gui` (`.exe` on Windows). Building the desktop app on Linux needs the fontconfig headers (`libfontconfig1-dev` or `fontconfig-devel`).
+The binaries are `target/release/hatchzip` and `target/release/hatchzip-gui` (`.exe` on Windows). Building the desktop app on Linux needs the fontconfig headers (`libfontconfig1-dev` or `fontconfig-devel`). `cargo build --release --features rar` adds RAR support, as in the release builds; it needs a C++ compiler.
 
 ### Shell completions and man page
 
@@ -268,11 +268,13 @@ What it cannot protect against: if the download itself is damaged, the files bef
 | Password-protected ZIP (ZipCrypto and AES) and 7z (AES, including encrypted file lists) | Supported. HatchZip asks for the password, or takes `--password` or `HATCHZIP_PASSWORD`, and proves it on one file before anything is deleted. It is never saved, so a resumed run asks again. | Same as unencrypted |
 | `.tar.zst`, `.tar.xz` | Refused before extraction, planned; see [the format notes](docs/formats.md#tarzst-and-tarxz). | |
 | One huge solid 7z block | Works, but needs free space for the whole block, as the table above shows. Freeing space inside a block is the same planned technique. | |
-| RAR, native split ZIP (`.z01`) | Planned | |
+| RAR, RAR 5 and RAR 4, single files and volume sets (`.part1.rar`, `.part2.rar`, ... or `.rar`, `.r00`, ...) | Supported in the release builds, decoded by UnRAR (see [License](#license)); builds without the `rar` feature, such as `cargo install hatchzip`, refuse RAR before anything is touched. Password-protected files work as for ZIP: a RAR 5 password is proven by its check value, a RAR 4 one by decoding the smallest encrypted file, which for a large file can take a while. A large stored file is freed while it is written, as in tar. Refused before anything is touched: encrypted file names, links, dictionaries over 4 GB, and sets with a volume missing or a stray one after the last. `restore` works. Tested with archives made by RAR 6.24 (RAR 5 and RAR 4) and archives written by the test suite; sets made by WinRAR 7.23 were tested on Windows when RAR support was first written. | One file; a volume once every file that reaches into it is out |
+| Solid RAR | Extracted only while the archive is kept (`--keep-archive`): a solid archive decodes front to back in one pass and UnRAR can't save its state, so it can't be freed as it goes or resumed mid-way. In place, it is refused before anything is touched. | |
+| Native split ZIP (`.z01`) | Planned | |
 
 ## How it works
 
-ZIP, 7z and tar all store their contents as a sequence of independent pieces: files for ZIP and tar, solid blocks for 7z. ZIP and 7z keep their index at the very end. HatchZip saves that index to a side file, then extracts pieces starting from the last one in the archive. After each batch it truncates the archive to where that batch began, which every operating system and filesystem supports; for a split archive, that means deleting whole volumes and shortening one. A `.tar.gz` is one compressed stream that can only be decoded from the front, so HatchZip extracts it front to back and punches holes in the compressed bytes it has used, at resume points it can restart from after a crash. The full design, including the exact order of writes that makes a crash safe, is in [How it works](docs/how-it-works.md).
+ZIP, 7z and tar all store their contents as a sequence of independent pieces: files for ZIP and tar, solid blocks for 7z. ZIP and 7z keep their index at the very end. HatchZip saves that index to a side file, then extracts pieces starting from the last one in the archive. After each batch it truncates the archive to where that batch began, which every operating system and filesystem supports; for a split archive, that means deleting whole volumes and shortening one. RAR stores files one after another like tar, so it is freed file by file too, and a volume is deleted once every file reaching into it is out. A `.tar.gz` is one compressed stream that can only be decoded from the front, so HatchZip extracts it front to back and punches holes in the compressed bytes it has used, at resume points it can restart from after a crash. The full design, including the exact order of writes that makes a crash safe, is in [How it works](docs/how-it-works.md).
 
 ## How it is built
 
@@ -299,6 +301,8 @@ Pull requests and bug reports from people are held to the same rules, and are ve
 ## License
 
 HatchZip is licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT), at your option.
+
+RAR archives are decoded by the UnRAR source code, which is freeware under its own [license](LICENSE-UNRAR): free to use for extracting RAR archives, but not to build a RAR compatible archiver. It is compiled in only with the `rar` cargo feature, which is off by default, so `cargo install hatchzip`, the crates on crates.io and distribution builds are open source throughout and need no C++ compiler. The release builds on the [releases page](https://github.com/xevrion/hatchzip/releases) have it on, and every release download includes `LICENSE-UNRAR`.
 
 ## Contributing
 

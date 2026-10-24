@@ -9,6 +9,10 @@ repository.workspace = true
 homepage.workspace = true
 publish = false
 
+[features]
+# Puts the menu on RAR archives too. Only for builds that can extract them.
+rar = []
+
 [dependencies]
 anyhow.workspace = true
 

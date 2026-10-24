@@ -49,13 +49,14 @@
 				<string>public.zip-archive</string>
 				<string>org.7-zip.7-zip-archive</string>
 				<string>public.tar-archive</string>
+				<string>com.rarlab.rar-archive</string>
 			</array>
 		</dict>
 	</array>
 
-	<!-- macOS knows zip and tar, but not every version knows 7z. Imported,
-	     not exported: the type belongs to 7-Zip, and an app that declares it
-	     too just agrees on the name. -->
+	<!-- macOS knows zip and tar, but not every version knows 7z or RAR.
+	     Imported, not exported: the types belong to 7-Zip and RARLAB, and an
+	     app that declares them too just agrees on the names. -->
 	<key>UTImportedTypeDeclarations</key>
 	<array>
 		<dict>
@@ -77,6 +78,31 @@
 				<key>public.mime-type</key>
 				<array>
 					<string>application/x-7z-compressed</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.rarlab.rar-archive</string>
+			<key>UTTypeDescription</key>
+			<string>RAR archive</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+				<string>public.archive</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>rar</string>
+					<string>r00</string>
+				</array>
+				<key>public.mime-type</key>
+				<array>
+					<string>application/vnd.rar</string>
+					<string>application/x-rar</string>
+					<string>application/x-rar-compressed</string>
 				</array>
 			</dict>
 		</dict>

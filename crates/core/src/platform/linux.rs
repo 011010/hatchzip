@@ -67,3 +67,21 @@ pub fn punch_granule(dir: &Path) -> u64 {
         _ => (st.f_bsize as u64).max(64 << 10),
     }
 }
+
+/// An archive path as UnRAR's C interface takes it: a narrow string here.
+#[cfg(feature = "rar")]
+pub struct RarName(std::ffi::CString);
+
+#[cfg(feature = "rar")]
+impl RarName {
+    pub fn new(path: &Path) -> io::Result<Self> {
+        use std::os::unix::ffi::OsStrExt;
+        std::ffi::CString::new(path.as_os_str().as_bytes())
+            .map(Self)
+            .map_err(|_| io::ErrorKind::InvalidInput.into())
+    }
+
+    pub fn open_data(&self, mode: std::ffi::c_uint) -> unrar_ng_sys::OpenArchiveDataEx {
+        unrar_ng_sys::OpenArchiveDataEx::new(self.0.as_ptr(), mode)
+    }
+}

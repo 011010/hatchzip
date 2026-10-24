@@ -14,7 +14,11 @@ pub const EXIT_PAUSED: u8 = 130;
 
 const ABOUT: &str = "Extract large archives in place, removing the archive progressively.";
 
-const LONG_ABOUT: &str = "\
+/// The long help, ending with the formats this build reads.
+macro_rules! long_about {
+    ($formats:literal) => {
+        concat!(
+            "\
 Extract large archives in place, removing the archive progressively.
 
 HatchZip extracts an archive from its end and truncates each completed part from \
@@ -27,8 +31,24 @@ With --keep-archive, HatchZip extracts like any other tool and leaves the archiv
 unchanged; free space is then required for all extracted files.
 
 Supported: ZIP (including ZIP64 and self-extracting .exe), 7z, uncompressed tar, \
-gzip-compressed tar (.tar.gz, .tgz), and split archives (.001, .002, ...) of any \
-of those.";
+gzip-compressed tar (.tar.gz, .tgz), split archives (.001, .002, ...) of any of \
+those",
+            $formats
+        )
+    };
+}
+
+#[cfg(feature = "rar")]
+const LONG_ABOUT: &str = long_about!(
+    ", and RAR, single files and volume sets (.part1.rar, .part2.rar, ... or .rar, \
+     .r00, ...). A solid RAR archive is extracted only with --keep-archive."
+);
+
+#[cfg(not(feature = "rar"))]
+const LONG_ABOUT: &str = long_about!(
+    ". This build does not include RAR support; the release builds from hatchzip.dev \
+     and github.com/xevrion/hatchzip/releases do."
+);
 
 const AFTER_LONG_HELP: &str = "\
 Examples:

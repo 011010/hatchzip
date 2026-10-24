@@ -266,6 +266,12 @@ fn extract(
             (job, journal)
         }
         State::Fresh(job, out) => {
+            if !keep_archive && let Some(why) = job.in_place_refusal() {
+                anyhow::bail!(
+                    "{why}. Turn off \"Remove the archive during extraction\" to extract it and \
+                     keep the archive"
+                );
+            }
             let plan = session::plan(&job, &out, false, keep_free, keep_archive)?;
             if !plan.fits {
                 send(Update::NoSpace(plan));

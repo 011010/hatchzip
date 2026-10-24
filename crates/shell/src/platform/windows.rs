@@ -10,7 +10,7 @@ use anyhow::{Context, Result};
 use winreg::RegKey;
 use winreg::enums::HKEY_CURRENT_USER;
 
-use crate::{ACTIONS, Dirs, EXTENSIONS};
+use crate::{ACTIONS, ALL_EXTENSIONS, Dirs, EXTENSIONS};
 
 const BASE: &str = r"Software\Classes\SystemFileAssociations";
 
@@ -55,7 +55,7 @@ pub fn register(_dirs: &Dirs, gui: &Path) -> Result<Vec<String>> {
 
 pub fn unregister(_dirs: &Dirs) -> Result<()> {
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    for ext in EXTENSIONS {
+    for ext in ALL_EXTENSIONS {
         match hkcu.delete_subkey_all(menu_key(ext)) {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
                 return Err(e).with_context(|| format!("removing HKCU\\{}", menu_key(ext)));

@@ -41,14 +41,19 @@ jobs:
       # run time.
       - run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev
       - run: cargo fmt --all --check
-      - run: cargo clippy --all-targets --locked -- -D warnings
+      # With and without RAR support, which compiles different code.
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo clippy --workspace --all-targets --locked --features rar -- -D warnings
 
   # Truncation, free space checks and file renames all behave differently per
   # OS and filesystem, so the tests run on all three. It waits for the quick
   # check: on a private repo macOS minutes bill at ten times the Linux rate,
   # and a formatting slip shouldn't pay for them.
+  #
+  # With RAR support on every system, as the releases are built, and on
+  # Linux without it too, as `cargo install` and distributions build it.
   test:
-    name: test (${{ matrix.os }})
+    name: test (${{ matrix.os }}, ${{ matrix.features || 'no rar' }})
     needs: check
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
@@ -57,6 +62,10 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-24.04, macos-15, windows-2025]
+        features: [rar]
+        include:
+          - os: ubuntu-24.04
+            features: ''
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -70,9 +79,11 @@ jobs:
       # its symptoms in one run instead of one per push.
       # The runners' disks (ext4, APFS, NTFS) all free punched space, so the
       # punch test must see it happen rather than skip.
-      - run: cargo test --locked --no-fail-fast
+      - run: cargo test --workspace --locked --no-fail-fast --features "$FEATURES"
+        shell: bash
         env:
           HATCHZIP_EXPECT_PUNCH: '1'
+          FEATURES: ${{ matrix.features }}
 
   # The one check branch protection requires, so adding or renaming a job
   # above never means editing the protection rules. This passes when

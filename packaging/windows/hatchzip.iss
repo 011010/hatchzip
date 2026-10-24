@@ -69,6 +69,8 @@ Root: HKCU; Subkey: "Software\Classes\.tar\OpenWithProgids"; ValueType: string; 
 Root: HKCU; Subkey: "Software\Classes\.tgz\OpenWithProgids"; ValueType: string; ValueName: "HatchZip.Archive"; ValueData: ""; Flags: uninsdeletevalue
 Root: HKCU; Subkey: "Software\Classes\.gz\OpenWithProgids"; ValueType: string; ValueName: "HatchZip.Archive"; ValueData: ""; Flags: uninsdeletevalue
 Root: HKCU; Subkey: "Software\Classes\.001\OpenWithProgids"; ValueType: string; ValueName: "HatchZip.Archive"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\.rar\OpenWithProgids"; ValueType: string; ValueName: "HatchZip.Archive"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\.r00\OpenWithProgids"; ValueType: string; ValueName: "HatchZip.Archive"; ValueData: ""; Flags: uninsdeletevalue
 
 [Run]
 ; The right-click menu lives in the user's registry hive and is written by

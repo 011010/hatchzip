@@ -36,6 +36,11 @@ slint = { version = "~1.18.1", default-features = false, features = [
     "unstable-winit-030",
 ] }
 
+[features]
+# RAR archives, through UnRAR's C++ source and its own license; see
+# hatchzip-core. Off by default, on in the release builds.
+rar = ["hatchzip-core/rar", "hatchzip-shell/rar"]
+
 [build-dependencies]
 slint-build = "~1.18.1"
 # Only used when the target is Windows; see build.rs.

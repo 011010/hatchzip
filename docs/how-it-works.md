@@ -20,6 +20,7 @@ So HatchZip works from the end. Each format describes its archive as a list of *
 | 7z | One solid block, or one file in a non-solid archive | A 32-byte signature header, the packed blocks in order, then the header (the index) at the end. |
 | tar | One entry, including any long-name or pax records before it | Header and data records in order, then zero blocks. There is no index. |
 | `.tar.gz` | The whole archive, extracted from the front instead; see [Compressed tar](#compressed-tar) | One compressed stream holding a tar |
+| RAR | One file, from its first header; a solid archive is one unit, extracted only while it is kept; see [RAR](#rar) | Headers and data in order, in one file or over volumes that are complete RAR files, a file split over several of them. There is no index. |
 
 Units are extracted in reverse order of their position in the file. After each batch the archive is truncated to where the lowest unit of the batch begins.
 
@@ -47,7 +48,7 @@ From then on the archive is parsed through `storage::Reader`, which serves the l
 
 | Field | Meaning |
 |---|---|
-| `format` | `zip`, `7z`, `tar` or `tar.gz`, so a resume never has to guess from a half-eaten file |
+| `format` | `zip`, `7z`, `tar`, `tar.gz` or `rar`, so a resume never has to guess from a half-eaten file |
 | `parts` | Every volume with its original length |
 | `tail_start`, `tail_crc` | Where the saved tail belongs, and its checksum |
 | `output` | The output folder, so a resume can't be pointed elsewhere |
@@ -130,6 +131,30 @@ pax global headers, which `git archive` writes at the start of every tarball, ar
 
 `crates/cli/tests/targz.rs` kills the process at each of the three steps of a point at several points, repeatedly within one run, around the final commit, in multi-member and split archives and in archives from GNU tar, gzip and pigz, and checks after each crash that nothing past the journaled point was touched and, where `HATCHZIP_EXPECT_PUNCH` is set, that the space before it was given back. Unit tests in `resumable.rs` resume a multi-member gzip stream from every point it reports and decode it with input buffers down to one byte.
 
+## RAR
+
+RAR support is the `rar` cargo feature, on in the release builds and off by default; see [the format notes](formats.md#dependency-licenses). A build without it refuses a RAR archive before anything is touched.
+
+A RAR archive that is not solid stores its files one after another, each header followed by the file's data, like tar. A volume set (`game.part1.rar`, `game.part2.rar`, ... or `game.rar`, `game.r00`, ...) is not one archive cut into byte ranges, as a `.7z.001` set is: each volume is a complete RAR file with its own headers, and a file that doesn't fit is split over consecutive volumes, its header repeated in each piece. `Storage` joins the volumes as it does any split set, and every file is a unit that starts at its first header. So the archive is truncated behind each committed batch exactly as tar is, and a volume is deleted once the truncation point falls before it. A split file belongs to the volume it starts in, so the volumes holding its later pieces stay until all of it is committed. What is left is always a prefix of the set whose headers are untouched, and the last volume left simply ends after a file, without its end of archive header, which UnRAR reads like any other.
+
+`archive/rar.rs` reads the headers of every volume itself (RAR 5 and RAR 4, with their checksums) before anything is touched, as tar does. Nothing needs to be saved first: there is no central index and every volume carries its own headers, so the saved tail is empty. A resumed run reads the headers of what is left, up to where the last commit cut it, and finds exactly the units still to do. Before the first run starts, UnRAR lists the set too and every file's name is compared with the one read here, since extraction finds each file by the name UnRAR reports; a name UnRAR reads differently is refused then, not halfway through. Names are read in full, past the 1023 characters of UnRAR's fixed buffer, and a `\` in a RAR 5 name, where it is part of the name rather than a separator, is written as `_` on every system, as WinRAR does on Windows.
+
+UnRAR is driven through its C interface and does the decoding only. It finds a file only by reading every header before it, so a batch of RAR units is decoded on one thread, lowest file first, by one archive handle that walks forward from the volume the lowest file starts in (the format says so with `Format::serial`). A helper thread runs UnRAR and pushes each file's data through a bounded channel to the reader the engine's sinks take. Only one archive handle is open at a time, since UnRAR keeps state in globals and is not documented as safe to use from several threads at once, and the handle is closed before the batch commits, so nothing holds a volume open while it is truncated or deleted.
+
+A stored file that lies whole in one volume is plain bytes at a known offset, so it is streamed like a tar entry ([above](#freeing-space-inside-a-large-file)), with its CRC-32 checked. Inside a compressed file there is no resume point: UnRAR can't save its decoder's state.
+
+A solid archive compresses every file together with the ones before it, so it decodes only front to back in one pass. It could only be freed once all of it is out, and since UnRAR can't save its state, a crash would have to start over with part of the archive possibly gone. So it is not extracted in place: it is one unit holding every file, extracted only while the archive is kept (`--keep-archive`), and refused in place before anything is touched, with a message that says so.
+
+Passwords are proven before anything is touched, as for ZIP. A RAR 5 file carries a 64-bit check value derived from its password with PBKDF2-HMAC-SHA256; HatchZip derives it from the given password and compares, for every distinct salt in the archive, without decoding anything. RAR 4 has no check value: a wrong password only shows in the CRC-32 at the end of a file, so the smallest encrypted file with data is decoded whole into nothing, and the command line says so when that file is 64 MiB or more.
+
+Refused before anything is touched: encrypted file names (`-hp`), symbolic links, hard links and file copies, dictionaries over 4 GB (UnRAR refuses them by default, and decoding one needs that much memory), compression versions UnRAR doesn't know, a set with a volume missing or out of order, a stray volume after the last one (the last says no more follow), and any header that fails its checksum, as damage (exit 4).
+
+`restore` appends an end of archive header, saying no volume follows, to the last volume left, in that volume's format; everything before it is untouched files with their headers.
+
+Measured on a 192 MiB tmpfs holding a 146.5 MB RAR 5 set made by RAR 6.24 (`-m3 -v40m`, four volumes) from 190.2 MB in 512 files (seven 20 MB random files, five 10 MB text files, 500 small JSON files), with 54.8 MB free: UnRAR 6.24 stopped with a write error (exit 5). `hatchzip check` asked for 45.6 MB plus the 5 MB kept free, where freeing a whole volume at a time asked for 129.4 MB; during the extraction the lowest free space, sampled every 10 ms, was 5.3 MB, a peak of 49.5 MB. It finished in 0.61 s with 9.3 MB free, as the check said, and every file's SHA-256 matched. The same files as one 146.4 MB `.rar` on the same disk: the check asked for 45.7 MB, where a single volume freed as a whole asked for 192.1 MB; the peak was 43.8 MB, in 0.45 s, every file matching.
+
+`crates/cli/tests/rar.rs` extracts sets made by RAR 6.24 (RAR 5 and RAR 4, with passwords, solid, and with quick open data, a recovery record and a comment) and archives written by the test itself (stored RAR 5 and RAR 4, single files and sets, hostile names, files over many volumes, an 8 MB stored file). It kills the process at both crash points after every number of commits a run makes, for RAR 5 and RAR 4, single files and sets; checks after each commit that what is on disk is exactly what the journal says is left and that it shrank; kills a streamed stored file at each step of a resume point and checks its space was given back; and checks that solid archives, wrong and missing passwords, hostile names, missing and stray volumes and damaged headers are refused with every volume intact. `crates/cli/tests/no_rar.rs` checks the refusal of a build without the feature.
+
 ## Crash safety
 
 Each step can be interrupted. The order above makes every interruption recoverable:
@@ -167,6 +192,7 @@ The interruption table above holds with one row fewer: a crash after the journal
 | ZIP | A central directory holding the saved records of the entries left, copied as they are (their local header offsets still point at the same bytes), then the end records, with ZIP64 records when the original had them or the counts or offsets need them. A self-extractor stub stays in front, and the offsets keep whatever convention the original used. |
 | 7z | A new header for the blocks left, which are the first ones, right after the signature header, and their files. It is encoded by sevenz-rust2's writer, which is handed each block raw and writes nothing for it, since the block already sits where the writer would put it. The signature header is rewritten to point at the new header. |
 | tar | Entries for hard links already cut off whose targets are still in the archive, then the two zero blocks that end a tar archive. |
+| RAR | An end of archive header in the last volume left, in its format (RAR 5 or RAR 4), saying no volume follows. |
 
 The steps, in order:
 
@@ -203,7 +229,8 @@ These are refused while the archive is still untouched:
 - tar entry types HatchZip can't create safely: device files, FIFOs, sparse files.
 - 7z anti-items (deletions recorded by archive updates).
 - In a `.tar.gz`: damage anywhere in the stream, a gzip member whose CRC-32 or length doesn't match, data after the end of the tar or after the gzip stream other than zeros (it would be lost with the archive), and header records over 1 MiB.
-- Gzip files that don't hold a tar, compressed tar other than gzip (`.tar.zst`, `.tar.xz`, `.tar.bz2`), and RAR.
+- Gzip files that don't hold a tar and compressed tar other than gzip (`.tar.zst`, `.tar.xz`, `.tar.bz2`).
+- In RAR: solid archives (unless the archive is kept), encrypted file names, links, dictionaries over 4 GB, a volume missing or a stray one after the last, names UnRAR reads differently, a wrong password, and headers that fail their checksum (see [RAR](#rar)). Without the `rar` feature, every RAR archive.
 - A non-empty output folder, so that a resume can safely delete anything it finds for uncommitted units.
 
 ## Operating systems

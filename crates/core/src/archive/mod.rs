@@ -2,6 +2,8 @@
 //! units, byte ranges that can be truncated away once every file in them is
 //! safely on disk, and a way to decode one unit.
 
+#[cfg(feature = "rar")]
+mod rar;
 pub mod resumable;
 mod sevenz;
 pub mod storage;
@@ -89,6 +91,37 @@ impl std::fmt::Display for Damaged {
 
 impl std::error::Error for Damaged {}
 
+/// The format name of RAR archives in the journal.
+pub const RAR: &str = "rar";
+
+/// Whether this build extracts RAR archives. Builds without UnRAR refuse
+/// them before anything is touched.
+pub const RAR_SUPPORTED: bool = cfg!(feature = "rar");
+
+/// Why a build without UnRAR refuses a RAR archive.
+pub fn no_rar() -> anyhow::Error {
+    anyhow::anyhow!(
+        "this build of HatchZip does not include RAR support, and the archive was not \
+         modified. Download the release build from hatchzip.dev or \
+         github.com/xevrion/hatchzip/releases"
+    )
+}
+
+/// How the password of an encrypted archive is proven before anything is
+/// touched.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PasswordCheck {
+    /// Decode the start of the smallest encrypted unit: a wrong password
+    /// fails at once, or within the first blocks.
+    Sample,
+    /// The headers hold a check value for the password, so
+    /// [`Format::prove_password`] answers without decoding anything.
+    Headers,
+    /// Only the checksum at the end of a file can tell, so the smallest
+    /// encrypted unit is decoded whole, writing nothing.
+    WholeUnit,
+}
+
 impl Unit {
     pub fn size(&self) -> u64 {
         self.items.iter().map(|i| i.size).sum()
@@ -112,6 +145,30 @@ pub trait Format: Send + Sync {
     /// the decoder are freed.
     fn solid(&self) -> Option<&Solid> {
         None
+    }
+
+    /// The decoder finds a unit only by reading everything before it, and
+    /// one handle can't be shared between threads. A batch is then decoded
+    /// on one thread by one worker, lowest unit first, so the worker can
+    /// walk forward instead of starting over for every unit.
+    fn serial(&self) -> bool {
+        false
+    }
+
+    /// Why the archive can't be extracted in place, if it can't: it can
+    /// still be extracted while it is kept.
+    fn refuses_in_place(&self) -> Option<String> {
+        None
+    }
+
+    fn password_check(&self) -> PasswordCheck {
+        PasswordCheck::Sample
+    }
+
+    /// Proves the password from the headers alone; only called when
+    /// [`password_check`](Self::password_check) says it can.
+    fn prove_password(&self) -> Result<()> {
+        Ok(())
     }
 }
 
@@ -169,6 +226,10 @@ pub fn open(
         "zip" => zip::open(storage, tail, password),
         "7z" => sevenz::open(storage, tail, password),
         "tar" => tar::open(storage, tail),
+        #[cfg(feature = "rar")]
+        RAR => rar::open(storage, tail.is_some(), password),
+        #[cfg(not(feature = "rar"))]
+        RAR => Err(no_rar()),
         targz::NAME => targz::open(storage, point),
         other => bail!("unknown archive format '{other}' in the journal"),
     }
@@ -201,6 +262,11 @@ pub fn rebuild_index(
             let (header, start) = sevenz::rebuild_header(storage, tail, keep)?;
             (header, vec![(0, start)])
         }
+        // No index: the last volume left only needs its end header back.
+        #[cfg(feature = "rar")]
+        RAR => (rar::closing(storage, keep)?, Vec::new()),
+        #[cfg(not(feature = "rar"))]
+        RAR => return Err(no_rar()),
         other => bail!("unknown archive format '{other}' in the journal"),
     };
     Ok(NewIndex { append, patches })
@@ -256,7 +322,7 @@ fn sniff(storage: &Storage) -> Result<&'static str> {
         );
     }
     if starts(b"Rar!\x1A\x07") {
-        bail!("RAR archives are not supported");
+        return Ok(RAR);
     }
     if ext.ends_with(".tar") || ext.contains(".tar.") {
         return Ok("tar");

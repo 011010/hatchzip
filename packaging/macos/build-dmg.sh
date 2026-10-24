@@ -34,6 +34,9 @@ cp "$gui" "$app/Contents/MacOS/hatchzip-gui"
 cp "$cli/hatchzip" "$app/Contents/MacOS/hatchzip"
 chmod 755 "$app/Contents/MacOS/hatchzip-gui" "$app/Contents/MacOS/hatchzip"
 cp "$cli/man/hatchzip.1" "$app/Contents/Resources/man/man1/hatchzip.1"
+# The licenses, UnRAR's included: its source is compiled into both programs
+# and its license has to travel with them.
+cp "$cli/LICENSE-MIT" "$cli/LICENSE-APACHE" "$cli/LICENSE-UNRAR" "$app/Contents/Resources/"
 cp assets/icon/hatchzip.icns "$app/Contents/Resources/HatchZip.icns"
 sed "s/@VERSION@/$version/g" packaging/macos/Info.plist > "$app/Contents/Info.plist"
 printf 'APPL????' > "$app/Contents/PkgInfo"

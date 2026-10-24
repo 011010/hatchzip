@@ -79,7 +79,7 @@ fn open(
     let reads = Arc::new(Reads::default());
     let mut reading = Some(Reading::show(&reads));
     let mut tries = 0;
-    let opened = session::open_encrypted(
+    let opened = session::open_encrypted_noting(
         &primary,
         &paths,
         output,
@@ -99,6 +99,17 @@ fn open(
                 return None;
             }
             rpassword::prompt_password("Password: ").ok()
+        },
+        |file, size| {
+            // Small files decode in a moment; say nothing then.
+            if size >= 64 << 20 && !QUIET.load(Ordering::Relaxed) {
+                eprintln!(
+                    "Checking the password by decoding '{}' ({}). This archive has no password \
+                     check value, so this may take a while.",
+                    file.display(),
+                    human(size)
+                );
+            }
         },
     );
     if let Some(r) = reading {
@@ -370,7 +381,10 @@ fn check(
 ) -> Result<u8> {
     let (state, _) = open(archive, output, false, secret)?;
     let fits = match state {
-        State::Fresh(job, out) => report(&job, &out, None, space.keep_free, keep)?,
+        State::Fresh(job, out) => {
+            in_place_possible(&job, keep)?;
+            report(&job, &out, None, space.keep_free, keep)?
+        }
         State::Resume(job, journal) => {
             let keep = session::keeps_archive(&journal, keep)?;
             report(&job, &journal.output, Some(&journal), space.keep_free, keep)?
@@ -381,6 +395,18 @@ fn check(
         }
     };
     Ok(if fits { 0 } else { EXIT_NO_SPACE })
+}
+
+/// Refuses, before anything is touched, an archive that can only be
+/// extracted while it is kept, such as a solid RAR, unless it is.
+fn in_place_possible(job: &Job, keep: bool) -> Result<()> {
+    match job.in_place_refusal() {
+        Some(why) if !keep => bail!(
+            "{why}. Run the command again with --keep-archive to extract it and keep the archive, \
+             or extract it with another program"
+        ),
+        _ => Ok(()),
+    }
 }
 
 fn list(archive: &Path, secret: Secret) -> Result<u8> {
@@ -620,6 +646,7 @@ fn extract(
             (job, journal)
         }
         State::Fresh(job, out) => {
+            in_place_possible(&job, opts.keep)?;
             if !report(&job, &out, None, keep_free, opts.keep)? {
                 return no_space;
             }
@@ -694,8 +721,11 @@ fn extract(
             if !opts.several {
                 eprintln!("Progress is saved. Run the same command to resume.");
             }
+            // A file whose password differs from the one proven at the
+            // start, possible in RAR 4, is still a password problem.
+            let wrong = e.chain().any(|c| c.is::<WrongPassword>());
             Ok(Ended::Stopped {
-                code: EXIT_FAILURE,
+                code: if wrong { EXIT_PASSWORD } else { EXIT_FAILURE },
                 saved: true,
             })
         }

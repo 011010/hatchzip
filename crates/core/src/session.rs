@@ -101,9 +101,35 @@ pub fn open_encrypted(
     paths: &Paths,
     output: Option<PathBuf>,
     writable: bool,
+    password: Option<String>,
+    reads: &Arc<Reads>,
+    ask: impl FnMut(bool) -> Option<String>,
+) -> Result<(State, Option<String>)> {
+    open_encrypted_noting(
+        primary,
+        paths,
+        output,
+        writable,
+        password,
+        reads,
+        ask,
+        |_, _| {},
+    )
+}
+
+/// [`open_encrypted`], calling `slow` with a file and its size before a
+/// password check that decodes all of it (see [`Job::slow_password_check`]),
+/// so a front end can say it may take a while.
+#[allow(clippy::too_many_arguments)]
+pub fn open_encrypted_noting(
+    primary: &Path,
+    paths: &Paths,
+    output: Option<PathBuf>,
+    writable: bool,
     mut password: Option<String>,
     reads: &Arc<Reads>,
     mut ask: impl FnMut(bool) -> Option<String>,
+    mut slow: impl FnMut(&Path, u64),
 ) -> Result<(State, Option<String>)> {
     let mut wrong = false;
     loop {
@@ -124,6 +150,11 @@ pub fn open_encrypted(
                 };
                 if !job.encrypted() {
                     return Ok((state, password));
+                }
+                if password.is_some()
+                    && let Some((file, size)) = job.slow_password_check()
+                {
+                    slow(file, size);
                 }
                 match job.check_password() {
                     Ok(()) => return Ok((state, password)),
@@ -188,7 +219,8 @@ fn check_collisions(job: &Job, out: &Path) -> Result<()> {
     Ok(())
 }
 
-/// `game.zip`, `game.7z.001` and `game.tar.gz` all extract into `game`, next
+/// `game.zip`, `game.7z.001`, `game.tar.gz` and `game.part1.rar` all extract
+/// into `game`, next
 /// to them.
 pub fn default_output(primary: &Path) -> PathBuf {
     let file_name = primary
@@ -204,7 +236,16 @@ pub fn default_output(primary: &Path) -> PathBuf {
         name = stem.to_string();
     }
     let lower = name.to_ascii_lowercase();
-    for ext in [".zip", ".7z", ".tar", ".tar.gz", ".tgz", ".exe"] {
+    // `game.part2.rar` and `game.part02.rar` are volumes of `game`.
+    if let Some(stem) = lower.strip_suffix(".rar")
+        && let Some((_, digits)) = stem.rsplit_once(".part")
+        && !digits.is_empty()
+        && digits.bytes().all(|b| b.is_ascii_digit())
+    {
+        name.truncate(stem.len() - digits.len() - ".part".len());
+        return primary.with_file_name(name);
+    }
+    for ext in [".zip", ".7z", ".tar", ".tar.gz", ".tgz", ".rar", ".exe"] {
         if lower.ends_with(ext) && name.len() > ext.len() {
             name.truncate(name.len() - ext.len());
             break;
@@ -351,6 +392,9 @@ pub fn plan(
 pub fn begin(job: &Job, paths: &Paths, output: PathBuf, keep_archive: bool) -> Result<Journal> {
     if keep_archive {
         job.storage.protect();
+    } else if let Some(why) = job.in_place_refusal() {
+        // Front ends say this earlier; this is the last line.
+        bail!("{why}. It can be extracted while keeping the archive");
     }
     let plan = Plan {
         format: job.format_name,
@@ -378,6 +422,18 @@ mod tests {
     use ::zip::write::{SimpleFileOptions, ZipWriter};
 
     use super::*;
+
+    #[test]
+    fn output_folder_drops_the_volume_and_format_suffixes() {
+        let name = |n: &str| default_output(Path::new(n));
+        assert_eq!(name("game.zip"), Path::new("game"));
+        assert_eq!(name("game.7z.001"), Path::new("game"));
+        assert_eq!(name("game.part1.rar"), Path::new("game"));
+        assert_eq!(name("game.PART02.RAR"), Path::new("game"));
+        assert_eq!(name("game.rar"), Path::new("game"));
+        assert_eq!(name("game.part.rar"), Path::new("game.part"));
+        assert_eq!(name("notes.txt"), Path::new("notes.txt-extracted"));
+    }
 
     /// Eight stored entries, so extracting in place frees the archive entry
     /// by entry and needs far less than keeping it.

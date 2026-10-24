@@ -25,6 +25,23 @@ use crate::{AboutWindow, MainWindow, Mode, PlanView, Screen, TaskView, platform,
 
 const REPO: &str = "https://github.com/xevrion/hatchzip";
 
+/// What the Open dialog offers. `.r00` is the second volume of an old-style
+/// RAR set; any volume opens the whole set.
+const ARCHIVE_EXTENSIONS: &[&str] = if hatchzip_core::archive::RAR_SUPPORTED {
+    &["zip", "7z", "tar", "gz", "tgz", "rar", "r00", "exe", "001"]
+} else {
+    &["zip", "7z", "tar", "gz", "tgz", "exe", "001"]
+};
+
+/// The formats line under the Open button.
+const FORMATS: &str = if hatchzip_core::archive::RAR_SUPPORTED {
+    "Or drag an archive onto this window. Supported formats: ZIP, 7z, tar, tar.gz, RAR, and split \
+     archives."
+} else {
+    "Or drag an archive onto this window. Supported formats: ZIP, 7z, tar, tar.gz, and split \
+     archives."
+};
+
 /// An archive opened read-only for looking at. It takes no lock, so another
 /// HatchZip can still extract it; extraction reopens it for writing.
 struct Loaded {
@@ -175,6 +192,7 @@ pub fn build(
     ui.set_keep_free(gb_text(settings.keep_free).into());
     ui.set_verify_first(settings.verify_first);
     ui.set_remove_archive(!settings.keep_archive);
+    ui.set_formats(FORMATS.into());
     ui.set_shell_menu_available(platform::SHELL_MENU);
     ui.set_shell_menu_label(platform::SHELL_MENU_LABEL.into());
 
@@ -413,8 +431,21 @@ impl App {
         std::thread::spawn(move || {
             let job = job.lock().expect("plan thread panicked");
             let Some(job) = job.as_ref() else { return };
+            let refusal = job.in_place_refusal().filter(|_| !keep);
             let view = match session::plan(job, &out, resuming, keep_free, keep) {
-                Ok(plan) => plan_view(&plan),
+                Ok(plan) => match refusal {
+                    // Such as a solid RAR: it can only be extracted kept.
+                    Some(why) => PlanView {
+                        fits: false,
+                        verdict: sentence(&format!(
+                            "{why}. Turn off \"Remove the archive during extraction\" to \
+                             extract it and keep the archive"
+                        ))
+                        .into(),
+                        ..plan_view(&plan)
+                    },
+                    None => plan_view(&plan),
+                },
                 Err(e) => PlanView {
                     ready: true,
                     verdict: sentence(&format!("{e:#}")).into(),
@@ -500,7 +531,7 @@ impl App {
         let ui = self.ui();
         let mut dialog = rfd::AsyncFileDialog::new()
             .set_title("Open archive")
-            .add_filter("Archives", &["zip", "7z", "tar", "gz", "tgz", "exe", "001"])
+            .add_filter("Archives", ARCHIVE_EXTENSIONS)
             .add_filter("All files", &["*"])
             .set_parent(&ui.window().window_handle());
         if let Some(dir) = self.archive.borrow().as_ref().and_then(|a| a.parent()) {

@@ -23,8 +23,14 @@ ctrlc = "3.5.2"
 indicatif = "0.18.6"
 rpassword = "7.5.4"
 
+[features]
+# RAR archives, through UnRAR's C++ source and its own license; see
+# hatchzip-core. Off by default, on in the release builds.
+rar = ["hatchzip-core/rar"]
+
 [dev-dependencies]
-# Writes the .tar.gz test archives; already in the tree through zip.
+# Writes the .tar.gz test archives and the RAR 4 volumes; already in the tree.
+crc32fast = "1.5.3"
 flate2 = "1.1.10"
 serde_json.workspace = true
 sevenz-rust2 = { version = "0.24.1", default-features = false, features = ["compress"] }

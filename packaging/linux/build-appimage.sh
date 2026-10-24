@@ -53,6 +53,11 @@ done
     "$@"
 # Software centres and AppImageHub read this for the description.
 install -Dm644 "$linux/$id.metainfo.xml" "$appdir/usr/share/metainfo/$id.appdata.xml"
+# The licenses travel with the app, UnRAR's included: its source is compiled
+# into the app and its license requires it.
+for license in LICENSE-MIT LICENSE-APACHE LICENSE-UNRAR; do
+    install -Dm644 "$license" "$appdir/usr/share/licenses/hatchzip/$license"
+done
 
 ARCH=x86_64 "$tools/appimagetool" --runtime-file "$tools/runtime" "$appdir" dist/HatchZip-x86_64.AppImage
 rm -rf "$appdir"
