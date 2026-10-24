@@ -8,6 +8,15 @@ use anyhow::{Context, Result};
 use crate::platform;
 
 pub fn available_space(path: &Path) -> Result<u64> {
+    // Lets the test suite put a disk exactly between two plans. Release
+    // builds ignore it.
+    if cfg!(debug_assertions)
+        && let Some(free) = std::env::var("HATCHZIP_FREE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+    {
+        return Ok(free);
+    }
     let probe = existing_ancestor(path);
     fs4::available_space(&probe)
         .with_context(|| format!("reading free space of {}", probe.display()))

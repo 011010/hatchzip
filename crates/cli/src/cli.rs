@@ -23,6 +23,9 @@ is required for the extracted files only, not for the files and the archive. The
 space plan is checked before the archive is modified, and an interrupted \
 extraction resumes where it stopped when the same command is run again.
 
+With --keep-archive, HatchZip extracts like any other tool and leaves the archive \
+unchanged; free space is then required for all extracted files.
+
 Supported: ZIP (including ZIP64 and self-extracting .exe), 7z, uncompressed tar, \
 gzip-compressed tar (.tar.gz, .tgz), and split archives (.001, .002, ...) of any \
 of those.";
@@ -31,7 +34,12 @@ const AFTER_LONG_HELP: &str = "\
 Examples:
   hatchzip check game.zip              Show the space plan without modifying anything
   hatchzip extract game.zip            Extract to ./game, removing game.zip during extraction
+  hatchzip extract game.zip --keep-archive
+                                       Extract to ./game and keep game.zip unchanged
+  hatchzip check game.zip --keep-archive
+                                       Show whether a standard extraction fits
   hatchzip x game.7z.001 -o D:\\Games   Extract a split archive from any of its parts
+  hatchzip extract a.zip b.7z c.tar.gz Extract several archives, one after another
   hatchzip extract big.zip --verify-first --keep-free 10GB
   hatchzip test game.7z                Verify every entry without writing files
   hatchzip restore game.zip            Restore a partially extracted archive
@@ -40,7 +48,12 @@ To resume an interrupted extraction, run the same command again. Progress is \
 stored in two files next to the archive (<archive>.hatchzip and \
 <archive>.hatchzip-tail); do not delete them while an extraction is incomplete. \
 To stop permanently instead, run restore: the entries not yet extracted become a \
-standard archive again.
+standard archive again. An extraction with --keep-archive resumes the same way and \
+keeps the archive when resumed.
+
+Several archives are processed one after another. extract checks the space for each \
+one just before it starts and stops at the first one that does not complete, then \
+lists what was extracted and what was not. check, test and list process every archive.
 
 Exit status:
   0    success
@@ -50,6 +63,7 @@ Exit status:
   4    the archive is damaged; no files were removed
   5    the archive is password protected and no correct password was provided
   130  paused with Ctrl+C; run the same command to resume
+With several archives, the status is that of the first archive that did not succeed.
 
 Encrypted archives (ZIP with ZipCrypto or AES, 7z with AES): HatchZip prompts for \
 the password, or reads --password or the HATCHZIP_PASSWORD environment variable. The \
@@ -81,17 +95,25 @@ pub enum Command {
         visible_alias = "x",
         long_about = "Extract an archive, removing it progressively.\n\n\
             Prints the space plan and asks for confirmation before starting. After an \
-            interruption by Ctrl+C, a crash or a full disk, run the same command to resume."
+            interruption by Ctrl+C, a crash or a full disk, run the same command to resume.\n\n\
+            With --keep-archive the archive is not modified and no confirmation is needed; \
+            free space is required for all extracted files.\n\n\
+            Several archives are extracted one after another. The space for each one is \
+            checked just before it starts, and the first one that does not complete stops \
+            the run."
     )]
     Extract {
         #[command(flatten)]
         target: Target,
+        #[command(flatten)]
+        keep: Keep,
         /// Verify every entry before modifying the archive
         #[arg(long)]
         verify_first: bool,
         #[command(flatten)]
         space: Space,
-        /// Skip the confirmation prompt (required outside a terminal)
+        /// Skip the confirmation prompt (required outside a terminal, unless
+        /// --keep-archive is given)
         #[arg(short, long)]
         yes: bool,
     },
@@ -101,21 +123,25 @@ pub enum Command {
         #[command(flatten)]
         target: Target,
         #[command(flatten)]
+        keep: Keep,
+        #[command(flatten)]
         space: Space,
     },
     /// List the entries of an archive
     #[command(visible_alias = "l")]
     List {
-        /// The archive, or any part of a split archive
-        archive: PathBuf,
+        /// The archive, or any part of a split archive. Several can be given
+        #[arg(required = true, value_name = "ARCHIVE")]
+        archives: Vec<PathBuf>,
         #[command(flatten)]
         secret: Secret,
     },
     /// Verify every entry of an archive without writing files
     #[command(visible_alias = "t")]
     Test {
-        /// The archive, or any part of a split archive
-        archive: PathBuf,
+        /// The archive, or any part of a split archive. Several can be given
+        #[arg(required = true, value_name = "ARCHIVE")]
+        archives: Vec<PathBuf>,
         #[command(flatten)]
         secret: Secret,
     },
@@ -127,7 +153,9 @@ pub enum Command {
             appends a new index for those entries, so 7-Zip, WinRAR, unzip and tar can open it \
             again. No data is moved; only the space for the new index is required. Files \
             already extracted remain in the destination folder. If restore is interrupted, run \
-            it again, or run extract to resume the extraction instead."
+            it again, or run extract to resume the extraction instead.\n\n\
+            An extraction started with --keep-archive never modified the archive, so restore \
+            only discards its progress."
     )]
     Restore {
         /// The partially extracted archive, or any part of a split archive
@@ -148,9 +176,11 @@ pub enum Command {
 
 #[derive(Args)]
 pub struct Target {
-    /// The archive, or any part of a split archive
-    pub archive: PathBuf,
-    /// Destination folder [default: a folder named after the archive, next to it]
+    /// The archive, or any part of a split archive. Several can be given
+    #[arg(required = true, value_name = "ARCHIVE")]
+    pub archives: Vec<PathBuf>,
+    /// Destination folder [default: a folder named after the archive, next to it].
+    /// With several archives, each one is extracted into this folder
     #[arg(short, long, value_name = "DIR")]
     pub output: Option<PathBuf>,
     #[command(flatten)]
@@ -158,6 +188,14 @@ pub struct Target {
 }
 
 #[derive(Args)]
+pub struct Keep {
+    /// Keep the archive: extract without removing anything, like a standard
+    /// extraction. Free space is required for all extracted files
+    #[arg(long)]
+    pub keep_archive: bool,
+}
+
+#[derive(Args, Clone)]
 pub struct Secret {
     /// Password for an encrypted archive. If omitted, HatchZip prompts for it
     /// with hidden input, which is preferred: this value is visible to other programs

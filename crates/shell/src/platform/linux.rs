@@ -78,19 +78,23 @@ pub fn register(dirs: &Dirs, gui: &Path) -> Result<Vec<String>> {
          X-KDE-Submenu=HatchZip\nIcon=archive-extract\n",
         ACTIONS.iter().map(|a| a.id).collect::<Vec<_>>().join(";") + ";"
     );
+    // Every selected archive goes to one window, which works through them
+    // one after another, checking the space for each just before it starts.
     for a in ACTIONS {
         kde.push_str(&format!(
-            "\n[Desktop Action {}]\nName={}\nIcon=archive-extract\nExec={exec} {} %f\n",
+            "\n[Desktop Action {}]\nName={}\nIcon=archive-extract\nExec={exec} {} %F\n",
             a.id, a.label, a.flag
         ));
     }
     write(&kde_file(dirs), &kde, true)?;
 
     for a in ACTIONS {
-        // GNOME Files hands over every selected path, one per line.
+        // GNOME Files hands over every selected path, one per line. Split on
+        // newlines only, with globbing off, so spaces and stars in names
+        // survive.
         let script = format!(
-            "#!/bin/sh\n# {MARK}\nprintf '%s\\n' \"$NAUTILUS_SCRIPT_SELECTED_FILE_PATHS\" | \
-             while IFS= read -r f; do\n    [ -n \"$f\" ] && {} {} \"$f\" &\ndone\n",
+            "#!/bin/sh\n# {MARK}\n[ -n \"$NAUTILUS_SCRIPT_SELECTED_FILE_PATHS\" ] || exit 0\n\
+             IFS='\n'\nset -f\nexec {} {} $NAUTILUS_SCRIPT_SELECTED_FILE_PATHS\n",
             sh_quote(gui),
             a.flag
         );
@@ -98,7 +102,7 @@ pub fn register(dirs: &Dirs, gui: &Path) -> Result<Vec<String>> {
 
         let nemo = format!(
             "# {MARK}\n[Nemo Action]\nName={} with HatchZip\nIcon-Name=archive-extract\n\
-             Exec={exec} {} %F\nSelection=s\nExtensions={};\n",
+             Exec={exec} {} %F\nSelection=notnone\nExtensions={};\n",
             a.label,
             a.flag,
             EXTENSIONS.join(";")

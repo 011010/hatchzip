@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use anyhow::{Context, Result, bail};
 use hatchzip_core::archive::{PasswordNeeded, WrongPassword};
 use hatchzip_core::engine::{self, Job, Outcome, Progress, Run};
-use hatchzip_core::journal::Paths;
+use hatchzip_core::journal::{Journal, Paths};
 use hatchzip_core::session::{self, SpacePlan, State};
 
 #[derive(Default)]
@@ -41,6 +41,9 @@ pub enum Request {
         output: Option<PathBuf>,
         keep_free: u64,
         verify_first: bool,
+        /// Extract without removing the archive. A half-extracted archive
+        /// goes on the way its journal says, whatever this is.
+        keep_archive: bool,
         password: Option<String>,
     },
     Test {
@@ -91,16 +94,24 @@ pub enum Update {
     NoSpace(SpacePlan),
     /// Reading every file to check it; nothing is written.
     Verifying,
-    /// Extraction has started, into this folder.
-    Working(PathBuf),
+    /// Extraction has started, into this folder, keeping the archive or not.
+    Working {
+        output: PathBuf,
+        keep: bool,
+    },
     Paused,
-    Extracted(PathBuf),
+    Extracted {
+        output: PathBuf,
+        keep: bool,
+    },
     Tested(usize),
     /// The archive is whole again, holding this many entries; the ones
-    /// already extracted stay in the folder.
+    /// already extracted stay in the folder. `kept`: it never stopped being
+    /// whole, and only the progress was discarded.
     Restored {
         entries: usize,
         output: PathBuf,
+        kept: bool,
     },
     Failed(Failure),
 }
@@ -120,12 +131,16 @@ pub fn run(request: &Request, counters: &Arc<Counters>, send: &dyn Fn(Update), a
             output,
             keep_free,
             verify_first,
+            keep_archive,
             password,
         } => extract(
             archive,
             output.clone(),
-            *keep_free,
-            *verify_first,
+            Choices {
+                keep_free: *keep_free,
+                verify_first: *verify_first,
+                keep_archive: *keep_archive,
+            },
             Secret {
                 password: password.clone(),
                 ask,
@@ -193,25 +208,45 @@ fn open(
     Ok(state)
 }
 
+/// What the person chose for an extraction, besides where it goes.
+struct Choices {
+    keep_free: u64,
+    verify_first: bool,
+    keep_archive: bool,
+}
+
 fn extract(
     archive: &Path,
     output: Option<PathBuf>,
-    keep_free: u64,
-    verify_first: bool,
+    choices: Choices,
     secret: Secret,
     counters: &Arc<Counters>,
     send: &dyn Fn(Update),
 ) -> Result<()> {
+    let Choices {
+        keep_free,
+        verify_first,
+        keep_archive,
+    } = choices;
     send(Update::Checking);
     let (primary, paths) = session::locate(archive)?;
+    // Refused before the writable open, which would finish a truncation
+    // the last run left pending.
+    if keep_archive && paths.exists() {
+        session::keeps_archive(&Journal::load(&paths)?.0, true)?;
+    }
     let (job, journal) = match open(&primary, &paths, output, true, secret, send)? {
         State::Orphan(journal) => {
             engine::finish_orphaned(&journal, &paths)?;
-            send(Update::Extracted(journal.output));
+            send(Update::Extracted {
+                output: journal.output,
+                keep: false,
+            });
             return Ok(());
         }
         State::Resume(job, journal) => {
-            let plan = session::plan(&job, &journal.output, true, keep_free)?;
+            let keep = session::keeps_archive(&journal, keep_archive)?;
+            let plan = session::plan(&job, &journal.output, true, keep_free, keep)?;
             if !plan.fits {
                 send(Update::NoSpace(plan));
                 return Ok(());
@@ -221,7 +256,7 @@ fn extract(
             (job, journal)
         }
         State::Fresh(job, out) => {
-            let plan = session::plan(&job, &out, false, keep_free)?;
+            let plan = session::plan(&job, &out, false, keep_free, keep_archive)?;
             if !plan.fits {
                 send(Update::NoSpace(plan));
                 return Ok(());
@@ -235,20 +270,27 @@ fn extract(
                     return Ok(());
                 }
             }
-            let journal = session::begin(&job, &paths, out)?;
+            let journal = session::begin(&job, &paths, out, keep_archive)?;
             (job, journal)
         }
     };
 
     let output = journal.output.clone();
+    let keep = journal.keep;
     counters.total.store(journal.total_size, Ordering::Relaxed);
     counters
         .done
         .store(journal.total_size - job.remaining_size(), Ordering::Relaxed);
-    counters
-        .archive
-        .store(journal.committed_len, Ordering::Relaxed);
-    send(Update::Working(output.clone()));
+    // A kept archive never shrinks, so there is nothing to count down.
+    if !keep {
+        counters
+            .archive
+            .store(journal.committed_len, Ordering::Relaxed);
+    }
+    send(Update::Working {
+        output: output.clone(),
+        keep,
+    });
 
     let (c1, c2) = (counters.clone(), counters.clone());
     let run = Run {
@@ -267,7 +309,7 @@ fn extract(
     match run.execute()? {
         Outcome::Finished => {
             counters.archive.store(0, Ordering::Relaxed);
-            send(Update::Extracted(output));
+            send(Update::Extracted { output, keep });
         }
         Outcome::Paused => send(Update::Paused),
     }
@@ -299,6 +341,7 @@ fn restore(archive: &Path, send: &dyn Fn(Update)) -> Result<()> {
     send(Update::Restored {
         entries: r.entries,
         output: r.output,
+        kept: r.kept,
     });
     Ok(())
 }
@@ -369,11 +412,18 @@ mod tests {
             Update::Planned(_) => "planned".to_string(),
             Update::NoSpace(_) => "no space".to_string(),
             Update::Verifying => "verifying".to_string(),
-            Update::Working(_) => "working".to_string(),
+            Update::Working { keep: false, .. } => "working".to_string(),
+            Update::Working { keep: true, .. } => "working, keeping the archive".to_string(),
             Update::Paused => "paused".to_string(),
-            Update::Extracted(_) => "extracted".to_string(),
+            Update::Extracted { keep: false, .. } => "extracted".to_string(),
+            Update::Extracted { keep: true, .. } => "extracted, archive kept".to_string(),
             Update::Tested(n) => format!("tested {n}"),
-            Update::Restored { entries, .. } => format!("restored {entries}"),
+            Update::Restored {
+                entries,
+                kept: false,
+                ..
+            } => format!("restored {entries}"),
+            Update::Restored { kept: true, .. } => "progress discarded".to_string(),
             Update::Failed(f) => format!("failed: {}", f.message),
         }
     }
@@ -441,8 +491,81 @@ mod tests {
             output: out,
             keep_free: 0,
             verify_first,
+            keep_archive: false,
             password: None,
         }
+    }
+
+    fn keep(archive: &Path, out: Option<PathBuf>) -> Request {
+        Request::Extract {
+            archive: archive.to_path_buf(),
+            output: out,
+            keep_free: 0,
+            verify_first: false,
+            keep_archive: true,
+            password: None,
+        }
+    }
+
+    /// Keeping the archive goes through the same steps, pauses and resumes
+    /// the same way, and leaves the archive exactly as it was.
+    #[test]
+    fn a_kept_archive_pauses_resumes_and_stays_as_it_was() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = make_zip(dir.path(), None);
+        let before = std::fs::read(&archive).unwrap();
+        let out = dir.path().join("out");
+        let counters = Arc::new(Counters::default());
+
+        counters.stop.store(true, Ordering::Relaxed);
+        assert_eq!(
+            collect(&keep(&archive, Some(out.clone())), &counters),
+            [
+                "checking",
+                "planned",
+                "working, keeping the archive",
+                "paused"
+            ]
+        );
+        assert!(session::locate(&archive).unwrap().1.exists());
+
+        // Resumed without asking to keep it: the journal decides.
+        counters.reset();
+        assert_eq!(
+            collect(&extract(&archive, None, false), &counters),
+            [
+                "checking",
+                "planned",
+                "working, keeping the archive",
+                "extracted, archive kept"
+            ]
+        );
+        assert_eq!(std::fs::read(&archive).unwrap(), before);
+        assert_eq!(counters.archive.load(Ordering::Relaxed), 0);
+        assert_eq!(std::fs::read_dir(out.join("data")).unwrap().count(), 20);
+        assert!(!session::locate(&archive).unwrap().1.exists());
+    }
+
+    /// Paused while keeping the archive, then stopped for good: nothing to
+    /// rebuild, only the progress goes.
+    #[test]
+    fn giving_up_on_a_kept_archive_discards_the_progress() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = make_zip(dir.path(), None);
+        let before = std::fs::read(&archive).unwrap();
+        let counters = Arc::new(Counters::default());
+        counters.stop.store(true, Ordering::Relaxed);
+        collect(&keep(&archive, Some(dir.path().join("out"))), &counters);
+
+        let restore = Request::Restore {
+            archive: archive.clone(),
+        };
+        assert_eq!(
+            collect(&restore, &counters),
+            ["checking", "progress discarded"]
+        );
+        assert_eq!(std::fs::read(&archive).unwrap(), before);
+        assert!(!session::locate(&archive).unwrap().1.exists());
     }
 
     #[test]
@@ -549,6 +672,7 @@ mod tests {
             output: None,
             keep_free: u64::MAX / 4,
             verify_first: false,
+            keep_archive: false,
             password: None,
         };
         assert_eq!(collect(&request, &counters), ["checking", "no space"]);

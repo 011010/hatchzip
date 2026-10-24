@@ -17,7 +17,12 @@ export enum Phase {
 export struct PlanView {
     ready: bool,
     free: string,
+    // Required when the archive is kept, as for any extractor.
     normal: string,
+    // Required when the archive is removed during extraction.
+    in-place: string,
+    // The plan is for keeping the archive.
+    keep-archive: bool,
     needed: string,
     keep: string,
     after: string,
@@ -32,6 +37,8 @@ export struct TaskView {
     is-test: bool,
     heading: string,
     detail: string,
+    // "Archive 2 of 3" when a right-click queued several.
+    step: string,
     // "Required: 3.5 MB. Available: 7.7 GB.", once the space is checked.
     space: string,
     fraction: float,
@@ -95,14 +102,17 @@ export component SpacePanel inherits VerticalLayout {
             label: "Available";
             value: root.plan.free;
         }
+        // Both ways, the chosen one in bold, so the difference the archive
+        // makes is in plain view.
         Row {
-            label: "Required, standard extraction";
-            value: root.plan.normal;
+            label: "Required, archive removed";
+            value: root.plan.in-place;
+            strong: !root.plan.keep-archive;
         }
         Row {
-            label: "Required, HatchZip";
-            value: root.plan.needed;
-            strong: true;
+            label: "Required, archive kept";
+            value: root.plan.normal;
+            strong: root.plan.keep-archive;
         }
         Row {
             label: "Reserved";

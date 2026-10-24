@@ -154,6 +154,134 @@ pub fn crash_and_resume(build: impl Fn(&Path) -> PathBuf, files: &Files, afters:
     }
 }
 
+/// A ZIP of `files` and the `EMPTY_DIR` entry at `<dir>/<name>`, cycling
+/// through stored, deflate and bzip2.
+pub fn zip_of(dir: &Path, name: &str, files: &Files) -> PathBuf {
+    use std::io::Write;
+    use zip::CompressionMethod;
+    use zip::write::{SimpleFileOptions, ZipWriter};
+
+    let methods = [
+        CompressionMethod::Stored,
+        CompressionMethod::Deflated,
+        CompressionMethod::Bzip2,
+    ];
+    let mut w = ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    w.add_directory(format!("{EMPTY_DIR}/"), SimpleFileOptions::default())
+        .unwrap();
+    for (i, (n, data)) in files.iter().enumerate() {
+        let opts = SimpleFileOptions::default().compression_method(methods[i % methods.len()]);
+        w.start_file(n, opts).unwrap();
+        w.write_all(data).unwrap();
+    }
+    let path = dir.join(name);
+    fs::write(&path, w.finish().unwrap().into_inner()).unwrap();
+    path
+}
+
+/// A 7z at `<dir>/<name>`. Solid ones get three blocks, so there is
+/// something to commit between them.
+pub fn sevenz_of(dir: &Path, name: &str, files: &Files, solid: bool) -> PathBuf {
+    use sevenz_rust2::{ArchiveEntry, ArchiveWriter, SourceReader};
+
+    let path = dir.join(name);
+    let mut w = ArchiveWriter::create(&path).unwrap();
+    w.push_archive_entry::<&[u8]>(ArchiveEntry::new_directory(EMPTY_DIR), None)
+        .unwrap();
+    let all: Vec<_> = files.iter().collect();
+    if solid {
+        for chunk in all.chunks(all.len().div_ceil(3)) {
+            let entries = chunk
+                .iter()
+                .map(|(n, _)| ArchiveEntry::new_file(n))
+                .collect();
+            let readers = chunk
+                .iter()
+                .map(|(_, d)| SourceReader::new(std::io::Cursor::new(d.to_vec())))
+                .collect();
+            w.push_archive_entries(entries, readers).unwrap();
+        }
+    } else {
+        for (n, data) in all {
+            w.push_archive_entry(ArchiveEntry::new_file(n), Some(data.as_slice()))
+                .unwrap();
+        }
+    }
+    w.finish().unwrap();
+    path
+}
+
+pub fn tar_bytes_of(files: &Files) -> Vec<u8> {
+    let mut b = tar::Builder::new(Vec::new());
+    let mut dir = tar::Header::new_gnu();
+    dir.set_entry_type(tar::EntryType::Directory);
+    dir.set_mode(0o755);
+    dir.set_size(0);
+    b.append_data(&mut dir, EMPTY_DIR, std::io::empty())
+        .unwrap();
+    for (n, data) in files {
+        let mut h = tar::Header::new_gnu();
+        h.set_size(data.len() as u64);
+        h.set_mode(0o644);
+        h.set_mtime(1_700_000_000);
+        b.append_data(&mut h, n, data.as_slice()).unwrap();
+    }
+    b.into_inner().unwrap()
+}
+
+pub fn tar_of(dir: &Path, name: &str, files: &Files) -> PathBuf {
+    let path = dir.join(name);
+    fs::write(&path, tar_bytes_of(files)).unwrap();
+    path
+}
+
+pub fn targz_of(dir: &Path, name: &str, files: &Files) -> PathBuf {
+    use std::io::Write;
+
+    let mut e = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::new(6));
+    e.write_all(&tar_bytes_of(files)).unwrap();
+    let path = dir.join(name);
+    fs::write(&path, e.finish().unwrap()).unwrap();
+    path
+}
+
+/// Replaces `archive` with `parts` volumes next to it and returns the first.
+pub fn split_up(archive: &Path, parts: usize) -> PathBuf {
+    let bytes = fs::read(archive).unwrap();
+    fs::remove_file(archive).unwrap();
+    split(&bytes, archive, parts).remove(0)
+}
+
+/// Every volume of the archive `first` names, as it is now.
+pub fn snapshot(first: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+    let name = first.to_string_lossy();
+    let Some(base) = name.strip_suffix(".001") else {
+        return vec![(first.to_path_buf(), fs::read(first).unwrap())];
+    };
+    (1..)
+        .map(|i| PathBuf::from(format!("{base}.{i:03}")))
+        .take_while(|p| p.exists())
+        .map(|p| {
+            let bytes = fs::read(&p).unwrap();
+            (p, bytes)
+        })
+        .collect()
+}
+
+/// Every volume is byte for byte what `before` recorded.
+pub fn assert_unchanged(before: &[(PathBuf, Vec<u8>)]) {
+    for (p, bytes) in before {
+        let now = fs::read(p).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
+        assert!(now == *bytes, "{} changed", p.display());
+    }
+}
+
+pub fn assert_no_side_files(archive: &Path) {
+    for p in side_files(archive) {
+        assert!(!p.exists(), "{} should be cleaned up", p.display());
+    }
+}
+
 /// Cuts `bytes` into `parts` volumes named `<base>.001`, `<base>.002`, ...
 pub fn split(bytes: &[u8], base: &Path, parts: usize) -> Vec<PathBuf> {
     let size = bytes.len().div_ceil(parts);

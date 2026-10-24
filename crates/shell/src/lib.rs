@@ -15,6 +15,7 @@ pub struct Action {
     /// Stable identifier, used in file and registry key names.
     pub id: &'static str,
     pub label: &'static str,
+    /// The GUI's flags, put before the archive paths.
     pub flag: &'static str,
 }
 
@@ -23,6 +24,11 @@ pub const ACTIONS: &[Action] = &[
         id: "extract-here",
         label: "Extract here",
         flag: "--extract-here",
+    },
+    Action {
+        id: "extract-here-keep",
+        label: "Extract here (keep archive)",
+        flag: "--keep-archive --extract-here",
     },
     Action {
         id: "extract-to",

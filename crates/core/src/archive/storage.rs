@@ -5,6 +5,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context, Result, anyhow, bail};
 
@@ -31,6 +32,10 @@ pub struct Storage {
     /// The first part stays open and locked for the whole run, so two runs
     /// can't eat the same archive.
     first: File,
+    /// Set for an extraction that keeps the archive. Every method that
+    /// changes the archive's bytes refuses from then on, so a bug elsewhere
+    /// can't cost the user an archive they asked to keep.
+    whole: AtomicBool,
 }
 
 impl Storage {
@@ -89,7 +94,28 @@ impl Storage {
         Ok(Self {
             parts: parts.into(),
             first,
+            whole: AtomicBool::new(false),
         })
+    }
+
+    /// From now on nothing may shrink, punch, write to or delete the
+    /// archive.
+    pub fn protect(&self) {
+        self.whole.store(true, Ordering::Relaxed);
+    }
+
+    pub fn protected(&self) -> bool {
+        self.whole.load(Ordering::Relaxed)
+    }
+
+    fn may_change(&self) -> Result<()> {
+        if self.protected() {
+            bail!(
+                "refusing to modify {}: this extraction keeps the archive",
+                self.primary().display()
+            );
+        }
+        Ok(())
     }
 
     pub fn primary(&self) -> &Path {
@@ -146,6 +172,7 @@ impl Storage {
     /// Shrinks the archive to its first `len` bytes: whole volumes past that
     /// point are deleted, the one it falls in is truncated.
     pub fn set_len(&self, len: u64) -> Result<()> {
+        self.may_change()?;
         for (i, p) in self.parts.iter().enumerate().rev() {
             if p.start + p.len <= len {
                 break;
@@ -174,6 +201,7 @@ impl Storage {
     /// false if the filesystem can't. Filesystems free whole blocks only, so
     /// up to a block at each end may stay allocated until truncation.
     pub fn punch(&self, from: u64, to: u64) -> Result<bool> {
+        self.may_change()?;
         for (i, p) in self.parts.iter().enumerate() {
             let (start, end) = (from.max(p.start), to.min(p.start + p.len));
             if start >= end {
@@ -200,6 +228,7 @@ impl Storage {
     /// is the one thing that appends to an archive: the volume it appended to
     /// may have been whole, and `set_len` never touches whole volumes.
     pub fn cut_to(&self, len: u64) -> Result<()> {
+        self.may_change()?;
         for (i, p) in self.parts.iter().enumerate().rev() {
             let keep = len.saturating_sub(p.start).min(p.len);
             if i > 0 && keep == 0 {
@@ -236,6 +265,7 @@ impl Storage {
     /// disk. Bytes inside the archive go to the volume that holds them; bytes
     /// past its current end go to the last volume still there, which grows.
     pub fn write_at(&self, offset: u64, bytes: &[u8]) -> Result<()> {
+        self.may_change()?;
         let end = self.current_len()?;
         if offset > end {
             bail!(
@@ -283,7 +313,8 @@ impl Storage {
 
     /// Deletes whatever is left of every part.
     pub fn remove(self) -> Result<()> {
-        let Self { parts, first } = self;
+        self.may_change()?;
+        let Self { parts, first, .. } = self;
         drop(first);
         for p in parts.iter() {
             match fs::remove_file(&p.path) {

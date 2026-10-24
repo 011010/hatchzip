@@ -17,6 +17,11 @@
 //! points between the files as well as inside them (see
 //! [`Run::stream_solid`]). Without hole punching it still streams, so a
 //! crash resumes from the last point, but nothing is freed until the end.
+//!
+//! An extraction that keeps the archive (`Journal::keep`) runs the same
+//! batches, checks and commits, so it resumes the same way, but never
+//! truncates, punches or deletes: its storage is protected, and the run
+//! frees nothing, exactly like an output on another disk.
 
 use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
@@ -107,13 +112,25 @@ impl Job {
     ) -> Result<Self> {
         let storage = Arc::new(Storage::from_parts(&journal.parts, writable)?);
         let current = storage.current_len()?;
+        if journal.keep {
+            // Never truncated, so `committed_len` only marks progress and
+            // the whole archive must still be there.
+            storage.protect();
+            if current != storage.original_len() {
+                bail!(
+                    "{} has changed since the extraction started. Put the original archive back \
+                     to resume, or run restore to discard the progress",
+                    storage.primary().display()
+                );
+            }
+        }
         if current < journal.committed_len {
             bail!(
                 "{} is shorter than HatchZip left it and will not be modified",
                 storage.primary().display()
             );
         }
-        if current > journal.committed_len && writable {
+        if current > journal.committed_len && writable && !journal.keep {
             // The last run committed a batch but stopped before truncating.
             storage.set_len(journal.committed_len)?;
         }
@@ -610,7 +627,13 @@ impl Run<'_> {
         fs::create_dir_all(&out)
             .with_context(|| format!("creating output folder {}", out.display()))?;
 
-        let reclaims = fsutil::same_filesystem(self.job.storage.primary(), &out);
+        // Keeping the archive frees nothing, which is exactly the case of an
+        // output on another disk: nothing is streamed or punched.
+        let reclaims =
+            !self.journal.keep && fsutil::same_filesystem(self.job.storage.primary(), &out);
+        if self.journal.keep {
+            self.job.storage.protect();
+        }
         let mut next = 0;
         while next < self.job.units.len() {
             if self.stop.load(Ordering::Relaxed) {
@@ -679,6 +702,9 @@ impl Run<'_> {
         self.journal.save(&self.paths)?;
         crash_point("after-journal");
 
+        if self.journal.keep {
+            return Ok(());
+        }
         self.job
             .storage
             .set_len(new_len)
@@ -1220,6 +1246,10 @@ impl Run<'_> {
 
     fn finish(self, out: &Path) -> Result<()> {
         make_links(&self.journal.links, out)?;
+        if self.journal.keep {
+            // The archive stays as it was; only the progress files go.
+            return self.paths.remove();
+        }
         let Self { job, paths, .. } = self;
         let Job {
             storage, format, ..

@@ -93,6 +93,10 @@ export component MainWindow inherits Window {
     in-out property <string> keep-free: "2";
     in property <bool> keep-free-valid: true;
     in-out property <bool> verify-first;
+    // Off keeps the archive: a standard extraction that removes nothing.
+    in-out property <bool> remove-archive: true;
+    // The half-extracted run being resumed keeps its archive.
+    in property <bool> kept-run;
     in property <TaskView> task;
     in property <bool> password-shown;
     in property <bool> password-wrong;
@@ -113,6 +117,7 @@ export component MainWindow inherits Window {
     callback shell-menu-toggled();
     callback give-back();
     callback verify-first-toggled();
+    callback remove-archive-toggled();
     callback change-output();
     callback keep-free-edited(string);
     callback extract();
@@ -167,6 +172,14 @@ export component MainWindow inherits Window {
                 checked <=> root.verify-first;
                 activated => {
                     root.verify-first-toggled();
+                }
+            }
+            MenuItem {
+                title: "Remove the archive during extraction";
+                checkable: true;
+                checked <=> root.remove-archive;
+                activated => {
+                    root.remove-archive-toggled();
                 }
             }
         }
@@ -318,7 +331,7 @@ export component MainWindow inherits Window {
             spacing: 12px;
 
             if root.mode == Mode.resume || root.mode == Mode.orphan: Text {
-                text: root.mode == Mode.resume ? "This archive is partially extracted to " + root.output + "." : "All entries have been extracted to " + root.output + ". Select Finish to remove the remaining temporary files.";
+                text: root.mode == Mode.resume ? "This archive is partially extracted to " + root.output + "." + (root.kept-run ? " The archive is kept." : "") : "All entries have been extracted to " + root.output + ". Select Finish to remove the remaining temporary files.";
                 wrap: word-wrap;
                 font-weight: 600;
             }
@@ -379,10 +392,28 @@ export component MainWindow inherits Window {
                 }
             }
 
+            // Lined up with the fields above, under their labels' column.
+            if root.mode == Mode.fresh: HorizontalLayout {
+                spacing: 8px;
+                Rectangle {
+                    width: 112px;
+                }
+                CheckBox {
+                    text: "Remove the archive during extraction";
+                    checked <=> root.remove-archive;
+                    toggled => {
+                        root.remove-archive-toggled();
+                    }
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                }
+            }
+
             HorizontalLayout {
                 spacing: 8px;
                 Text {
-                    text: root.mode == Mode.fresh ? "The archive is removed progressively during extraction. An interrupted extraction can be resumed." : "";
+                    text: root.mode != Mode.fresh ? "" : root.remove-archive ? "The archive is removed progressively during extraction. An interrupted extraction can be resumed." : "The archive is kept unchanged, so space is required for all extracted files. An interrupted extraction can be resumed.";
                     color: Theme.muted;
                     font-size: Theme.small-size;
                     wrap: word-wrap;
@@ -395,7 +426,8 @@ export component MainWindow inherits Window {
                         root.test();
                     }
                 }
-                if root.mode == Mode.resume: Button {
+                // A kept archive was never changed; there is nothing to restore.
+                if root.mode == Mode.resume && !root.kept-run: Button {
                     text: "Restore archive";
                     clicked => {
                         root.give-back();

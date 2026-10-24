@@ -18,6 +18,9 @@ pub const DEFAULT_KEEP_FREE: u64 = 2_000_000_000;
 pub struct Settings {
     pub keep_free: u64,
     pub verify_first: bool,
+    /// Extract without removing the archive, in the main window. The
+    /// right-click menu has an entry of its own for it instead.
+    pub keep_archive: bool,
 }
 
 impl Default for Settings {
@@ -25,6 +28,7 @@ impl Default for Settings {
         Self {
             keep_free: DEFAULT_KEEP_FREE,
             verify_first: false,
+            keep_archive: false,
         }
     }
 }
@@ -95,6 +99,7 @@ mod tests {
         let s = Settings {
             keep_free: 500_000_000,
             verify_first: true,
+            keep_archive: true,
         };
         s.save_to(&path).unwrap();
         assert_eq!(Settings::load_from(&path), s);
@@ -114,8 +119,13 @@ mod tests {
             Settings::load_from(&path),
             Settings {
                 keep_free: DEFAULT_KEEP_FREE,
-                verify_first: true
+                verify_first: true,
+                keep_archive: false,
             }
         );
+        // Files saved before keeping the archive was a choice remove it, as
+        // that version always did.
+        std::fs::write(&path, br#"{"keep_free": 0, "verify_first": false}"#).unwrap();
+        assert!(!Settings::load_from(&path).keep_archive);
     }
 }

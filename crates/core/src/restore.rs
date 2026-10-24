@@ -32,10 +32,11 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 
-use crate::archive::storage::Storage;
+use crate::archive::storage::{Storage, Tail};
 use crate::archive::{self, Kind};
 use crate::engine::{self, Job};
 use crate::fsutil;
@@ -50,6 +51,9 @@ pub struct Restored {
     pub entries: usize,
     /// Where the extracted entries stay.
     pub output: PathBuf,
+    /// The extraction kept the archive, so it was never changed and only
+    /// the progress was discarded. The archive still holds every entry.
+    pub kept: bool,
 }
 
 /// Restores the half-extracted archive `archive` names (any volume of a
@@ -63,6 +67,9 @@ pub fn restore(archive: &Path) -> Result<Restored> {
         );
     }
     let (mut journal, tail) = Journal::load(&paths)?;
+    if journal.keep {
+        return discard(&journal, tail, &paths);
+    }
     if !journal.parts[0].0.exists() {
         bail!("all entries are already extracted. Run extract to complete the cleanup");
     }
@@ -193,7 +200,32 @@ pub fn restore(archive: &Path) -> Result<Restored> {
         format,
         entries: expected.len(),
         output: out,
+        kept: false,
     })
+}
+
+/// An extraction that keeps the archive never changed it, so there is
+/// nothing to rebuild: what a crashed batch left half written is deleted, as
+/// a resume would, and the progress files go. Finished files stay.
+fn discard(journal: &Journal, tail: Arc<Tail>, paths: &Paths) -> Result<Restored> {
+    let primary = journal.parts[0].0.clone();
+    let mut restored = Restored {
+        archive: primary.clone(),
+        format: "",
+        entries: 0,
+        output: journal.output.clone(),
+        kept: true,
+    };
+    // Moved away by the person: nothing says which files are half written,
+    // and nothing else is left to do.
+    if primary.exists() {
+        let job = Job::resume(journal, tail, true, None)?;
+        session::clear_uncommitted(&job, &journal.output)?;
+        restored.format = job.format_name;
+        restored.entries = job.item_count();
+    }
+    paths.remove()?;
+    Ok(restored)
 }
 
 /// Opens the archive as a fresh one, the way a later extraction would, and

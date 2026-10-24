@@ -16,7 +16,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use hatchzip_core::session::{self, State};
-use hatchzip_gui::args::TaskKind;
+use hatchzip_gui::args::{TaskArgs, TaskKind};
 use hatchzip_gui::backend::Drops;
 use hatchzip_gui::settings::Settings;
 use hatchzip_gui::{
@@ -203,11 +203,189 @@ fn main_window_flow(scheme: ColorScheme, tag: &str) {
     ui.hide().unwrap();
 }
 
+fn one(kind: TaskKind, archive: &Path) -> TaskArgs {
+    TaskArgs {
+        kind,
+        archives: vec![archive.to_path_buf()],
+        keep_archive: false,
+    }
+}
+
+/// Unticking "Remove the archive during extraction" plans for every file,
+/// remembers the choice, and extracts without touching the archive.
+fn keep_flow(scheme: ColorScheme, tag: &str) {
+    let dir = tempfile::tempdir().unwrap();
+    let archive = make_zip(dir.path());
+    let before = std::fs::read(&archive).unwrap();
+    let settings_file = dir.path().join("config/settings.json");
+    let drops = Drops::default();
+    let ui = main_window::build(
+        Some(archive.clone()),
+        &drops,
+        Settings {
+            keep_free: 0,
+            ..Settings::default()
+        },
+        Some(settings_file.clone()),
+    )
+    .unwrap();
+    ui.global::<Palette>().set_color_scheme(scheme);
+    ui.window().set_size(LogicalSize::new(980.0, 660.0));
+    let w = ui.as_weak();
+    wait_until("the archive to open", move || {
+        let ui = w.unwrap();
+        ui.get_screen() == Screen::Opened && ui.get_plan().ready
+    });
+    assert!(ui.get_remove_archive(), "removing is the default");
+    assert!(!ui.get_plan().keep_archive);
+
+    ui.set_remove_archive(false);
+    ui.invoke_remove_archive_toggled();
+    let w = ui.as_weak();
+    wait_until("the plan for keeping", move || {
+        w.unwrap().get_plan().keep_archive
+    });
+    let plan = ui.get_plan();
+    assert!(plan.fits, "{}", plan.verdict);
+    assert_eq!(plan.needed, plan.normal, "keeping needs every file");
+    assert_eq!(plan.verdict, "Sufficient disk space");
+    shot(ui.window(), &format!("{tag}-17-keep-opened"));
+    wait_until("the choice to be saved", move || {
+        Settings::load_from(&settings_file).keep_archive
+    });
+
+    ui.invoke_extract();
+    let w = ui.as_weak();
+    wait_until("the extraction", move || {
+        w.unwrap().get_task().phase == Phase::Done
+    });
+    assert_eq!(
+        ui.get_task().message,
+        "All entries were extracted. The archive was kept."
+    );
+    assert_eq!(std::fs::read(&archive).unwrap(), before);
+    assert_eq!(
+        std::fs::read(dir.path().join("northwind/Northwind/data/level07.pak")).unwrap(),
+        vec![7u8; 47_000]
+    );
+    assert!(!session::locate(&archive).unwrap().1.exists());
+    shot(ui.window(), &format!("{tag}-18-keep-done"));
+    ui.hide().unwrap();
+}
+
+/// "Extract here (keep archive)" from the right-click menu.
+fn keep_task_flow(scheme: ColorScheme, tag: &str) {
+    let dir = tempfile::tempdir().unwrap();
+    let archive = make_zip(dir.path());
+    let before = std::fs::read(&archive).unwrap();
+    let args = TaskArgs {
+        keep_archive: true,
+        ..one(TaskKind::ExtractHere, &archive)
+    };
+    let (ui, start) = task_window::build(args, Settings::default()).unwrap();
+    ui.global::<Palette>().set_color_scheme(scheme);
+    ui.window().set_size(LogicalSize::new(480.0, 250.0));
+    start();
+    let w = ui.as_weak();
+    wait_until("the task", move || {
+        w.unwrap().get_task().phase == Phase::Done
+    });
+    assert_eq!(
+        ui.get_task().message,
+        "All entries were extracted. The archive was kept."
+    );
+    assert_eq!(std::fs::read(&archive).unwrap(), before);
+    assert!(dir.path().join("Northwind/README.txt").exists());
+    shot(ui.window(), &format!("{tag}-19-task-keep-done"));
+    ui.hide().unwrap();
+}
+
+/// Several archives from one right-click run in turn; one that fails stops
+/// the rest and says how many never started.
+fn queue_flow(scheme: ColorScheme, tag: &str) {
+    let dir = tempfile::tempdir().unwrap();
+    let names = ["Northwind-1.zip", "Northwind-2.zip", "Northwind-3.zip"];
+    let archives: Vec<PathBuf> = names
+        .iter()
+        .map(|n| {
+            let p = dir.path().join(n);
+            std::fs::rename(make_zip(dir.path()), &p).unwrap();
+            p
+        })
+        .collect();
+    let args = TaskArgs {
+        kind: TaskKind::ExtractTo,
+        archives: archives.clone(),
+        keep_archive: false,
+    };
+    let (ui, start) = task_window::build(args, Settings::default()).unwrap();
+    ui.global::<Palette>().set_color_scheme(scheme);
+    ui.window().set_size(LogicalSize::new(480.0, 270.0));
+    start();
+    let w = ui.as_weak();
+    wait_until("every archive", move || {
+        w.unwrap().get_task().step == "All 3 archives completed."
+    });
+    assert_eq!(ui.get_task().phase, Phase::Done);
+    for (archive, folder) in archives
+        .iter()
+        .zip(["Northwind-1", "Northwind-2", "Northwind-3"])
+    {
+        assert!(!archive.exists());
+        assert!(
+            dir.path()
+                .join(folder)
+                .join("Northwind/README.txt")
+                .exists()
+        );
+    }
+    shot(ui.window(), &format!("{tag}-20-task-queue-done"));
+    ui.hide().unwrap();
+
+    // The second can't go where it should: a file is in the way.
+    let dir = tempfile::tempdir().unwrap();
+    let archives: Vec<PathBuf> = names
+        .iter()
+        .map(|n| {
+            let p = dir.path().join(n);
+            std::fs::rename(make_zip(dir.path()), &p).unwrap();
+            p
+        })
+        .collect();
+    let blocker = dir.path().join("Northwind-2/Northwind/README.txt");
+    std::fs::create_dir_all(blocker.parent().unwrap()).unwrap();
+    std::fs::write(&blocker, b"mine").unwrap();
+    let args = TaskArgs {
+        kind: TaskKind::ExtractTo,
+        archives: archives.clone(),
+        keep_archive: false,
+    };
+    let (ui, start) = task_window::build(args, Settings::default()).unwrap();
+    ui.global::<Palette>().set_color_scheme(scheme);
+    ui.window().set_size(LogicalSize::new(480.0, 270.0));
+    start();
+    let w = ui.as_weak();
+    wait_until("the second to fail", move || {
+        w.unwrap().get_task().phase == Phase::Failed
+    });
+    assert_eq!(
+        ui.get_task().step,
+        "Archive 2 of 3. 1 more archive has not started."
+    );
+    assert_eq!(ui.get_task().heading, "Extraction failed");
+    assert!(!archives[0].exists());
+    assert!(archives[1].exists() && archives[2].exists());
+    assert!(!dir.path().join("Northwind-3").exists());
+    assert_eq!(std::fs::read(&blocker).unwrap(), b"mine");
+    shot(ui.window(), &format!("{tag}-21-task-queue-stopped"));
+    ui.hide().unwrap();
+}
+
 fn task_window_flow(scheme: ColorScheme, tag: &str) {
     let dir = tempfile::tempdir().unwrap();
     let archive = make_zip(dir.path());
     let (ui, start) =
-        task_window::build(TaskKind::ExtractTo, archive.clone(), Settings::default()).unwrap();
+        task_window::build(one(TaskKind::ExtractTo, &archive), Settings::default()).unwrap();
     ui.global::<Palette>().set_color_scheme(scheme);
     ui.window().set_size(LogicalSize::new(480.0, 250.0));
     // Nothing happens before the window says go.
@@ -231,7 +409,8 @@ fn task_window_flow(scheme: ColorScheme, tag: &str) {
     // A right-click test of an encrypted archive asks in the small window.
     let locked = tempfile::tempdir().unwrap();
     let archive = make_zip_with(locked.path(), Some(PASSWORD));
-    let (ui, start) = task_window::build(TaskKind::Test, archive, Settings::default()).unwrap();
+    let (ui, start) =
+        task_window::build(one(TaskKind::Test, &archive), Settings::default()).unwrap();
     ui.global::<Palette>().set_color_scheme(scheme);
     ui.window().set_size(LogicalSize::new(480.0, 250.0));
     start();
@@ -304,7 +483,7 @@ fn give_back_flow(scheme: ColorScheme, tag: &str) {
     let State::Fresh(job, out) = session::open(&primary, &paths, None, true, None).unwrap() else {
         panic!("a new archive opens fresh");
     };
-    session::begin(&job, &paths, out).unwrap();
+    session::begin(&job, &paths, out, false).unwrap();
     drop(job);
 
     let drops = Drops::default();
@@ -448,7 +627,10 @@ fn windows_end_to_end() {
 
     for (scheme, tag) in [(ColorScheme::Light, "light"), (ColorScheme::Dark, "dark")] {
         main_window_flow(scheme, tag);
+        keep_flow(scheme, tag);
         task_window_flow(scheme, tag);
+        keep_task_flow(scheme, tag);
+        queue_flow(scheme, tag);
         task_window_states(scheme, tag);
         password_flow(scheme, tag);
         give_back_flow(scheme, tag);

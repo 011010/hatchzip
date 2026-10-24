@@ -6,21 +6,24 @@ The HatchZip desktop app, built with [Slint](https://slint.dev) under its Royalt
 cargo run -p hatchzip-gui                         # main window
 cargo run -p hatchzip-gui -- game.zip             # main window with an archive open
 cargo run -p hatchzip-gui -- --extract-here game.zip
+cargo run -p hatchzip-gui -- --keep-archive --extract-here game.zip
 cargo run -p hatchzip-gui -- --extract-to game.zip
 cargo run -p hatchzip-gui -- --test game.zip
+cargo run -p hatchzip-gui -- --extract-here a.zip b.7z c.tar.gz   # one after another
 cargo run -p hatchzip-gui -- --register-shell     # add the right-click menu, print where, exit
 cargo run -p hatchzip-gui -- --unregister-shell   # remove it, exit
 ```
 
-The three task forms are what file manager menus call, and installers run the two shell flags, so none of them change. The shell flags open no window. Inside an AppImage they register `$APPIMAGE`, not the temporary mount the app runs from.
+The task forms are what file manager menus call, and installers run the two shell flags, so none of them change. `--keep-archive` goes with `--extract-here` or `--extract-to`. Each task form takes several archives, which one window works through in turn: each is checked just before it starts, and one that fails, pauses or doesn't fit holds the rest until it is resumed and done; "Restore archive" drops the rest. Dolphin, GNOME Files and Nemo hand over the whole selection; Explorer starts one window per file. The shell flags open no window. Inside an AppImage they register `$APPIMAGE`, not the temporary mount the app runs from.
 
 ## Behavior
 
 | | |
 |---|---|
 | Passwords | Asked in the window when an archive needs one, and again after a wrong one. Kept in memory for this process only; a run continued later asks again. |
-| Giving up | A paused or partially extracted archive offers "Restore archive", which runs `hatchzip_core::restore` on a worker thread. |
-| Settings | Reserved space and "Verify archive before extracting", saved to `~/.config/hatchzip/settings.json`, `%APPDATA%\HatchZip\settings.json` or `~/Library/Application Support/HatchZip/settings.json`. A missing or broken file means the defaults. The right-click menu switch is hidden on macOS, where hatchzip-shell can't add Finder entries yet. |
+| Giving up | A paused or partially extracted archive offers "Restore archive", which runs `hatchzip_core::restore` on a worker thread. Not for an extraction that keeps its archive, which was never changed. |
+| Keeping the archive | "Remove the archive during extraction", on by default. Cleared, the space plan is for every file, in bold next to what removing the archive would need, and the panel says when only removing it fits. A half-extracted archive continues the way it started. |
+| Settings | Reserved space, "Verify archive before extracting" and "Remove the archive during extraction", saved to `~/.config/hatchzip/settings.json`, `%APPDATA%\HatchZip\settings.json` or `~/Library/Application Support/HatchZip/settings.json`. A missing or broken file means the defaults. The right-click menu switch is hidden on macOS, where hatchzip-shell can't add Finder entries yet. |
 | Identity | App id and X11 class `io.github.xevrion.hatchzip`, matching the desktop file. On Windows `build.rs` embeds `assets/icon/hatchzip.ico` and the version into the exe. |
 
 ## Drawing
@@ -35,4 +38,4 @@ Files dropped on the window open on Windows, macOS and X11. winit 0.30 doesn't r
 
 ## Tests
 
-`cargo test -p hatchzip-gui` runs the unit tests, `tests/cli.rs` for the shell flags, and `tests/ui.rs`, which drives the real windows headlessly through Slint's testing backend. Set `HATCHZIP_GUI_SHOTS=<dir>` to also save every state it passes through as a PNG, in light and dark.
+`cargo test -p hatchzip-gui` runs the unit tests, `tests/cli.rs` for the shell flags, and `tests/ui.rs`, which drives the real windows headlessly through Slint's testing backend. `tests/ui_space.rs` does the same on a disk faked to have room for extracting in place but not for keeping the archive. Set `HATCHZIP_GUI_SHOTS=<dir>` to also save every state they pass through as a PNG, in light and dark.

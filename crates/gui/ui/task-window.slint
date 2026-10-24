@@ -21,8 +21,9 @@ export component TaskWindow inherits Window {
     title: root.task.heading;
     preferred-width: 480px;
     // Tall enough for the longest state and the password prompt, so the
-    // window never has to grow while it is on screen.
-    preferred-height: 250px;
+    // window never has to grow while it is on screen. The extra line for
+    // several archives ("Archive 2 of 3") is counted.
+    preferred-height: 270px;
     min-width: 420px;
     background: Palette.background;
 
@@ -40,6 +41,11 @@ export component TaskWindow inherits Window {
             }
             Text {
                 text: root.task.detail;
+                color: Theme.muted;
+                overflow: elide;
+            }
+            if root.task.step != "": Text {
+                text: root.task.step;
                 color: Theme.muted;
                 overflow: elide;
             }

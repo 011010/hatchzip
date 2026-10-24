@@ -21,7 +21,12 @@ use crate::fsutil;
 /// as is. Older HatchZip builds refuse version 3, which matters: they would
 /// delete a half-extracted file whose archive bytes are already freed.
 const VERSION: u32 = 3;
-const READABLE: [u32; 2] = [2, 3];
+/// An extraction that keeps the archive writes version 4, and only it does.
+/// Builds before `keep` existed refuse it, which matters just as much: they
+/// would resume it in place and truncate the archive the user kept. Every
+/// other journal stays at version 3, so an older build can still finish it.
+const KEEP_VERSION: u32 = 4;
+const READABLE: [u32; 3] = [2, 3, 4];
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Link {
@@ -81,6 +86,11 @@ pub struct Journal {
     /// appended.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub restoring: Option<Vec<(u64, Vec<u8>)>>,
+    /// The extraction keeps the archive: nothing is truncated, punched or
+    /// deleted, and `committed_len` only records progress. A resume keeps
+    /// it too, whatever it is asked.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub keep: bool,
 }
 
 pub struct Paths {
@@ -123,6 +133,11 @@ pub struct Plan {
     pub tail_start: u64,
     pub output: PathBuf,
     pub total_size: u64,
+    pub keep: bool,
+}
+
+fn version_for(keep: bool) -> u32 {
+    if keep { KEEP_VERSION } else { VERSION }
 }
 
 impl Journal {
@@ -133,7 +148,7 @@ impl Journal {
         r.read_to_end(&mut tail)?;
         fsutil::write_atomic(&paths.tail, &tail)?;
         let journal = Self {
-            version: VERSION,
+            version: version_for(plan.keep),
             format: plan.format.to_string(),
             parts: storage.record(),
             tail_start: plan.tail_start,
@@ -144,6 +159,7 @@ impl Journal {
             links: Vec::new(),
             resume: None,
             restoring: None,
+            keep: plan.keep,
         };
         journal.save(paths)?;
         Ok(journal)
@@ -175,7 +191,10 @@ impl Journal {
         }
         let mut journal: Self = serde_json::from_slice(&bytes)
             .with_context(|| format!("{} is damaged", paths.journal.display()))?;
-        journal.version = VERSION;
+        if journal.keep != (version == KEEP_VERSION) {
+            bail!("{} is damaged", paths.journal.display());
+        }
+        journal.version = version_for(journal.keep);
         let tail =
             fs::read(&paths.tail).with_context(|| format!("reading {}", paths.tail.display()))?;
         let len: u64 = journal.parts.iter().map(|(_, l)| l).sum();
@@ -201,18 +220,51 @@ mod tests {
     use super::*;
 
     fn write(dir: &Path, version: u32) -> Paths {
+        write_with(dir, version, "")
+    }
+
+    fn write_with(dir: &Path, version: u32, extra: &str) -> Paths {
         let paths = Paths::for_archive(&dir.join("game.zip"));
         let tail = b"saved tail";
         fs::write(&paths.tail, tail).unwrap();
         let json = format!(
             r#"{{"version":{version},"format":"zip","parts":[[{},{}]],"tail_start":0,
-                "tail_crc":{},"output":"out","total_size":0,"committed_len":0,"links":[]}}"#,
+                "tail_crc":{},"output":"out","total_size":0,"committed_len":0,"links":[]{extra}}}"#,
             serde_json::to_string(&dir.join("game.zip")).unwrap(),
             tail.len(),
             crc32fast::hash(tail)
         );
         fs::write(&paths.journal, json).unwrap();
         paths
+    }
+
+    /// Only an extraction that keeps the archive writes version 4, so older
+    /// builds, which would truncate it, refuse it; in-place runs stay at 3.
+    #[test]
+    fn keeping_the_archive_is_version_4_and_only_that_is() {
+        let dir =
+            std::env::temp_dir().join(format!("hatchzip-journal-keep-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+
+        let (journal, _) = Journal::load(&write_with(&dir, 4, r#","keep":true"#)).unwrap();
+        assert!(journal.keep);
+        assert_eq!(journal.version, KEEP_VERSION);
+        let saved = serde_json::to_string(&journal).unwrap();
+        assert!(saved.contains(r#""version":4"#) && saved.contains(r#""keep":true"#));
+
+        let (journal, _) = Journal::load(&write(&dir, 3)).unwrap();
+        assert!(!journal.keep);
+        assert!(
+            !serde_json::to_string(&journal)
+                .unwrap()
+                .contains(r#""keep":"#)
+        );
+
+        // A mismatch means someone edited the file.
+        assert!(Journal::load(&write(&dir, 4)).is_err());
+        assert!(Journal::load(&write_with(&dir, 3, r#","keep":true"#)).is_err());
+
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     /// A run started by the previous release resumes; one started by a
@@ -226,7 +278,7 @@ mod tests {
         assert_eq!(journal.resume, None);
         assert_eq!(journal.version, VERSION);
 
-        let err = Journal::load(&write(&dir, VERSION + 1)).err().unwrap();
+        let err = Journal::load(&write(&dir, KEEP_VERSION + 1)).err().unwrap();
         assert!(format!("{err:#}").contains("newer HatchZip"), "{err:#}");
         let err = Journal::load(&write(&dir, 1)).err().unwrap();
         assert!(format!("{err:#}").contains("older HatchZip"), "{err:#}");

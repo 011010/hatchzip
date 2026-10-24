@@ -1,5 +1,6 @@
 //! The command line. File manager menus call these exact forms, so changing
-//! one breaks every installed right-click entry.
+//! one breaks every installed right-click entry. Each task form takes one
+//! archive or several, which run one after another.
 
 use std::path::PathBuf;
 
@@ -17,20 +18,24 @@ use clap::{ArgGroup, Parser};
         "test",
         "register_shell",
         "unregister_shell",
-    ]))
+    ])),
+    group(ArgGroup::new("extracting").args(["extract_here", "extract_to"]))
 )]
 pub struct Args {
     /// The archive to open, or any part of a split archive
     pub archive: Option<PathBuf>,
-    /// Extract into the folder the archive is in
-    #[arg(long, value_name = "ARCHIVE")]
-    pub extract_here: Option<PathBuf>,
-    /// Extract into a new folder named after the archive
-    #[arg(long, value_name = "ARCHIVE")]
-    pub extract_to: Option<PathBuf>,
+    /// Extract into the folder each archive is in
+    #[arg(long, value_name = "ARCHIVE", num_args = 1..)]
+    pub extract_here: Option<Vec<PathBuf>>,
+    /// Extract into a new folder named after each archive
+    #[arg(long, value_name = "ARCHIVE", num_args = 1..)]
+    pub extract_to: Option<Vec<PathBuf>>,
     /// Check every file for damage, without writing anything
-    #[arg(long, value_name = "ARCHIVE")]
-    pub test: Option<PathBuf>,
+    #[arg(long, value_name = "ARCHIVE", num_args = 1..)]
+    pub test: Option<Vec<PathBuf>>,
+    /// With --extract-here or --extract-to: keep the archive, removing nothing
+    #[arg(long, requires = "extracting")]
+    pub keep_archive: bool,
     /// Add HatchZip to the file manager's right-click menu, then exit
     #[arg(long)]
     pub register_shell: bool,
@@ -46,12 +51,22 @@ pub enum TaskKind {
     Test,
 }
 
+/// What a right-click asked for.
+#[derive(Debug, PartialEq, Eq)]
+pub struct TaskArgs {
+    pub kind: TaskKind,
+    /// One or more, done in this order.
+    pub archives: Vec<PathBuf>,
+    /// Extract without removing the archives.
+    pub keep_archive: bool,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum Launch {
     /// The main window, empty or with an archive open.
     Main(Option<PathBuf>),
     /// A small window that runs one task, started from a right-click.
-    Task(TaskKind, PathBuf),
+    Task(TaskArgs),
     /// Installers run these; no window opens.
     RegisterShell,
     UnregisterShell,
@@ -59,16 +74,23 @@ pub enum Launch {
 
 impl Args {
     pub fn launch(self) -> Launch {
+        let task = |kind, archives| {
+            Launch::Task(TaskArgs {
+                kind,
+                archives,
+                keep_archive: self.keep_archive,
+            })
+        };
         if self.register_shell {
             Launch::RegisterShell
         } else if self.unregister_shell {
             Launch::UnregisterShell
         } else if let Some(a) = self.extract_here {
-            Launch::Task(TaskKind::ExtractHere, a)
+            task(TaskKind::ExtractHere, a)
         } else if let Some(a) = self.extract_to {
-            Launch::Task(TaskKind::ExtractTo, a)
+            task(TaskKind::ExtractTo, a)
         } else if let Some(a) = self.test {
-            Launch::Task(TaskKind::Test, a)
+            task(TaskKind::Test, a)
         } else {
             Launch::Main(self.archive)
         }
@@ -92,6 +114,14 @@ mod tests {
         Args::command().debug_assert();
     }
 
+    fn task(kind: TaskKind, archives: &[&str], keep_archive: bool) -> Launch {
+        Launch::Task(TaskArgs {
+            kind,
+            archives: archives.iter().map(PathBuf::from).collect(),
+            keep_archive,
+        })
+    }
+
     #[test]
     fn every_documented_form_parses() {
         assert_eq!(parse(&[]).unwrap(), Launch::Main(None));
@@ -101,20 +131,46 @@ mod tests {
         );
         assert_eq!(
             parse(&["--extract-here", "a b/game.7z.001"]).unwrap(),
-            Launch::Task(TaskKind::ExtractHere, "a b/game.7z.001".into())
+            task(TaskKind::ExtractHere, &["a b/game.7z.001"], false)
         );
         assert_eq!(
             parse(&["--extract-to", "game.zip"]).unwrap(),
-            Launch::Task(TaskKind::ExtractTo, "game.zip".into())
+            task(TaskKind::ExtractTo, &["game.zip"], false)
         );
         assert_eq!(
             parse(&["--test", "game.tar"]).unwrap(),
-            Launch::Task(TaskKind::Test, "game.tar".into())
+            task(TaskKind::Test, &["game.tar"], false)
         );
         assert_eq!(
             parse(&["--extract-here=game.zip"]).unwrap(),
-            Launch::Task(TaskKind::ExtractHere, "game.zip".into())
+            task(TaskKind::ExtractHere, &["game.zip"], false)
         );
+    }
+
+    /// What the "keep archive" menu entries run, and what file managers
+    /// that hand over every selected file at once pass.
+    #[test]
+    fn keeping_and_several_archives_parse() {
+        assert_eq!(
+            parse(&["--keep-archive", "--extract-here", "game.zip"]).unwrap(),
+            task(TaskKind::ExtractHere, &["game.zip"], true)
+        );
+        assert_eq!(
+            parse(&["--extract-to", "game.zip", "--keep-archive"]).unwrap(),
+            task(TaskKind::ExtractTo, &["game.zip"], true)
+        );
+        assert_eq!(
+            parse(&["--keep-archive", "--extract-here", "a.zip", "b c.7z.001"]).unwrap(),
+            task(TaskKind::ExtractHere, &["a.zip", "b c.7z.001"], true)
+        );
+        assert_eq!(
+            parse(&["--test", "a.zip", "b.tar"]).unwrap(),
+            task(TaskKind::Test, &["a.zip", "b.tar"], false)
+        );
+        // Keeping only means something when extracting.
+        assert!(parse(&["--keep-archive"]).is_err());
+        assert!(parse(&["--keep-archive", "--test", "a.zip"]).is_err());
+        assert!(parse(&["--keep-archive", "a.zip"]).is_err());
     }
 
     #[test]

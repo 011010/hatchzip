@@ -31,6 +31,8 @@ struct Loaded {
     summary: String,
     entries: Vec<Entry>,
     mode: Mode,
+    /// Half extracted by a run that keeps the archive.
+    kept: bool,
     output: PathBuf,
     job: Option<Job>,
     password: Option<String>,
@@ -49,6 +51,7 @@ fn load(archive: &Path, password: Option<String>) -> Result<Loaded> {
         session::open_encrypted(&primary, &paths, None, false, password, |wrong| {
             crate::password::ask(&file_name, wrong)
         })?;
+    let mut kept = false;
     let (job, mode, output, total, left) = match state {
         State::Fresh(job, out) => {
             let total = job.remaining_size();
@@ -56,6 +59,7 @@ fn load(archive: &Path, password: Option<String>) -> Result<Loaded> {
         }
         State::Resume(job, journal) => {
             let left = job.remaining_size();
+            kept = journal.keep;
             (
                 Some(job),
                 Mode::Resume,
@@ -92,6 +96,7 @@ fn load(archive: &Path, password: Option<String>) -> Result<Loaded> {
         summary: summary.join(" \u{b7} "),
         entries: job.as_ref().map(entries::collect).unwrap_or_default(),
         mode,
+        kept,
         output,
         job,
         password,
@@ -108,6 +113,8 @@ struct App {
     archive: RefCell<Option<PathBuf>>,
     name: RefCell<String>,
     mode: Cell<Mode>,
+    /// The half-extracted run being resumed keeps its archive.
+    kept_run: Cell<bool>,
     output: RefCell<PathBuf>,
     keep_free: Cell<u64>,
     /// Shared with the threads that work out the space plan.
@@ -164,6 +171,7 @@ pub fn build(
     let ui = MainWindow::new()?;
     ui.set_keep_free(gb_text(settings.keep_free).into());
     ui.set_verify_first(settings.verify_first);
+    ui.set_remove_archive(!settings.keep_archive);
     ui.set_shell_menu_available(platform::SHELL_MENU);
     ui.set_shell_menu_label(platform::SHELL_MENU_LABEL.into());
 
@@ -179,6 +187,7 @@ pub fn build(
         archive: RefCell::new(None),
         name: RefCell::new(String::new()),
         mode: Cell::new(Mode::Fresh),
+        kept_run: Cell::new(false),
         output: RefCell::new(PathBuf::new()),
         keep_free: Cell::new(settings.keep_free),
         job: RefCell::default(),
@@ -260,6 +269,12 @@ fn wire(ui: &MainWindow, app: &Rc<App>) {
     ui.on_verify_first_toggled(move || {
         let on = a.ui().get_verify_first();
         a.change_settings(|s| s.verify_first = on);
+    });
+    let a = app.clone();
+    ui.on_remove_archive_toggled(move || {
+        let keep = !a.ui().get_remove_archive();
+        a.change_settings(|s| s.keep_archive = keep);
+        a.refresh_plan();
     });
     let a = app.clone();
     ui.on_shell_menu_toggled(move || a.shell_menu_toggled());
@@ -346,11 +361,13 @@ impl App {
         ui.set_summary(loaded.summary.into());
         ui.set_entries(ModelRc::new(Entries(loaded.entries)));
         ui.set_mode(loaded.mode);
+        ui.set_kept_run(loaded.kept);
         ui.set_output(loaded.output.display().to_string().into());
         ui.set_screen(Screen::Opened);
         *self.name.borrow_mut() = loaded.name;
         *self.password.borrow_mut() = loaded.password;
         self.mode.set(loaded.mode);
+        self.kept_run.set(loaded.kept);
         *self.output.borrow_mut() = loaded.output;
         *self.job.borrow_mut() = Arc::new(Mutex::new(loaded.job));
         self.refresh_plan();
@@ -371,11 +388,12 @@ impl App {
         let job = self.job.borrow().clone();
         let out = self.output.borrow().clone();
         let resuming = self.mode.get() == Mode::Resume;
+        let keep = self.keeps_archive();
         let keep_free = self.keep_free.get();
         std::thread::spawn(move || {
             let job = job.lock().expect("plan thread panicked");
             let Some(job) = job.as_ref() else { return };
-            let view = match session::plan(job, &out, resuming, keep_free) {
+            let view = match session::plan(job, &out, resuming, keep_free, keep) {
                 Ok(plan) => plan_view(&plan),
                 Err(e) => PlanView {
                     ready: true,
@@ -389,6 +407,15 @@ impl App {
                 }
             });
         });
+    }
+
+    /// A fresh archive goes the way the box says; a half-extracted one the
+    /// way it started.
+    fn keeps_archive(&self) -> bool {
+        match self.mode.get() {
+            Mode::Fresh => !self.ui().get_remove_archive(),
+            _ => self.kept_run.get(),
+        }
     }
 
     fn keep_free_edited(&self, text: &str) {
@@ -501,12 +528,14 @@ impl App {
         };
         let ui = self.ui();
         let output = self.output.borrow().clone();
+        let keep = self.keeps_archive();
         let request = Request::Extract {
             archive,
             // A resume must go where it started; the journal knows where.
             output: (self.mode.get() == Mode::Fresh).then(|| output.clone()),
             keep_free: self.keep_free.get(),
             verify_first: ui.get_verify_first(),
+            keep_archive: keep,
             password: self.password.borrow().clone(),
         };
         // On Windows our read handle would block the exclusive one the
@@ -515,7 +544,7 @@ impl App {
         let job = self.job.replace(SharedJob::default());
         self.runner.start_after(
             move || drop(job.lock().map(|mut j| j.take())),
-            Task::extract(&self.name.borrow(), Some(&output)),
+            Task::extract(&self.name.borrow(), Some(&output), keep),
             request,
         );
     }

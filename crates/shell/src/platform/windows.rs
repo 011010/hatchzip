@@ -30,6 +30,9 @@ pub fn register(_dirs: &Dirs, gui: &Path) -> Result<Vec<String>> {
     let mut written = Vec::new();
     for ext in EXTENSIONS {
         let path = menu_key(ext);
+        // Items are numbered in their key names, so an older registration
+        // whose numbers have shifted would leave duplicates behind.
+        let _ = hkcu.delete_subkey_all(&path);
         let (menu, _) = hkcu
             .create_subkey(&path)
             .with_context(|| format!("creating HKCU\\{path}"))?;

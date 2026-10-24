@@ -2,6 +2,7 @@
 //! date for whichever window shows it.
 
 use std::cell::{Cell, RefCell};
+use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -30,6 +31,11 @@ pub struct Runner {
     timer: Timer,
     quit_when_stopped: Cell<bool>,
     show: Box<dyn Fn(&Task)>,
+    /// Archives still to do after the current one, from a right-click on
+    /// several. The next starts only once the current one is done.
+    queue: RefCell<VecDeque<(Task, Request)>>,
+    /// Which of how many the current one is, counting from 1.
+    place: Cell<(usize, usize)>,
 }
 
 impl Runner {
@@ -41,6 +47,8 @@ impl Runner {
             timer: Timer::default(),
             quit_when_stopped: Cell::new(false),
             show: Box::new(show),
+            queue: RefCell::default(),
+            place: Cell::new((1, 1)),
         });
         RUNNER.with(|r| *r.borrow_mut() = Some(runner.clone()));
         runner
@@ -75,6 +83,10 @@ impl Runner {
             .borrow()
             .as_ref()
             .map_or_else(String::new, |t| t.name().to_string());
+        // Stopping one archive for good stops the rest too; nothing more
+        // starts behind the person's back.
+        self.queue.borrow_mut().clear();
+        self.place.set((1, 1));
         self.start(Task::restore(&name), Request::Restore { archive });
     }
 
@@ -84,6 +96,60 @@ impl Runner {
 
     pub fn start(&self, task: Task, request: Request) {
         self.start_after(|| {}, task, request);
+    }
+
+    /// Runs each in turn, the next once the last is done. One that pauses,
+    /// fails or doesn't fit holds the rest until it is resumed and done.
+    pub fn start_queue(&self, jobs: Vec<(Task, Request)>) {
+        let mut jobs = VecDeque::from(jobs);
+        let Some((task, request)) = jobs.pop_front() else {
+            return;
+        };
+        self.place.set((1, jobs.len() + 1));
+        *self.queue.borrow_mut() = jobs;
+        self.start(task, request);
+    }
+
+    /// "Archive 2 of 3" while several are queued, and what is left when one
+    /// stops them.
+    fn step(&self, task: &Task) -> String {
+        let (at, of) = self.place.get();
+        if of < 2 {
+            return String::new();
+        }
+        let left = of - at;
+        if task.view.phase == crate::Phase::Done && left == 0 {
+            return format!("All {of} archives completed.");
+        }
+        if task.running() || left == 0 {
+            return format!("Archive {at} of {of}");
+        }
+        let rest = if left == 1 {
+            "1 more archive has not started".to_string()
+        } else {
+            format!("{left} more archives have not started")
+        };
+        format!("Archive {at} of {of}. {rest}.")
+    }
+
+    /// Starts the next queued archive if the current one is done.
+    fn next_in_queue(&self) -> bool {
+        let done = self
+            .task
+            .borrow()
+            .as_ref()
+            .is_some_and(|t| t.view.phase == crate::Phase::Done);
+        if !done {
+            return false;
+        }
+        let next = self.queue.borrow_mut().pop_front();
+        let Some((task, request)) = next else {
+            return false;
+        };
+        let (at, of) = self.place.get();
+        self.place.set((at + 1, of));
+        self.start(task, request);
+        true
     }
 
     /// Like [`Self::start`], with `before` run first on the worker thread,
@@ -183,6 +249,9 @@ impl Runner {
         self.tick();
         self.update(|t| t.apply(u));
         if !self.running() {
+            if self.next_in_queue() {
+                return;
+            }
             self.timer.stop();
             if self.quit_when_stopped.get() {
                 let _ = slint::quit_event_loop();
@@ -194,6 +263,7 @@ impl Runner {
         let mut task = self.task.borrow_mut();
         if let Some(t) = task.as_mut() {
             f(t);
+            t.view.step = self.step(t).into();
             (self.show)(t);
         }
     }

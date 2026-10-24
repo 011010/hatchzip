@@ -27,11 +27,16 @@ fn linux_menus_point_at_the_gui_and_go_away_cleanly() {
     let text = std::fs::read_to_string(&kde).unwrap();
     for a in ACTIONS {
         assert!(
-            text.contains(&format!("Exec=\"{}\" {} %f", gui.display(), a.flag)),
+            text.contains(&format!("Exec=\"{}\" {} %F", gui.display(), a.flag)),
             "{}",
             a.id
         );
     }
+    assert!(text.contains("Actions=extract-here;extract-here-keep;extract-to;test;"));
+    assert!(text.contains(
+        "Name=Extract here (keep archive)\nIcon=archive-extract\n\
+         Exec=\"/opt/Hatch Zip/it's/hatchzip-gui\" --keep-archive --extract-here %F"
+    ));
     assert_eq!(
         std::fs::metadata(&kde).unwrap().permissions().mode() & 0o111,
         0o111
@@ -41,6 +46,14 @@ fn linux_menus_point_at_the_gui_and_go_away_cleanly() {
     let text = std::fs::read_to_string(&script).unwrap();
     assert!(text.contains("'/opt/Hatch Zip/it'\\''s/hatchzip-gui' --extract-here"));
     assert!(std::fs::metadata(&script).unwrap().permissions().mode() & 0o100 != 0);
+    let keep = tmp
+        .path()
+        .join("nautilus/scripts/HatchZip - Extract here (keep archive)");
+    assert!(
+        std::fs::read_to_string(&keep)
+            .unwrap()
+            .contains("'/opt/Hatch Zip/it'\\''s/hatchzip-gui' --keep-archive --extract-here")
+    );
 
     let nemo = tmp.path().join("nemo/actions/hatchzip-test.nemo_action");
     assert!(
@@ -48,6 +61,12 @@ fn linux_menus_point_at_the_gui_and_go_away_cleanly() {
             .unwrap()
             .contains("Extensions=zip;7z;tar;tgz;gz;001;")
     );
+    let nemo = tmp
+        .path()
+        .join("nemo/actions/hatchzip-extract-here-keep.nemo_action");
+    let text = std::fs::read_to_string(&nemo).unwrap();
+    assert!(text.contains("Name=Extract here (keep archive) with HatchZip"));
+    assert!(text.contains("--keep-archive --extract-here %F\nSelection=notnone\n"));
 
     // Running it twice is harmless, and so is unregistering twice.
     register(&dirs, gui).unwrap();
@@ -56,6 +75,55 @@ fn linux_menus_point_at_the_gui_and_go_away_cleanly() {
     assert!(!is_registered(&dirs));
     let left: Vec<_> = walk(tmp.path());
     assert!(left.is_empty(), "left behind: {left:?}");
+}
+
+/// The GNOME Files script, run as GNOME Files runs it, hands every selected
+/// file to one GUI process, names with spaces and stars intact.
+#[cfg(target_os = "linux")]
+#[test]
+fn gnome_files_passes_every_selected_archive_at_once() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let dirs = Dirs {
+        data: tmp.path().join("data"),
+    };
+    // Stands in for the GUI: writes its arguments, one per line.
+    let gui = tmp.path().join("fake gui");
+    let log = tmp.path().join("args.txt");
+    std::fs::write(
+        &gui,
+        format!("#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\n", log.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&gui, std::fs::Permissions::from_mode(0o755)).unwrap();
+    register(&dirs, &gui).unwrap();
+
+    let script = dirs
+        .data
+        .join("nautilus/scripts/HatchZip - Extract here (keep archive)");
+    let run = std::process::Command::new(&script)
+        .current_dir(tmp.path())
+        .env(
+            "NAUTILUS_SCRIPT_SELECTED_FILE_PATHS",
+            "/home/sam/My Games/a.zip\n/home/sam/*.7z.001\n",
+        )
+        .status()
+        .unwrap();
+    assert!(run.success());
+    assert_eq!(
+        std::fs::read_to_string(&log).unwrap(),
+        "--keep-archive\n--extract-here\n/home/sam/My Games/a.zip\n/home/sam/*.7z.001\n"
+    );
+
+    // Nothing selected (a remote folder): nothing runs.
+    std::fs::remove_file(&log).unwrap();
+    let run = std::process::Command::new(&script)
+        .env("NAUTILUS_SCRIPT_SELECTED_FILE_PATHS", "")
+        .status()
+        .unwrap();
+    assert!(run.success());
+    assert!(!log.exists());
 }
 
 #[cfg(target_os = "linux")]

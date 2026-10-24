@@ -73,28 +73,53 @@ pub fn plan_view(plan: &SpacePlan) -> PlanView {
         )
     };
     let mut notes = Vec::new();
+    // Whichever way was not chosen, when it would change the answer or
+    // offers more. Only a fresh archive can still choose.
+    if plan.either && plan.keep_archive && !plan.fits && plan.in_place_fits() {
+        notes.push(format!(
+            "Removing the archive during extraction requires only {}.",
+            human(plan.in_place_needs)
+        ));
+    }
+    if plan.either && !plan.keep_archive && plan.fits && plan.normal_fits() {
+        notes.push("There is also enough space to keep the archive.".to_string());
+    }
     if !plan.fits && plan.solid_block_bound {
         notes.push(
             "Most of the required space is one solid block, which can only be released after \
-             it is fully extracted.",
+             it is fully extracted."
+                .to_string(),
         );
     }
-    if !plan.reclaims {
+    if !plan.reclaims && !plan.keep_archive {
         notes.push(
-            "The destination is on another drive, so removing the archive does not free space there.",
+            "The destination is on another drive, so removing the archive does not free space there."
+                .to_string(),
         );
     }
     if plan.archive_kept_whole {
         notes.push(
             "This drive cannot release space inside a file, so the compressed archive remains \
-             whole until extraction completes.",
+             whole until extraction completes."
+                .to_string(),
         );
     }
     let used = plan.needed + plan.keep_free;
     PlanView {
         ready: true,
         free: human(plan.free).into(),
-        normal: human(plan.normal_needs).into(),
+        // A half-extracted run continues the way it started.
+        normal: if !plan.keep_archive && !plan.either {
+            "-".into()
+        } else {
+            human(plan.normal_needs).into()
+        },
+        in_place: if plan.keep_archive && !plan.either {
+            "-".into()
+        } else {
+            human(plan.in_place_needs).into()
+        },
+        keep_archive: plan.keep_archive,
         needed: human(plan.needed).into(),
         keep: human(plan.keep_free).into(),
         after: if plan.fits {
@@ -245,11 +270,62 @@ mod tests {
             keep_free: keep,
             fits: free >= needed + keep,
             free_after: free.saturating_sub(needed),
+            keep_archive: false,
             normal_needs: needed * 2,
+            in_place_needs: needed,
+            either: true,
             reclaims: true,
             solid_block_bound: false,
             archive_kept_whole: false,
         }
+    }
+
+    /// The same disk and archive, planned with the archive kept.
+    fn kept(mut p: SpacePlan) -> SpacePlan {
+        p.keep_archive = true;
+        p.needed = p.normal_needs;
+        p.fits = p.free >= p.needed + p.keep_free;
+        p
+    }
+
+    #[test]
+    fn the_other_way_is_mentioned_when_it_matters() {
+        // Room for 4 GB: in place needs 3 GB, keeping needs 6 GB.
+        let tight = plan(6_000_000_000, 3_000_000_000, 2_000_000_000);
+        let v = plan_view(&kept(tight));
+        assert!(!v.fits && v.keep_archive);
+        assert_eq!(
+            v.verdict,
+            "Insufficient disk space. 2.0 GB more is required."
+        );
+        assert_eq!(v.needed, "6.0 GB");
+        assert_eq!(v.normal, "6.0 GB");
+        assert_eq!(v.in_place, "3.0 GB");
+        assert_eq!(
+            v.note,
+            "Removing the archive during extraction requires only 3.0 GB."
+        );
+        // In place fits and says nothing about keeping, which doesn't.
+        let v = plan_view(&plan(6_000_000_000, 3_000_000_000, 2_000_000_000));
+        assert!(v.fits && !v.keep_archive);
+        assert_eq!(v.note, "");
+
+        let roomy = plan(20_000_000_000, 3_000_000_000, 2_000_000_000);
+        assert_eq!(
+            plan_view(&roomy).note,
+            "There is also enough space to keep the archive."
+        );
+        assert_eq!(plan_view(&kept(roomy)).note, "");
+
+        // Half extracted, a run goes on the way it started.
+        let mut resumed = kept(plan(1_000_000_000, 3_000_000_000, 0));
+        resumed.either = false;
+        let v = plan_view(&resumed);
+        assert_eq!(v.in_place, "-");
+        assert_eq!(v.note, "");
+        let mut resumed = plan(1_000_000_000, 300_000_000, 0);
+        resumed.either = false;
+        assert_eq!(plan_view(&resumed).normal, "-");
     }
 
     #[test]
@@ -258,7 +334,9 @@ mod tests {
         assert!(fits.fits);
         assert_eq!(fits.verdict, "Sufficient disk space");
         assert_eq!(fits.needed, "3.0 GB");
-        assert_eq!(fits.note, "");
+        assert_eq!(fits.in_place, "3.0 GB");
+        assert_eq!(fits.normal, "6.0 GB");
+        assert_eq!(fits.note, "There is also enough space to keep the archive.");
         assert!((fits.meter - 0.5).abs() < 1e-6);
 
         let mut tight = plan(4_000_000_000, 3_000_000_000, 2_000_000_000);
