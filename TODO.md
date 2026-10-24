@@ -33,6 +33,15 @@ Ticked when it is merged and tested, not when it is started.
 - [ ] Extract several archives one after another from one command or one right-click, checking the space for each
 - [ ] Android app (the engine is a library; Android's storage access rules are the open question)
 - [ ] The other direction: compress in place when there is no room for a copy. A folder: delete each file once its compressed copy is safely on disk. One huge file: free its start with hole punching as it is compressed, with resume points like extraction has
+- [ ] Keep the archive when there is room: an option (CLI, GUI, right-click) to extract normally without removing anything, and say so in the space check
+- [ ] Opening a huge archive must never sit silent: show progress while it is read and checked (a user saw "checking disk space" for 20 minutes)
+- [ ] Nested archives: offer to extract the archives found inside, in place too
+- [ ] Extract while downloading: read the archive from a URL and never store it (for formats that can be read front to back)
+- [ ] Windows Defender quarantining a file mid-run: read each file back before its bytes are cut (see Safety and polish)
+- [ ] Packages: winget, Homebrew, AUR (`pacman -S hatchzip`), Gentoo GURU, Flatpak; Steam Deck notes (the AppImage runs in desktop mode)
+- [ ] File-manager menus: Windows 11 top-level menu, COSMIC Files, Thunar
+- [ ] Antivirus false positives: signed Windows builds, a notarized macOS app (unsigned builds get flagged by VirusTotal engines and moved to the Trash by macOS), and an FAQ until then
+- [ ] Android (several requests); iOS is out of reach for in-place work
 
 ## GUI, like WinRAR and 7-Zip
 
