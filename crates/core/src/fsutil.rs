@@ -54,21 +54,62 @@ pub fn sync_dir(dir: &Path) -> Result<()> {
 /// Whether punching holes in files in `dir` really gives space back. The
 /// answer depends on the filesystem, and a call can succeed without freeing
 /// anything (NTFS on a file not marked sparse), so it is tried on a scratch
-/// file and measured rather than assumed.
+/// file and measured rather than assumed. The verdict is logged on debug
+/// builds: turning in-place freeing off silently was exactly what made the
+/// macOS punch flake in the TODO undiagnosable.
 pub fn can_punch(dir: &Path) -> bool {
     let probe = dir.join(format!(".hatchzip-probe-{}", std::process::id()));
-    let freed = punch_probe(&probe);
+    let verdict = punch_probe(&probe);
     let _ = fs::remove_file(&probe);
-    freed.unwrap_or(false)
+    if cfg!(debug_assertions) {
+        eprintln!(
+            "hatchzip: punch probe in {}: {}",
+            dir.display(),
+            verdict.describe()
+        );
+    }
+    matches!(verdict, Probe::Freed { .. })
 }
 
-fn punch_probe(path: &Path) -> std::io::Result<bool> {
+/// What the scratch-file punch did, kept apart because the causes need
+/// different answers: a refusal is the filesystem saying it cannot punch at
+/// all, a punch that succeeds without the allocation dropping means the space
+/// is held (by a snapshot, or a clone) or reported late, and a failing call
+/// is an error in our own probe.
+enum Probe {
+    Freed { before: u64, after: u64 },
+    Refused,
+    NotFreed { before: u64, after: u64, len: u64 },
+    Failed(std::io::Error),
+}
+
+impl Probe {
+    fn describe(&self) -> String {
+        match self {
+            Probe::Freed { before, after } => {
+                format!("ok, freed {} of {} bytes", before - after, before)
+            }
+            Probe::Refused => "refused: the filesystem will not punch".into(),
+            Probe::NotFreed { before, after, len } => format!(
+                "the punch ran but {after} of {before} bytes are still allocated \
+                 (length {len}): the space is held or reported late"
+            ),
+            Probe::Failed(e) => format!("the probe itself failed: {e}"),
+        }
+    }
+}
+
+fn punch_probe(path: &Path) -> Probe {
     const LEN: u64 = 1 << 20;
-    let mut f = fs::OpenOptions::new()
+    let mut f = match fs::OpenOptions::new()
         .read(true)
         .write(true)
         .create_new(true)
-        .open(path)?;
+        .open(path)
+    {
+        Ok(f) => f,
+        Err(e) => return Probe::Failed(e),
+    };
     // Noise, because btrfs, ZFS and NTFS compress zeros or repeats into
     // almost nothing, and then there would be nothing to see freed.
     let mut x: u64 = 0x9E37_79B9_7F4A_7C15;
@@ -80,15 +121,37 @@ fn punch_probe(path: &Path) -> std::io::Result<bool> {
             x as u8
         })
         .collect();
-    f.write_all(&noise)?;
-    f.sync_all()?;
-    let before = platform::allocated_bytes(path)?;
-    if !platform::punch_hole(&f, 0, LEN)? {
-        return Ok(false);
+    if let Err(e) = f.write_all(&noise) {
+        return Probe::Failed(e);
     }
-    f.sync_all()?;
-    let after = platform::allocated_bytes(path)?;
-    Ok(f.metadata()?.len() == LEN && after + LEN / 2 <= before)
+    if let Err(e) = f.sync_all() {
+        return Probe::Failed(e);
+    }
+    let before = match platform::allocated_bytes(path) {
+        Ok(b) => b,
+        Err(e) => return Probe::Failed(e),
+    };
+    match platform::punch_hole(&f, 0, LEN) {
+        Ok(true) => {}
+        Ok(false) => return Probe::Refused,
+        Err(e) => return Probe::Failed(e),
+    }
+    if let Err(e) = f.sync_all() {
+        return Probe::Failed(e);
+    }
+    let after = match platform::allocated_bytes(path) {
+        Ok(a) => a,
+        Err(e) => return Probe::Failed(e),
+    };
+    let len = match f.metadata() {
+        Ok(m) => m.len(),
+        Err(e) => return Probe::Failed(e),
+    };
+    if len == LEN && after + LEN / 2 <= before {
+        Probe::Freed { before, after }
+    } else {
+        Probe::NotFreed { before, after, len }
+    }
 }
 
 /// ZIP stores local wall-clock time with no zone. We read it as UTC, which is
