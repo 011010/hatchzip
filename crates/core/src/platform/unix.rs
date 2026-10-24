@@ -30,9 +30,19 @@ pub fn allocated_bytes(path: &Path) -> io::Result<u64> {
 }
 
 /// Unix filesystems take any name without `/` or NUL, which path parsing
-/// already rules out.
-pub fn name_problem(_name: &str) -> Option<&'static str> {
+/// already rules out, up to 255 bytes. A file is first written under its
+/// name plus `.hatchzip-part`, so that has to fit too.
+pub fn name_problem(name: &str) -> Option<&'static str> {
+    if name.len() > 255 - ".hatchzip-part".len() {
+        return Some("the name is longer than this file system allows");
+    }
     None
+}
+
+/// How long `path` is, in the units [`MAX_PATH_LEN`](super::MAX_PATH_LEN)
+/// counts: bytes on Unix.
+pub fn path_len(path: &Path) -> usize {
+    path.as_os_str().len()
 }
 
 pub fn sync_dir(dir: &Path) -> io::Result<()> {

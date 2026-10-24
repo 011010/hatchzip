@@ -92,7 +92,10 @@ fn assert_refused(archive: &Path, why: &str) {
         let stderr = String::from_utf8_lossy(&o.stderr).replace('\\', "/");
         assert!(!o.status.success(), "{what} should refuse");
         assert!(stderr.contains(why), "{what}: {stderr}");
-        assert!(stderr.contains("refused"), "{what}: {stderr}");
+        assert!(
+            stderr.contains("refused") || stderr.contains("was not modified"),
+            "{what}: {stderr}"
+        );
     }
     assert_eq!(fs::read(archive).unwrap(), before, "the archive changed");
     for p in side_files(archive) {
@@ -456,4 +459,42 @@ fn a_colliding_archive_among_several_is_refused_untouched() {
     assert!(!tmp.path().join("b").exists());
     assert_unchanged(&c_before);
     assert!(!tmp.path().join("c").exists());
+}
+
+/// A path the system can't create used to fail only when its turn came,
+/// after the files behind it had been cut off the archive (macOS stops at
+/// 1024 bytes). It is refused up front instead. Windows takes paths this
+/// long through the `\\?\` form, so there it extracts.
+#[test]
+fn a_path_longer_than_the_system_allows_is_refused_up_front() {
+    let tmp = TempDir::new().unwrap();
+    let deep = format!("{}/deep.txt", vec!["d".repeat(200); 21].join("/"));
+    let mut z = ZipWriter::new(Cursor::new(Vec::new()));
+    z.start_file(deep.as_str(), stored()).unwrap();
+    z.write_all(b"deep\n").unwrap();
+    for name in ["a.pak", "b.pak"] {
+        z.start_file(name, stored()).unwrap();
+        z.write_all(&[7u8; 30_000]).unwrap();
+    }
+    let archive = write(tmp.path(), "deep.zip", z.finish().unwrap().into_inner());
+    if cfg!(windows) {
+        assert_ok(&extract(&archive, &tmp.path().join("out"), &[]));
+    } else {
+        assert_refused(&archive, "longer than this system allows");
+    }
+}
+
+/// One name past 255 bytes, counting the `.hatchzip-part` it is written
+/// under first, can't be created anywhere.
+#[test]
+fn a_name_longer_than_the_file_system_allows_is_refused_up_front() {
+    let tmp = TempDir::new().unwrap();
+    let mut z = ZipWriter::new(Cursor::new(Vec::new()));
+    z.start_file(format!("game/{}.txt", "n".repeat(240)), stored())
+        .unwrap();
+    z.write_all(b"long\n").unwrap();
+    z.start_file("game/a.pak", stored()).unwrap();
+    z.write_all(&[7u8; 30_000]).unwrap();
+    let archive = write(tmp.path(), "long.zip", z.finish().unwrap().into_inner());
+    assert_refused(&archive, "the name is longer than");
 }

@@ -4,9 +4,13 @@ use std::os::fd::AsRawFd;
 use std::path::Path;
 
 pub use super::unix::{
-    allocated_bytes, apply_mode, create_symlink, name_problem, open_exclusive, same_filesystem,
-    sync_dir,
+    allocated_bytes, apply_mode, create_symlink, name_problem, open_exclusive, path_len,
+    same_filesystem, sync_dir,
 };
+
+/// `PATH_MAX` is 1024 bytes on macOS, including the terminating NUL;
+/// `.hatchzip-part` is added to a file's path while it is written.
+pub const MAX_PATH_LEN: usize = 1023 - ".hatchzip-part".len();
 
 /// macOS has no `syncfs`. `File::sync_all` issues `F_FULLFSYNC` there, which
 /// is the only call that gets data past the drive's own cache.

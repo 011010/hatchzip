@@ -44,7 +44,22 @@ pub fn name_problem(name: &str) -> Option<&'static str> {
     {
         return Some("it contains a character that Windows does not allow in names");
     }
+    // 255 UTF-16 units, including the `.hatchzip-part` a file is first
+    // written under.
+    if name.encode_utf16().count() > 255 - ".hatchzip-part".len() {
+        return Some("the name is longer than Windows allows");
+    }
     None
+}
+
+/// Paths go through the `\\?\` form, which allows about 32,767 UTF-16 units.
+/// Kept below that, with room for the prefix and `.hatchzip-part`.
+pub const MAX_PATH_LEN: usize = 32_000;
+
+/// How long `path` is, in UTF-16 units.
+pub fn path_len(path: &Path) -> usize {
+    use std::os::windows::ffi::OsStrExt;
+    path.as_os_str().encode_wide().count()
 }
 
 /// `FlushFileBuffers` per file is the only durable flush Windows offers.

@@ -4,9 +4,13 @@ use std::os::fd::AsRawFd;
 use std::path::Path;
 
 pub use super::unix::{
-    allocated_bytes, apply_mode, create_symlink, name_problem, open_exclusive, same_filesystem,
-    sync_dir,
+    allocated_bytes, apply_mode, create_symlink, name_problem, open_exclusive, path_len,
+    same_filesystem, sync_dir,
 };
+
+/// `PATH_MAX` is 4096 bytes including the terminating NUL; `.hatchzip-part`
+/// is added to a file's path while it is written.
+pub const MAX_PATH_LEN: usize = 4095 - ".hatchzip-part".len();
 
 /// One `syncfs` per batch replaces an fsync per file, which matters when a
 /// batch holds thousands of small files.

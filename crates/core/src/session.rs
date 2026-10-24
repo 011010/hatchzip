@@ -85,10 +85,27 @@ pub fn open(
         Some(o) => std::path::absolute(o)?,
         None => default_output(primary),
     };
+    check_path_lengths(&job, &output)?;
     if writable {
         check_collisions(&job, &output)?;
     }
     Ok(State::Fresh(job, output))
+}
+
+/// A path the system can't create would only fail halfway through a run,
+/// after part of the archive is gone; macOS stops at 1024 bytes.
+fn check_path_lengths(job: &Job, out: &Path) -> Result<()> {
+    for item in job.units.iter().flat_map(|u| &u.items) {
+        if crate::platform::path_len(&out.join(&item.path)) > crate::platform::MAX_PATH_LEN {
+            bail!(
+                "'{}' cannot be created in {}: the full path would be longer than this system \
+                 allows. The archive was not modified. Extract to a folder with a shorter path",
+                item.path.display(),
+                out.display()
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Opens an archive that may be encrypted. `ask` is called whenever a

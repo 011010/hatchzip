@@ -207,8 +207,11 @@ impl File {
 
     /// Whether UnRAR's name for this file extracts to the same place.
     fn same_name(&self, unrar: &str) -> bool {
+        // UnRAR reports names with the separator of the system it runs on,
+        // `\` on Windows; the headers always use `/` in RAR 5.
+        let unrar = unrar.replace(std::path::MAIN_SEPARATOR, "/");
         let ours = safe_path(&self.path_name());
-        ours.is_some() && ours == safe_path(&clean_name(unrar, self.rar5))
+        ours.is_some() && ours == safe_path(&clean_name(&unrar, self.rar5))
     }
 }
 
