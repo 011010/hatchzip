@@ -4,9 +4,9 @@
 cask "hatchzip" do
   arch arm: "aarch64", intel: "x86_64"
 
-  version "0.1.2"
-  sha256 arm:   "4c195df5381b07dd5df89410b04e18ebf64bfddd5eca8239c04e24d0cf0541f7",
-         intel: "3758532360f292a7f24b7ce628f3132948a320294699e47854bf8f2755d9404f"
+  version "0.1.3"
+  sha256 arm:   "b5681f83ec7bd0bf660759a82c5c7b30223d3d5d7cb5b6cd4938d12b8f56f437",
+         intel: "2b878e8472914f17b9f3e63afa100a57e82afd46cf4587abdf72d3c4f6f35efc"
 
   url "https://github.com/xevrion/hatchzip/releases/download/v#{version}/HatchZip-#{arch}.dmg"
   name "HatchZip"

@@ -7,12 +7,13 @@
 # .sha256 published next to them on the release page.
 
 pkgname=hatchzip-bin
-pkgver=0.1.2
+pkgver=0.1.3
 pkgrel=1
 pkgdesc='Extract huge archives in place, without needing room for both the archive and its contents'
 arch=('x86_64')
 url='https://hatchzip.dev'
-license=('MIT OR Apache-2.0')
+# The release build includes UnRAR for RAR support, under its own license.
+license=('MIT OR Apache-2.0' 'LicenseRef-UnRAR')
 depends=('fontconfig' 'glibc' 'hicolor-icon-theme' 'libgcc')
 # The app opens its window through Wayland or X11 and draws with OpenGL or
 # on the CPU. It loads those libraries when it starts rather than linking
@@ -34,8 +35,8 @@ _release="https://github.com/xevrion/hatchzip/releases/download/v$pkgver"
 # the download cache from mixing versions up.
 source_x86_64=("$pkgname-$pkgver-x86_64-linux.tar.gz::$_release/hatchzip-x86_64-linux.tar.gz"
                "$pkgname-$pkgver-amd64.deb::$_release/hatchzip_amd64.deb")
-sha256sums_x86_64=('ee7d838e8be7a8b65c792739f2b69d1008fddaf6a0be48e457eaef7e5253cc78'
-                   '46516904cb77013132161f9fd4a3129f2ff04c31e68e05669e9a2789147d4da6')
+sha256sums_x86_64=('08ca9469878ce0ab14e275d4d4eb880e04cd57fa79097b0b4e649392011cc0fa'
+                   '96e59e1cac291eb75f267f36393d12a8d3f0508a8cf42dda00a0cefa53e590e8')
 
 prepare() {
   # makepkg unpacks the .deb itself; this unpacks the files inside it.
@@ -65,5 +66,6 @@ package() {
     install -Dm644 "$icon" "$pkgdir/${icon#deb/}"
   done
 
-  install -Dm644 "$cli/LICENSE-MIT" "$cli/LICENSE-APACHE" -t "$pkgdir/usr/share/licenses/$pkgname/"
+  install -Dm644 "$cli/LICENSE-MIT" "$cli/LICENSE-APACHE" "$cli/LICENSE-UNRAR" \
+    -t "$pkgdir/usr/share/licenses/$pkgname/"
 }
