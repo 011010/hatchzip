@@ -40,6 +40,8 @@ No coding needed. **[Download for Windows](https://github.com/xevrion/hatchzip/r
 
 HatchZip shows whether the files will fit before it changes anything. The archive is used up as the files come out, so when it finishes, only the extracted files are left.
 
+To keep the archive when there is room for both, choose **Extract here (keep archive)** in the right-click menu, or clear **Remove the archive during extraction** in the app. That is a normal extraction: the archive is not changed, and space is required for all extracted files.
+
 ## Highlights
 
 The same 200 MB of game data (21 files), packed by the real tools, extracted on a 220 MiB disk with about 50 MB free:
@@ -148,7 +150,7 @@ game.zip  180.2 MB zip, 200.0 MB uncompressed in 22 entries
   available after              30.6 MB
 ```
 
-`check` reads the archive's index and the disk's free space and changes nothing.
+`check` reads the archive's index and the disk's free space and changes nothing. "Standard extraction needs" is what extracting while keeping the archive requires; when that fits too, `check` says so. `hatchzip check game.zip --keep-archive` shows the plan for keeping it.
 
 ### Extract
 
@@ -162,11 +164,30 @@ HatchZip prints the same space plan, asks for confirmation, then extracts. When 
 
 | Option | Effect |
 |---|---|
-| `-o, --output <dir>` | Output folder. Defaults to a folder named after the archive, next to it. It must be empty or not exist yet. |
+| `-o, --output <dir>` | Output folder. Defaults to a folder named after the archive, next to it. It may hold other files, but none where the archive's files go. |
+| `--keep-archive` | Keep the archive: a normal extraction that removes nothing. Space is required for all extracted files. No confirmation is asked. |
 | `--keep-free <size>` | Free space HatchZip never uses, such as `500MB` or `10GB`. Default `2GB`, so the disk never fills to zero. |
 | `--verify-first` | Read the whole archive and check every file's checksum before deleting anything. Takes extra time, recommended for downloads you can't easily get again. |
-| `-y, --yes` | Skip the confirmation prompt. Required when not run from a terminal. |
+| `-y, --yes` | Skip the confirmation prompt. Required when not run from a terminal, unless `--keep-archive` is given. |
 | `-q, --quiet` | Print only errors and prompts. |
+
+### Keep the archive
+
+```sh
+hatchzip extract game.zip --keep-archive
+```
+
+When the disk has room for the archive and all its files, `--keep-archive` extracts like any other tool and leaves the archive byte for byte as it was, for when it is needed again. The space check, path and collision checks, checksums and password handling are the same as for an extraction in place. If keeping the archive does not fit, HatchZip says so, by how much, and what extracting in place would require instead.
+
+An interrupted run resumes like any other, and goes on keeping the archive even when resumed without `--keep-archive`. An extraction that started in place cannot switch to keeping the archive, since part of it is already removed. `hatchzip restore` on an archive being kept only discards the progress: the archive was never changed.
+
+### Several archives
+
+```sh
+hatchzip extract a.zip b.7z c.tar.gz
+```
+
+The archives are extracted one after another, each into its own folder, or all into the folder given with `-o`. The space for each one is checked just before it starts, so the space one archive frees is available to the next. The first archive that does not complete stops the run, and HatchZip lists which archives were extracted, which one stopped and whether its progress is saved, and which were not started; the exit status is that archive's. `check`, `test` and `list` also take several archives, go through all of them, and exit with the status of the first one that did not succeed. Naming every volume of a split archive, as a shell pattern like `game.7z.*` does, counts as that archive once.
 
 ### Stop and resume
 
@@ -206,7 +227,10 @@ Plain tar has no checksums for file contents, so `test` on a tar only proves eve
 | 2 | Invalid command line |
 | 3 | Not enough free space. Nothing was changed. |
 | 4 | The archive is damaged. Nothing was deleted. |
+| 5 | The archive is password protected and no correct password was given. |
 | 130 | Paused with Ctrl+C. Run the same command to continue. |
+
+With several archives, the status is that of the first archive that did not succeed.
 
 ## Is it safe
 
@@ -216,6 +240,7 @@ HatchZip destroys the archive as it extracts, so it is built around never losing
 - **A file is written, flushed to the physical disk and renamed into place before the part of the archive holding it is cut off.** A crash at any point leaves either the file or its bytes in the archive, never neither.
 - **Damage stops the run where it is.** Every file's CRC-32 is checked as it is extracted. A damaged file is not written, and it stays in the archive along with everything before it.
 - **Hostile archives are refused before anything is deleted:** paths that escape the output folder, entries that overlap each other, entries that appear twice. Setuid and setgid bits are never restored, and symlinks are created only after every regular file is written, so nothing can be written through one.
+- **A kept archive stays as it was.** With `--keep-archive`, the code that shrinks, frees or deletes archive bytes refuses to run for the whole extraction, and its progress file has a format older versions refuse, so none of them can resume it in place.
 
 What it cannot protect against: if the download itself is damaged, the files before the damaged spot are extracted and the archive is partly gone. Use `--verify-first` when the archive can't be downloaded again. On btrfs or APFS, space held by a snapshot that includes the archive is not freed until the snapshot is deleted.
 

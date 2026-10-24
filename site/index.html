@@ -126,6 +126,8 @@
 <li>Extracts ZIP (including ZIP64 and self-extracting <code>.exe</code> files), 7z, plain tar, <code>.tar.gz</code> and <code>.tgz</code>, and split archives (<code>.001</code>, <code>.002</code>, ...) of ZIP or 7z.</li>
 <li>A <code>.tar.gz</code> is read once from start to end before anything changes, so a damaged one is refused untouched. It then gives its space back as it extracts on NTFS (Windows), APFS (macOS), ext4, XFS, btrfs and other filesystems that can free part of a file. On FAT32 and exFAT it still extracts and resumes, but needs room for the archive and the files at once.</li>
 <li>Checks that the extraction will fit before it changes anything.</li>
+<li>Can also extract normally and keep the archive, when there is room for both: <code>--keep-archive</code>, an option in the app, or Extract here (keep archive) in the right-click menu. If keeping it does not fit, it says how much extracting in place needs instead.</li>
+<li>Extracts several archives one after another, checking the space for each just before it starts. The first one that does not complete stops the run, with a list of what was extracted and what was not.</li>
 <li>Keeps 2 GB of free space by default, so the disk never fills to zero. Change it with <code>--keep-free</code>.</li>
 <li>Can be stopped with Ctrl+C, or crash, at any moment. Run the same command again and it picks up where it left off.</li>
 <li>Checks each file's CRC-32 as it extracts. A damaged file stops the run, and it stays in the archive.</li>

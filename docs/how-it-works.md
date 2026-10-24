@@ -55,8 +55,9 @@ From then on the archive is parsed through `storage::Reader`, which serves the l
 | `committed_len` | The archive length after the latest commit. Every unit starting at or past it is done. |
 | `links` | Symlinks and hard links to create at the very end |
 | `resume` | While a large file is streamed: its unit, how many bytes of it are flushed, the bit of the archive decoding restarts at, and the CRC-32 so far. For a compressed tar, also `stream`, the decoder's and the tar parser's state. See below. |
+| `keep` | Present and true when the extraction keeps the archive; see [Keeping the archive](#keeping-the-archive) |
 
-The journal is at version 3 since `resume` was added. Version 2 journals load as they are; older builds refuse version 3, which matters, because they would delete the half-written file whose archive bytes are already gone. `resume.stream` came later without a new version: only `tar.gz` journals have it, and builds that don't know that format refuse the journal before reading it.
+The journal is at version 3 since `resume` was added. Version 2 journals load as they are; older builds refuse version 3, which matters, because they would delete the half-written file whose archive bytes are already gone. `resume.stream` came later without a new version: only `tar.gz` journals have it, and builds that don't know that format refuse the journal before reading it. A journal with `keep` is version 4, and only such a journal is: builds from before `keep` refuse it, since they would resume it in place and truncate an archive the user asked to keep. Every other journal is still written as version 3, so an older build can finish it.
 
 There is no separate "done" counter: units start at distinct offsets, so `committed_len` alone says which are finished. The journal is always replaced atomically: written to a temporary file, flushed, renamed over the old one, and the directory flushed.
 
@@ -145,6 +146,17 @@ Each step can be interrupted. The order above makes every interruption recoverab
 The rule behind the table: **the journal never claims a file before it is durable, and the archive is never truncated past a unit before the journal claims it.**
 
 The test suites kill the process at steps 3 and 5 at many positions for every format, including split archives with volume boundaries inside entries, and check that the resumed run produces identical output (`crates/cli/tests/extract.rs`, `crates/cli/tests/formats.rs`).
+
+## Keeping the archive
+
+`--keep-archive` (in the app, clearing "Remove the archive during extraction"; in the right-click menu, "Extract here (keep archive)") is a normal extraction through the same engine: the same units, batches, part files, checks, flushes and journal commits, so path safety, collisions, CRCs, passwords and resuming work exactly as above. What changes:
+
+- **Nothing in the archive changes.** The journal records `keep`, and from the moment it is written the archive's `Storage` is protected: truncating, punching, writing and deleting all refuse, so no code path can change a kept archive even by mistake. A commit (step 4) still advances `committed_len`, but only as a record of progress; step 5 is skipped. Nothing is streamed or punched, as for an output on another disk. At the end, links are made and only the journal and the saved tail are deleted.
+- **The space check counts every file.** The replay runs as if the output were on another disk: each unit adds its files and frees nothing, plus the saved tail. That is the whole output, rounded up to 4 KiB per file, plus the archive's index, and it is what `check --keep-archive` reports. When it does not fit but extracting in place would, `check` and the app say what extracting in place requires. When planning in place, they mention when keeping the archive would fit too.
+- **Resuming keeps keeping.** A resumed run follows the journal, whatever it is asked: an extraction that keeps the archive goes on keeping it, and one that started in place cannot switch to keeping it, since part of the archive is already gone. That refusal happens before the archive is opened for writing, so it doesn't even finish a truncation the last run left pending. On resume the archive must still have its original length, or the run stops without reading it.
+- **Restore discards.** `restore` on a kept extraction has no index to rebuild: it deletes what a crashed batch left half written, as a resume would, then the journal and the saved tail. Files already extracted stay. The app shows no "Restore archive" for such a run.
+
+The interruption table above holds with one row fewer: a crash after the journal write leaves nothing pending. `crates/cli/tests/keep.rs` extracts ZIP, 7z (solid and not), tar, `.tar.gz` and split ZIP, 7z and `.tar.gz` sets while keeping them, checks that every volume is byte for byte unchanged, then extracts the same archive in place and compares both outputs with the source. It kills kept runs at both commit points and, for a `.tar.gz`, at each step of a resume point, resumes them without `--keep-archive`, and checks the archive is unchanged after the crash and after the resume. `HATCHZIP_FREE` (debug builds only) sets the free space so the suite can put a disk between the two plans.
 
 ## Restore
 

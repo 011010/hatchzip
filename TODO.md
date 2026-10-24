@@ -30,10 +30,10 @@ Ticked when it is merged and tested, not when it is started.
 - [ ] `.tar.zst` and `.tar.xz` (see Formats)
 - [ ] Multi-part RAR (`.part1.rar`, ...) and native split ZIP (`.z01`, ...) (see Formats)
 - [ ] Check the volumes against an `.sfv` file next to the archive before starting, and stop if one doesn't match
-- [ ] Extract several archives one after another from one command or one right-click, checking the space for each
+- [ ] Extract several archives one after another from one command or one right-click, checking the space for each (implemented, awaiting merge: `extract`, `check`, `test` and `list` take several archives, `extract` stops at the first that does not complete with a summary and its exit code; the right-click task window queues several on Linux, where Dolphin, GNOME Files and Nemo now hand over the whole selection. Explorer still starts one window per file, so queueing there needs a single-instance app)
 - [ ] Android app (the engine is a library; Android's storage access rules are the open question)
 - [ ] The other direction: compress in place when there is no room for a copy. A folder: delete each file once its compressed copy is safely on disk. One huge file: free its start with hole punching as it is compressed, with resume points like extraction has
-- [ ] Keep the archive when there is room: an option (CLI, GUI, right-click) to extract normally without removing anything, and say so in the space check
+- [ ] Keep the archive when there is room: an option (CLI, GUI, right-click) to extract normally without removing anything, and say so in the space check (implemented, awaiting merge: `--keep-archive` on `extract` and `check`, "Remove the archive during extraction" in the app, "Extract here (keep archive)" in every right-click menu; resumable, journal version 4; tested for ZIP, 7z, tar, `.tar.gz` and split sets, with crashes)
 - [ ] Opening a huge archive must never sit silent: show progress while it is read and checked (a user saw "checking disk space" for 20 minutes)
 - [ ] Nested archives: offer to extract the archives found inside, in place too
 - [ ] Extract while downloading: read the archive from a URL and never store it (for formats that can be read front to back)

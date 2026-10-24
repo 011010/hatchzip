@@ -17,10 +17,12 @@ The archive is used up as it extracts: when the run finishes, only the extracted
 - `hatchzip extract game.zip -y`: extracts into `game/` next to the archive and removes the archive as it goes; `-y` skips the confirmation for unattended use
 - `hatchzip extract game.zip -o DIR`: extract somewhere else
 - `hatchzip extract game.zip --verify-first`: read everything once before deleting anything
+- `hatchzip extract game.zip --keep-archive`: a normal extraction that keeps the archive unchanged; needs space for all extracted files, and `check --keep-archive` shows whether it fits. Resumes like any other run and keeps keeping the archive. In the desktop app: clear "Remove the archive during extraction"; in the right-click menu: "Extract here (keep archive)"
+- `hatchzip extract a.zip b.7z c.tar.gz`: several archives one after another, each checked for space just before it starts; the first that does not complete stops the run, with a summary, and sets the exit code. `check`, `test` and `list` also take several archives
 - `hatchzip restore game.zip`: turn a half-extracted archive back into a normal archive
 - `hatchzip list game.zip`, `hatchzip test game.zip`: list or verify without changing anything
 - Passwords: `--password` or the `HATCHZIP_PASSWORD` environment variable
-- Exit codes: 0 done, 1 error, 2 usage, 3 not enough space, 4 damaged archive, 5 password needed or wrong, 130 stopped (run again to resume)
+- Exit codes: 0 done, 1 error, 2 usage, 3 not enough space, 4 damaged archive, 5 password needed or wrong, 130 stopped (run again to resume). With several archives, the code of the first one that did not succeed
 
 ## Limits
 
