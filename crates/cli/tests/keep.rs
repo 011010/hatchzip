@@ -287,7 +287,7 @@ fn the_space_plan_for_keeping_counts_every_file() {
     let out = tmp.path().join("out");
 
     let (normal, in_place) = {
-        let job = Job::open(&archive, false, None).unwrap();
+        let job = Job::open(&archive, false, None, Default::default()).unwrap();
         let plan = session::plan(&job, &out, false, 0, true).unwrap();
         (plan.normal_needs, plan.in_place_needs)
     };

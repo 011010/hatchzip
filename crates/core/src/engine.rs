@@ -23,7 +23,7 @@
 //! truncates, punches or deletes: its storage is protected, and the run
 //! frees nothing, exactly like an output on another disk.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -34,7 +34,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use rayon::prelude::*;
 
 use crate::archive::resumable::{self, Decoder};
-use crate::archive::storage::{Storage, Tail};
+use crate::archive::storage::{Reads, Storage, Tail};
 use crate::archive::targz::{Event, Profile, Walker};
 use crate::archive::{self, Codec, Format, Item, Kind, Sink, Stream, Unit};
 use crate::journal::{Journal, Link, Paths, Resume, TarAt};
@@ -93,9 +93,31 @@ pub struct Job {
 impl Job {
     /// `password` is only needed for encrypted archives. A missing one shows
     /// up as [`archive::PasswordNeeded`], from here or from
-    /// [`Job::check_password`].
-    pub fn open(path: &Path, writable: bool, password: Option<&str>) -> Result<Self> {
-        let storage = Arc::new(Storage::open(path, writable)?);
+    /// [`Job::check_password`]. What opening reads is counted in `reads`.
+    pub fn open(
+        path: &Path,
+        writable: bool,
+        password: Option<&str>,
+        reads: Arc<Reads>,
+    ) -> Result<Self> {
+        let job = Self::open_as_is(path, writable, password, reads)?;
+        job.check_layout()?;
+        Ok(job)
+    }
+
+    /// [`Job::open`] without [`Job::check_layout`]. Restore checks what it
+    /// rebuilt with this: an archive an older release started on may hold
+    /// entries that collide, and giving it back is still the right thing to
+    /// do. A later extraction of it is refused as usual.
+    pub(crate) fn open_as_is(
+        path: &Path,
+        writable: bool,
+        password: Option<&str>,
+        reads: Arc<Reads>,
+    ) -> Result<Self> {
+        let mut storage = Storage::open(path, writable)?;
+        storage.count_reads(reads);
+        let storage = Arc::new(storage);
         let opened = archive::open(&storage, None, password)?;
         let top = storage.original_len();
         Self::build(storage, opened, top)
@@ -109,8 +131,11 @@ impl Job {
         tail: Arc<Tail>,
         writable: bool,
         password: Option<&str>,
+        reads: Arc<Reads>,
     ) -> Result<Self> {
-        let storage = Arc::new(Storage::from_parts(&journal.parts, writable)?);
+        let mut storage = Storage::from_parts(&journal.parts, writable)?;
+        storage.count_reads(reads);
+        let storage = Arc::new(storage);
         let current = storage.current_len()?;
         if journal.keep {
             // Never truncated, so `committed_len` only marks progress and
@@ -186,6 +211,77 @@ impl Job {
             punch: OnceLock::new(),
             resume: None,
         })
+    }
+
+    /// Refuses entries that can't all be created where the archive puts
+    /// them: a file or link at a path where another entry needs a folder,
+    /// which includes any entry inside a link, and a hard link to anything
+    /// but a file in the archive. Links are only made at the very end, once
+    /// the archive is gone, so without this such an archive fails after it
+    /// has been consumed. Paths are compared ignoring case, as for
+    /// duplicates.
+    ///
+    /// Only a fresh archive is checked: a resumed run no longer lists the
+    /// entries it has extracted, and one an older release started on has to
+    /// stay resumable and restorable.
+    fn check_layout(&self) -> Result<()> {
+        let key = |p: &Path| p.to_string_lossy().to_lowercase();
+        let items = || self.units.iter().flat_map(|u| &u.items);
+        // Every folder the extraction creates, with the entry that needs it:
+        // the folder's own entry if it has one, else the first entry inside.
+        let mut folders: HashMap<String, (&Path, bool)> = HashMap::new();
+        for item in items() {
+            if item.kind == Kind::Dir {
+                folders.insert(key(&item.path), (&item.path, true));
+            }
+            for parent in item.path.ancestors().skip(1) {
+                if parent.as_os_str().is_empty() {
+                    break;
+                }
+                folders.entry(key(parent)).or_insert((&item.path, false));
+            }
+        }
+        let files: HashSet<&Path> = items()
+            .filter(|i| i.kind == Kind::File)
+            .map(|i| i.path.as_path())
+            .collect();
+        for item in items() {
+            let what = match &item.kind {
+                Kind::Dir => continue,
+                Kind::File => "a file",
+                Kind::Symlink => "a symbolic link",
+                Kind::HardLink(_) => "a hard link",
+            };
+            match folders.get(&key(&item.path)) {
+                Some((dir, true)) if *dir == item.path => bail!(
+                    "'{}' is both {what} and a folder in the archive; extraction refused",
+                    item.path.display()
+                ),
+                Some((dir, true)) => bail!(
+                    "'{}' is {what}, and '{}' is a folder in the archive; extraction refused",
+                    item.path.display(),
+                    dir.display()
+                ),
+                Some((inside, false)) => bail!(
+                    "'{}' is {what}, but '{}' requires a folder at that location; extraction \
+                     refused",
+                    item.path.display(),
+                    inside.display()
+                ),
+                None => {}
+            }
+            if let Kind::HardLink(target) = &item.kind
+                && !files.contains(target.as_path())
+            {
+                bail!(
+                    "hard link '{}' points to '{}', which is not a file in the archive; \
+                     extraction refused",
+                    item.path.display(),
+                    target.display()
+                );
+            }
+        }
+        Ok(())
     }
 
     /// `Some(granule)` if holes punched in the archive give its space back,
@@ -1245,7 +1341,7 @@ impl Run<'_> {
     }
 
     fn finish(self, out: &Path) -> Result<()> {
-        make_links(&self.journal.links, out)?;
+        make_final_links(&self.journal.links, out)?;
         if self.journal.keep {
             // The archive stays as it was; only the progress files go.
             return self.paths.remove();
@@ -1268,27 +1364,102 @@ impl Run<'_> {
 /// A run that crashed after deleting the archive but before cleaning up only
 /// has its links and side files left to deal with.
 pub fn finish_orphaned(journal: &Journal, paths: &Paths) -> Result<()> {
-    make_links(&journal.links, &journal.output)?;
+    make_final_links(&journal.links, &journal.output)?;
     paths.remove()
 }
 
+/// The last step of a run, when every file is extracted and the archive is
+/// gone: a link that can't be made is all that is left. The journal keeps
+/// the links, so once the cause is fixed a resumed run makes them and
+/// finishes.
+fn make_final_links(links: &[Link], out: &Path) -> Result<()> {
+    make_links(links, out).map_err(|e| {
+        anyhow!(
+            "every file is extracted, but {e:#}\nThe links are kept. Resolve the problem shown for \
+             each one, for example by moving or renaming a folder that is in the way, then \
+             resume the extraction to create them"
+        )
+    })
+}
+
+/// Makes `links`. Each one is tried, and the error lists every one that
+/// failed and why. Links that were made are made again by the next call,
+/// replacing themselves.
 pub(crate) fn make_links(links: &[Link], out: &Path) -> Result<()> {
-    for link in links {
-        let path = out.join(&link.path);
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let made = if link.hard {
-            let target = out.join(&link.target);
-            let _ = fs::remove_file(&path);
-            // FAT32 and exFAT have no hard links; a copy is the next best thing.
-            fs::hard_link(&target, &path).or_else(|_| fs::copy(&target, &path).map(|_| ()))
+    let failed: Vec<(&Link, anyhow::Error)> = links
+        .iter()
+        .filter_map(|link| make_link(link, out).err().map(|e| (link, e)))
+        .collect();
+    if failed.is_empty() {
+        return Ok(());
+    }
+    let mut msg = match failed.len() {
+        1 => "1 link could not be created:".to_string(),
+        n => format!("{n} links could not be created:"),
+    };
+    for (link, e) in failed.iter().take(10) {
+        let kind = if link.hard {
+            "hard link"
         } else {
-            platform::create_symlink(&path, &link.target)
+            "symbolic link"
         };
-        made.with_context(|| format!("creating link '{}'", link.path.display()))?;
+        msg.push_str(&format!(
+            "\n  '{}' ({kind} to '{}'): {e:#}",
+            link.path.display(),
+            link.target.display()
+        ));
+    }
+    if failed.len() > 10 {
+        msg.push_str(&format!("\n  and {} more", failed.len() - 10));
+    }
+    Err(anyhow!(msg))
+}
+
+fn make_link(link: &Link, out: &Path) -> Result<()> {
+    // A run an older release started may hold a link inside another link.
+    // Going through it would write outside the output folder.
+    if let Some(via) = link_on_the_way(out, &link.path) {
+        bail!(
+            "'{}' is a link, and this one would be created through it",
+            via.display()
+        );
+    }
+    let path = out.join(&link.path);
+    if fs::symlink_metadata(&path).is_ok_and(|m| m.is_dir()) {
+        bail!("a folder already exists at this location");
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    if link.hard {
+        if let Some(via) = link_on_the_way(out, &link.target) {
+            bail!(
+                "'{}' is a link, and the target would be reached through it",
+                via.display()
+            );
+        }
+        let target = out.join(&link.target);
+        let _ = fs::remove_file(&path);
+        // FAT32 and exFAT have no hard links; a copy is the next best thing.
+        fs::hard_link(&target, &path).or_else(|_| fs::copy(&target, &path).map(|_| ()))?;
+    } else {
+        platform::create_symlink(&path, &link.target)?;
     }
     Ok(())
+}
+
+/// The first folder on the way to `rel` inside `out` that is really a link.
+fn link_on_the_way(out: &Path, rel: &Path) -> Option<PathBuf> {
+    let mut ancestors: Vec<&Path> = rel
+        .ancestors()
+        .skip(1)
+        .filter(|p| !p.as_os_str().is_empty())
+        .collect();
+    ancestors.reverse();
+    ancestors
+        .into_iter()
+        .find(|p| fs::symlink_metadata(out.join(p)).is_ok_and(|m| m.is_symlink()))
+        .map(Path::to_path_buf)
 }
 
 struct DiskSink<'a> {

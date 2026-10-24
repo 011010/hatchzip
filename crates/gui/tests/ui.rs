@@ -480,7 +480,9 @@ fn give_back_flow(scheme: ColorScheme, tag: &str) {
     // Start an extraction and stop before the first batch: the journal
     // exists, so the archive is half extracted.
     let (primary, paths) = session::locate(&archive).unwrap();
-    let State::Fresh(job, out) = session::open(&primary, &paths, None, true, None).unwrap() else {
+    let reads = Default::default();
+    let State::Fresh(job, out) = session::open(&primary, &paths, None, true, None, &reads).unwrap()
+    else {
         panic!("a new archive opens fresh");
     };
     session::begin(&job, &paths, out, false).unwrap();

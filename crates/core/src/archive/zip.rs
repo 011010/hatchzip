@@ -57,6 +57,9 @@ pub fn open(
                      cannot handle safely"
                 );
             }
+            if let Some(name) = duplicate_name(storage, zip.central_directory_start())? {
+                bail!("'{name}' appears more than once in the archive; extraction refused");
+            }
             let mut end = 0;
             for i in 0..zip.len() {
                 let f = zip.by_index_raw(i)?;
@@ -171,6 +174,38 @@ impl Worker for ZipWorker<'_> {
             e => anyhow::Error::new(e),
         })?;
         sink.item(&unit.items[0], &mut data)
+    }
+}
+
+/// A name two records of the central directory at `dir_start` share. The
+/// zip crate keys entries by name, so it keeps only the last of them, and
+/// the engine's own duplicate check never sees the others. Tools that read
+/// the first copy would show something other than what lands on disk.
+fn duplicate_name(storage: &Storage, dir_start: u64) -> Result<Option<String>> {
+    use std::io::{BufReader, Read, Seek, SeekFrom};
+
+    let mut r = BufReader::with_capacity(1 << 20, storage.reader(None));
+    r.seek(SeekFrom::Start(dir_start))?;
+    let mut seen = std::collections::HashSet::new();
+    let mut fixed = [0u8; 46];
+    loop {
+        // The records end where the end records begin, or with the file.
+        match r.read_exact(&mut fixed) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+            Err(e) => return Err(e).context("reading the ZIP central directory"),
+        }
+        if u32_at(&fixed, 0) != Some(CDFH) {
+            return Ok(None);
+        }
+        let len = |at| u16_at(&fixed, at).map_or(0, usize::from);
+        let mut name = vec![0; len(28)];
+        r.read_exact(&mut name)
+            .context("reading the ZIP central directory")?;
+        r.seek_relative((len(30) + len(32)) as i64)?;
+        if !seen.insert(name.clone()) {
+            return Ok(Some(String::from_utf8_lossy(&name).into_owned()));
+        }
     }
 }
 

@@ -85,6 +85,9 @@ export component MainWindow inherits Window {
     in property <Mode> mode: Mode.fresh;
     in property <bool> drop-hover;
     in property <string> archive-name;
+    // Shown instead of "Opening…" once opening has read through the archive
+    // for a while: "Reading archive… 37%".
+    in property <string> loading-detail;
     in property <string> summary;
     in property <string> error-text;
     in property <[EntryRow]> entries;
@@ -254,7 +257,7 @@ export component MainWindow inherits Window {
         HorizontalLayout {
             alignment: center;
             Busy {
-                text: "Opening " + root.archive-name + "…";
+                text: root.loading-detail != "" ? root.loading-detail : "Opening " + root.archive-name + "…";
             }
         }
     }
@@ -454,7 +457,7 @@ export component MainWindow inherits Window {
                 overflow: elide;
             }
             if root.task.phase == Phase.checking: Busy {
-                text: "Checking disk space…";
+                text: root.task.busy;
             }
             if root.task.phase == Phase.verifying || root.task.phase == Phase.working || root.task.phase == Phase.pausing || root.task.phase == Phase.paused: Progress {
                 task: root.task;

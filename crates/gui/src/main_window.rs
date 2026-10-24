@@ -5,9 +5,10 @@ use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
+use hatchzip_core::archive::storage::Reads;
 use hatchzip_core::engine::Job;
 use hatchzip_core::human;
 use hatchzip_core::session::{self, State, display_name};
@@ -40,7 +41,7 @@ struct Loaded {
 
 /// Runs on a worker thread; an encrypted archive asks for its password
 /// through the window.
-fn load(archive: &Path, password: Option<String>) -> Result<Loaded> {
+fn load(archive: &Path, password: Option<String>, reads: &Arc<Reads>) -> Result<Loaded> {
     let (primary, paths) = session::locate(archive)?;
     let file_name = primary
         .file_name()
@@ -48,7 +49,7 @@ fn load(archive: &Path, password: Option<String>) -> Result<Loaded> {
         .to_string_lossy()
         .into_owned();
     let (state, password) =
-        session::open_encrypted(&primary, &paths, None, false, password, |wrong| {
+        session::open_encrypted(&primary, &paths, None, false, password, reads, |wrong| {
             crate::password::ask(&file_name, wrong)
         })?;
     let mut kept = false;
@@ -129,6 +130,8 @@ struct App {
     /// Where settings are saved; `None` keeps them in memory, for tests.
     settings_file: Option<PathBuf>,
     notice_timer: Timer,
+    /// Refreshes how far opening has read while the archive loads.
+    loading_timer: Timer,
     /// The person changed the right-click switch, so the startup check,
     /// which may answer later, must not overwrite it.
     shell_touched: Cell<bool>,
@@ -197,6 +200,7 @@ pub fn build(
         settings: RefCell::new(settings),
         settings_file,
         notice_timer: Timer::default(),
+        loading_timer: Timer::default(),
         shell_touched: Cell::new(false),
     });
     APP.with(|a| *a.borrow_mut() = Some(app.clone()));
@@ -325,6 +329,20 @@ impl App {
                 .into(),
         );
         ui.set_screen(Screen::Loading);
+        ui.set_loading_detail("".into());
+        // Opening a compressed tar reads all of it, which takes minutes for
+        // a large one; say how far it has got.
+        let reads = Arc::new(Reads::default());
+        let (watched, weak, start) = (reads.clone(), ui.as_weak(), Instant::now());
+        self.loading_timer
+            .start(TimerMode::Repeated, Duration::from_millis(100), move || {
+                if let (Some(ui), Some(f)) = (weak.upgrade(), watched.fraction())
+                    && f < 1.0
+                    && start.elapsed() >= Duration::from_millis(500)
+                {
+                    ui.set_loading_detail(text::reading_text(f).into());
+                }
+            });
         // Opening the same archive again, after a run, needn't ask again.
         let same = self.archive.borrow().as_ref() == Some(&path);
         let password = if same {
@@ -339,7 +357,7 @@ impl App {
         *self.job.borrow_mut() = SharedJob::default();
 
         std::thread::spawn(move || {
-            let result = load(&path, password);
+            let result = load(&path, password, &reads);
             post(move |app| app.loaded(generation, result));
         });
     }
@@ -348,7 +366,9 @@ impl App {
         if generation != self.generation.get() {
             return;
         }
+        self.loading_timer.stop();
         let ui = self.ui();
+        ui.set_loading_detail("".into());
         let loaded = match result {
             Ok(l) => l,
             Err(e) => {

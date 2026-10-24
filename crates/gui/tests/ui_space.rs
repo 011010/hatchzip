@@ -91,7 +91,7 @@ fn keeping_does_not_fit_but_removing_does() {
     let dirs = [tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap()];
     let archives: Vec<PathBuf> = dirs.iter().map(|d| make_zip(d.path())).collect();
     let (normal, in_place) = {
-        let job = Job::open(&archives[0], false, None).unwrap();
+        let job = Job::open(&archives[0], false, None, Default::default()).unwrap();
         let plan = session::plan(&job, &dirs[0].path().join("out"), false, 0, true).unwrap();
         (plan.normal_needs, plan.in_place_needs)
     };

@@ -103,7 +103,7 @@ A deflate block can be as long as its encoder likes. zlib-ng and zlib-rs write l
 
 A `.tar.gz` is one deflate stream, or several gzip members back to back, holding the whole tar, and it can only be decoded from the front. So it is not split into units extracted from the end: the whole archive is one unit, extracted front to back, and the compressed bytes behind the decoder are freed by punching holes, at resume points as in the previous section. The archive keeps its length until the end, when the unit commits through the ordinary steps 3 to 5, truncating it to nothing, and the empty file is deleted.
 
-Before anything is touched, HatchZip decodes the whole stream once (`targz::open`). That lists the entries for the checks in [Rejected before starting](#rejected-before-starting), verifies every gzip member's CRC-32 and length against its trailer, and measures what the space check needs. A damaged archive is refused here, unchanged. The extraction then decodes it a second time. A resumed run makes the same pass from its resume point, since the bytes before it may be gone, so damage found on resume also stops the run before it changes anything.
+Before anything is touched, HatchZip decodes the whole stream once (`targz::open`). That lists the entries for the checks in [Rejected before starting](#rejected-before-starting), verifies every gzip member's CRC-32 and length against its trailer, and measures what the space check needs. A damaged archive is refused here, unchanged. The extraction then decodes it a second time. This pass reads the whole archive, so once it has run for half a second the command line shows a progress bar and the GUI the share read ("Reading archive… 37%"). Measured on an Intel Core i7-14700HX with the archive in the page cache: 4.8 s for 488.6 MB holding 1 GiB of word-like text, about 225 MB of output a second; 0.8 s for 1.07 GB holding 1 GiB of random data; 2.1 s for 23.4 MB holding 20 GiB of zeros. The GUI opens an archive once to list it and again to extract it, so there the pass runs twice before the extraction starts. A resumed run makes the same pass from its resume point, since the bytes before it may be gone, so damage found on resume also stops the run before it changes anything.
 
 A resume point can be any deflate block boundary or the start of any gzip member, except inside an entry's header records. Every 256 MiB of output, at the next such point:
 
@@ -140,7 +140,7 @@ Each step can be interrupted. The order above makes every interruption recoverab
 | Flushing | Same as above | Same as above |
 | Committing | The atomic rename either happened or not | Either case above or below |
 | Truncating | The journal lists the batch, the archive is still longer than `committed_len` | Truncates the archive, continues with the next batch |
-| Creating links at the end | All units committed | Recreates every link, replacing any that exist |
+| Creating links at the end | All units committed | Recreates every link, replacing any that exist. A link that can't be made (a folder in its place, which only an extraction started by a release without the checks in [Rejected before starting](#rejected-before-starting) can lead to, or a link on its way) stops the run with every file extracted; the error lists each such link and why, and the journal keeps them. Once what is in the way is moved, a resume makes them and finishes. Nothing is ever created through a link. |
 | Deleting the archive and side files | The archive is gone, the journal is still there | Recreates the links and removes the side files |
 
 The rule behind the table: **the journal never claims a file before it is durable, and the archive is never truncated past a unit before the journal claims it.**
@@ -197,7 +197,8 @@ These are refused while the archive is still untouched:
 
 - Encrypted entries or blocks (not supported yet).
 - Paths that resolve outside the output folder (`..`, absolute ZIP paths, drive letters). Leading slashes in tar names are dropped, as tar itself does.
-- Two entries with the same path, ignoring case. On a case-insensitive filesystem they would race inside a parallel batch.
+- Two entries with the same path, ignoring case. On a case-insensitive filesystem they would race inside a parallel batch. For ZIP the names are read from the central directory itself, since the zip library keeps only the last of several entries with one name.
+- Entries that can't all be created where they say, ignoring case: a file or link at a path where another entry needs a folder (`d` as a symlink next to `d/inner.txt`), which includes any entry inside a link, and a tar hard link to anything but a file in the archive. Links are made at the very end, once the archive is gone, so such an archive would otherwise fail only after it was consumed.
 - ZIP entries whose bytes overlap other entries. Overlapping archives are a known zip bomb technique, and truncating one entry's span would destroy another's data.
 - tar entry types HatchZip can't create safely: device files, FIFOs, sparse files.
 - 7z anti-items (deletions recorded by archive updates).

@@ -3,6 +3,7 @@ mod cli;
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
@@ -16,6 +17,7 @@ use cli::{
     Cli, Command, EXIT_DAMAGED, EXIT_FAILURE, EXIT_NO_SPACE, EXIT_PASSWORD, EXIT_PAUSED, Secret,
     Space, Target,
 };
+use hatchzip_core::archive::storage::Reads;
 use hatchzip_core::archive::{Damaged, Kind, PasswordNeeded, WrongPassword};
 use hatchzip_core::engine::{self, Job, Outcome, Progress, Run};
 use hatchzip_core::human;
@@ -74,24 +76,21 @@ fn open(
     secret: Secret,
 ) -> Result<(State, Paths)> {
     let (primary, paths) = locate(archive)?;
-    // A compressed tar is read in full before anything else, which can take
-    // a while for a big one, so say what is happening.
-    let name = primary.file_name().unwrap_or_default().to_string_lossy();
-    let lower = name.to_ascii_lowercase();
-    if (lower.ends_with(".tar.gz") || lower.ends_with(".tgz"))
-        && io::stderr().is_terminal()
-        && !QUIET.load(Ordering::Relaxed)
-    {
-        eprintln!("Verifying {name}…");
-    }
+    let reads = Arc::new(Reads::default());
+    let mut reading = Some(Reading::show(&reads));
     let mut tries = 0;
-    let (state, _) = session::open_encrypted(
+    let opened = session::open_encrypted(
         &primary,
         &paths,
         output,
         writable,
         secret.password,
+        &reads,
         |wrong| {
+            // The bar would draw over the prompt.
+            if let Some(r) = reading.take() {
+                r.finish();
+            }
             if wrong {
                 eprintln!("{ERROR}Incorrect password.{ERROR:#}");
             }
@@ -101,8 +100,72 @@ fn open(
             }
             rpassword::prompt_password("Password: ").ok()
         },
-    )?;
+    );
+    if let Some(r) = reading {
+        r.finish();
+    }
+    let (state, _) = opened?;
     Ok((state, paths))
+}
+
+/// A bar for a long read through the archive while it opens: a compressed
+/// tar is decoded in full before anything else, which takes minutes for a
+/// large one. It appears only once opening has taken a moment, and only on
+/// a terminal without `--quiet`.
+struct Reading {
+    stop: Arc<AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Reading {
+    const DELAY: Duration = Duration::from_millis(500);
+
+    fn show(reads: &Arc<Reads>) -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+        let thread = (io::stderr().is_terminal() && !QUIET.load(Ordering::Relaxed)).then(|| {
+            let (stop, reads) = (stop.clone(), reads.clone());
+            std::thread::spawn(move || {
+                let start = std::time::Instant::now();
+                let mut bar: Option<ProgressBar> = None;
+                while !stop.load(Ordering::Relaxed) {
+                    std::thread::sleep(Duration::from_millis(50));
+                    let total = reads.total.load(Ordering::Relaxed);
+                    let done = reads.done.load(Ordering::Relaxed).min(total);
+                    if bar.is_none() && start.elapsed() >= Self::DELAY && done < total {
+                        // No speed or time left: the bar starts part way
+                        // through, which throws the estimate off for its
+                        // first seconds.
+                        let b = ProgressBar::new(total).with_position(done);
+                        b.set_style(
+                            ProgressStyle::with_template(
+                                "{prefix} [{bar:32}] {binary_bytes}/{binary_total_bytes}  {percent}%",
+                            )
+                            .expect("valid template")
+                            .progress_chars("=> "),
+                        );
+                        b.set_prefix("Reading");
+                        b.enable_steady_tick(Duration::from_millis(200));
+                        bar = Some(b);
+                    }
+                    if let Some(b) = &bar {
+                        b.set_length(total);
+                        b.set_position(done);
+                    }
+                }
+                if let Some(b) = bar {
+                    b.finish_and_clear();
+                }
+            })
+        });
+        Self { stop, thread }
+    }
+
+    fn finish(mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+    }
 }
 
 fn run(command: Command) -> Result<u8> {

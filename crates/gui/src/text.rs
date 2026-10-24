@@ -9,6 +9,12 @@ use hatchzip_core::session::SpacePlan;
 
 use crate::PlanView;
 
+/// What a long open says while it reads through the archive. Rounded down,
+/// so it never claims 100% before the read is done.
+pub fn reading_text(fraction: f64) -> String {
+    format!("Reading archive… {}%", (fraction * 100.0).floor() as u32)
+}
+
 /// `3412` as `3,412`.
 pub fn count(n: usize) -> String {
     let digits = n.to_string();

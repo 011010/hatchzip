@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use anyhow::{Context, Result, bail};
+use hatchzip_core::archive::storage::Reads;
 use hatchzip_core::archive::{PasswordNeeded, WrongPassword};
 use hatchzip_core::engine::{self, Job, Outcome, Progress, Run};
 use hatchzip_core::journal::{Journal, Paths};
@@ -21,6 +22,8 @@ pub struct Counters {
     /// What is left of the archive on disk; zero while only testing.
     pub archive: AtomicU64,
     pub stop: AtomicBool,
+    /// How far opening has read through the archive, while checking.
+    pub reading: Arc<Reads>,
 }
 
 impl Counters {
@@ -29,6 +32,7 @@ impl Counters {
         self.total.store(0, Ordering::Relaxed);
         self.archive.store(0, Ordering::Relaxed);
         self.stop.store(false, Ordering::Relaxed);
+        self.reading.reset();
     }
 }
 
@@ -189,17 +193,23 @@ fn open(
     output: Option<PathBuf>,
     writable: bool,
     secret: Secret,
+    counters: &Counters,
     send: &dyn Fn(Update),
 ) -> Result<State> {
     let given = secret.password.clone();
-    let (state, used) = session::open_encrypted(
+    let opened = session::open_encrypted(
         primary,
         paths,
         output,
         writable,
         secret.password,
+        &counters.reading,
         secret.ask,
-    )?;
+    );
+    // Extraction reads through the same counter; what follows the open is
+    // not part of it.
+    counters.reading.reset();
+    let (state, used) = opened?;
     if let Some(p) = used
         && Some(&p) != given.as_ref()
     {
@@ -235,7 +245,7 @@ fn extract(
     if keep_archive && paths.exists() {
         session::keeps_archive(&Journal::load(&paths)?.0, true)?;
     }
-    let (job, journal) = match open(&primary, &paths, output, true, secret, send)? {
+    let (job, journal) = match open(&primary, &paths, output, true, secret, counters, send)? {
         State::Orphan(journal) => {
             engine::finish_orphaned(&journal, &paths)?;
             send(Update::Extracted {
@@ -324,7 +334,7 @@ fn test(
 ) -> Result<()> {
     send(Update::Checking);
     let (primary, paths) = session::locate(archive)?;
-    let job = match open(&primary, &paths, None, false, secret, send)? {
+    let job = match open(&primary, &paths, None, false, secret, counters, send)? {
         State::Fresh(job, _) => job,
         _ => bail!(
             "this archive is partially extracted and cannot be tested. Resume or restore it first"

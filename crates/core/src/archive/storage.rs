@@ -5,7 +5,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use anyhow::{Context, Result, anyhow, bail};
 
@@ -36,6 +36,32 @@ pub struct Storage {
     /// changes the archive's bytes refuses from then on, so a bug elsewhere
     /// can't cost the user an archive they asked to keep.
     whole: AtomicBool,
+    reads: Arc<Reads>,
+}
+
+/// How much of the archive its readers have read. Opening a compressed tar
+/// decodes all of it before anything else, which takes minutes for a large
+/// one, so front ends show this from another thread while an archive opens.
+#[derive(Debug, Default)]
+pub struct Reads {
+    pub done: AtomicU64,
+    /// How much the current pass reads in all: the archive's length, or
+    /// less when a resumed compressed tar is read from its resume point.
+    pub total: AtomicU64,
+}
+
+impl Reads {
+    pub fn reset(&self) {
+        self.done.store(0, Ordering::Relaxed);
+        self.total.store(0, Ordering::Relaxed);
+    }
+
+    /// The share of the pass read so far, if a pass is under way.
+    pub fn fraction(&self) -> Option<f64> {
+        let total = self.total.load(Ordering::Relaxed);
+        let done = self.done.load(Ordering::Relaxed);
+        (total > 0).then(|| (done as f64 / total as f64).min(1.0))
+    }
 }
 
 impl Storage {
@@ -95,6 +121,7 @@ impl Storage {
             parts: parts.into(),
             first,
             whole: AtomicBool::new(false),
+            reads: Arc::default(),
         })
     }
 
@@ -334,7 +361,22 @@ impl Storage {
             tail,
             len: self.original_len(),
             pos: 0,
+            reads: self.reads.clone(),
         }
+    }
+
+    /// Counts what every reader made from now on reads into `reads`, a pass
+    /// over the whole archive by default.
+    pub fn count_reads(&mut self, reads: Arc<Reads>) {
+        reads.done.store(0, Ordering::Relaxed);
+        reads.total.store(self.original_len(), Ordering::Relaxed);
+        self.reads = reads;
+    }
+
+    /// Starts the count over for a pass that reads `total` bytes.
+    pub fn expect_reads(&self, total: u64) {
+        self.reads.done.store(0, Ordering::Relaxed);
+        self.reads.total.store(total, Ordering::Relaxed);
     }
 }
 
@@ -398,10 +440,19 @@ pub struct Reader {
     tail: Option<Arc<Tail>>,
     len: u64,
     pos: u64,
+    reads: Arc<Reads>,
 }
 
 impl Read for Reader {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let n = self.read_at_pos(buf)?;
+        self.reads.done.fetch_add(n as u64, Ordering::Relaxed);
+        Ok(n)
+    }
+}
+
+impl Reader {
+    fn read_at_pos(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if self.pos >= self.len || buf.is_empty() {
             return Ok(0);
         }
@@ -451,5 +502,46 @@ impl Seek for Reader {
         };
         self.pos = pos.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "bad seek"))?;
         Ok(self.pos)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// What front ends show while an archive opens: every reader counts, a
+    /// split set is one pass, and a pass can start part way in.
+    #[test]
+    fn reads_are_counted_across_volumes() {
+        let dir = std::env::temp_dir().join(format!("hatchzip-reads-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("game.7z.001"), vec![1u8; 3000]).unwrap();
+        fs::write(dir.join("game.7z.002"), vec![2u8; 1000]).unwrap();
+
+        let mut storage = Storage::open(&dir.join("game.7z.001"), false).unwrap();
+        let reads = Arc::new(Reads::default());
+        storage.count_reads(reads.clone());
+        assert_eq!(reads.fraction(), Some(0.0));
+
+        let mut half = vec![0; 2000];
+        storage.reader(None).read_exact(&mut half).unwrap();
+        assert_eq!(reads.fraction(), Some(0.5));
+        let mut rest = Vec::new();
+        let mut r = storage.reader(None);
+        r.seek(SeekFrom::Start(2000)).unwrap();
+        r.read_to_end(&mut rest).unwrap();
+        assert_eq!(reads.fraction(), Some(1.0));
+
+        // A resumed pass that starts at byte 3000 has 1000 bytes to read.
+        storage.expect_reads(1000);
+        let mut last = vec![0; 500];
+        r.seek(SeekFrom::Start(3000)).unwrap();
+        r.read_exact(&mut last).unwrap();
+        assert_eq!(reads.fraction(), Some(0.5));
+
+        reads.reset();
+        assert_eq!(reads.fraction(), None);
+        drop(storage);
+        fs::remove_dir_all(&dir).unwrap();
     }
 }

@@ -39,6 +39,9 @@ export struct TaskView {
     detail: string,
     // "Archive 2 of 3" when a right-click queued several.
     step: string,
+    // What the spinner says while checking: "Checking disk space…", or
+    // "Reading archive… 37%" while a long open reads through it.
+    busy: string,
     // "Required: 3.5 MB. Available: 7.7 GB.", once the space is checked.
     space: string,
     fraction: float,

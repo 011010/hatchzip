@@ -4,11 +4,11 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use hatchzip_core::human;
 
-use crate::text::{Rate, count, plan_view};
+use crate::text::{Rate, count, plan_view, reading_text};
 use crate::work::{Counters, Update};
 use crate::{Phase, PlanView, TaskView};
 
@@ -25,7 +25,15 @@ pub struct Task {
     /// restore.
     keep: bool,
     rate: Rate,
+    /// When the current check began, as the ticks saw it.
+    checking_since: Option<Instant>,
 }
+
+const CHECKING: &str = "Checking disk space…";
+
+/// Opening reads through the archive; a read this short doesn't need a
+/// number.
+const READING_AFTER: Duration = Duration::from_millis(500);
 
 impl Task {
     /// Stopping for good: the archive goes back to normal, holding what
@@ -61,6 +69,7 @@ impl Task {
             view: TaskView {
                 phase: Phase::Checking,
                 is_test,
+                busy: CHECKING.into(),
                 ..Default::default()
             },
             plan: PlanView::default(),
@@ -71,6 +80,7 @@ impl Task {
             resumable: false,
             keep: false,
             rate: Rate::default(),
+            checking_since: None,
         };
         task.view.heading = task.heading().into();
         task
@@ -134,6 +144,8 @@ impl Task {
         match update {
             Update::Checking => {
                 v.phase = Phase::Checking;
+                v.busy = CHECKING.into();
+                self.checking_since = None;
                 v.fraction = 0.0;
                 v.amounts = "".into();
                 v.rate = "".into();
@@ -257,6 +269,16 @@ impl Task {
 
     /// Reads the counters the worker bumps and refreshes the numbers.
     pub fn tick(&mut self, now: Instant, counters: &Counters) {
+        if self.view.phase == Phase::Checking {
+            let since = *self.checking_since.get_or_insert(now);
+            self.view.busy = match counters.reading.fraction() {
+                Some(f) if f < 1.0 && now.duration_since(since) >= READING_AFTER => {
+                    reading_text(f).into()
+                }
+                _ => CHECKING.into(),
+            };
+            return;
+        }
         if !matches!(
             self.view.phase,
             Phase::Verifying | Phase::Working | Phase::Pausing
@@ -398,6 +420,35 @@ mod tests {
             t.view.message,
             "All entries were extracted. The archive was kept."
         );
+    }
+
+    #[test]
+    fn a_long_open_says_how_far_it_has_read() {
+        // Keeping the archive opens it the same way.
+        let mut t = Task::extract("data.tar.gz", None, true);
+        assert_eq!(t.view.busy, "Checking disk space…");
+        let counters = Counters::default();
+        counters.reading.total.store(1000, Ordering::Relaxed);
+        counters.reading.done.store(370, Ordering::Relaxed);
+        let start = Instant::now();
+        t.tick(start, &counters);
+        assert_eq!(t.view.busy, "Checking disk space…", "too soon for a number");
+        t.tick(start + Duration::from_secs(1), &counters);
+        assert_eq!(t.view.busy, "Reading archive… 37%");
+        counters.reading.done.store(999, Ordering::Relaxed);
+        t.tick(start + Duration::from_secs(2), &counters);
+        assert_eq!(t.view.busy, "Reading archive… 99%");
+        // The open is done; the rest of the check reads nothing.
+        counters.reading.reset();
+        t.tick(start + Duration::from_secs(3), &counters);
+        assert_eq!(t.view.busy, "Checking disk space…");
+
+        t.apply(Update::Working {
+            output: "/data".into(),
+            keep: true,
+        });
+        t.apply(Update::Checking);
+        assert_eq!(t.view.busy, "Checking disk space…");
     }
 
     #[test]

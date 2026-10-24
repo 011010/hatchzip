@@ -96,8 +96,14 @@ pub fn restore(archive: &Path) -> Result<Restored> {
     recover(&mut journal, &paths)?;
     // Restoring rewrites the index only and never decrypts file data, so no
     // password is needed, except for a 7z whose header itself is encrypted.
-    let job = Job::resume(&journal, tail.clone(), true, None)?;
+    let job = Job::resume(&journal, tail.clone(), true, None, Default::default())?;
     if job.units.is_empty() {
+        if !journal.links.is_empty() {
+            bail!(
+                "every entry is already extracted, so there is nothing to restore; only the \
+                 links remain to be created. Run extract to create them"
+            );
+        }
         bail!("all entries are already extracted. Run extract to complete the extraction");
     }
     let out = journal.output.clone();
@@ -149,7 +155,12 @@ pub fn restore(archive: &Path) -> Result<Restored> {
 
     session::clear_uncommitted(&job, &out)?;
     let make: Vec<Link> = make.into_iter().cloned().collect();
-    engine::make_links(&make, &out)?;
+    engine::make_links(&make, &out).map_err(|e| {
+        anyhow::anyhow!(
+            "{e:#}\nThe archive was not modified. Resolve the problem shown for each link, then \
+             run restore again"
+        )
+    })?;
 
     if let Some(index) = index {
         let mut undo = Vec::with_capacity(index.patches.len());
@@ -219,7 +230,7 @@ fn discard(journal: &Journal, tail: Arc<Tail>, paths: &Paths) -> Result<Restored
     // Moved away by the person: nothing says which files are half written,
     // and nothing else is left to do.
     if primary.exists() {
-        let job = Job::resume(journal, tail, true, None)?;
+        let job = Job::resume(journal, tail, true, None, Default::default())?;
         session::clear_uncommitted(&job, &journal.output)?;
         restored.format = job.format_name;
         restored.entries = job.item_count();
@@ -231,7 +242,7 @@ fn discard(journal: &Journal, tail: Arc<Tail>, paths: &Paths) -> Result<Restored
 /// Opens the archive as a fresh one, the way a later extraction would, and
 /// lists what is in it.
 fn reopen(primary: &Path) -> Result<Vec<(PathBuf, Kind, u64)>> {
-    let job = Job::open(primary, false, None)?;
+    let job = Job::open_as_is(primary, false, None, Default::default())?;
     let mut found: Vec<_> = job
         .units
         .iter()

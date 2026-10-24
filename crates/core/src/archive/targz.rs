@@ -501,6 +501,7 @@ pub fn open(storage: &Arc<Storage>, from: Option<&Resume>) -> Result<Opened> {
         .unwrap_or_default()
         .to_string_lossy()
         .into_owned();
+    storage.expect_reads(storage.original_len() - from.map_or(0, |r| r.bit / 8));
     let (items, profile) = scan(&solid, from)
         .map_err(|e| anyhow::Error::new(super::Damaged(e)))
         .with_context(|| format!("checking {name} (nothing was changed)"))?;

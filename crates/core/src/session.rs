@@ -3,10 +3,11 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 
-use crate::archive::storage;
+use crate::archive::storage::{self, Reads};
 use crate::engine::Job;
 use crate::fsutil;
 use crate::journal::{Journal, Paths, Plan};
@@ -33,13 +34,16 @@ pub enum State {
 /// read-only media and never takes the lock. For a fresh extraction the
 /// output folder may already hold other files, but nothing in the archive may
 /// land on top of one. `password` only matters for encrypted archives; see
-/// [`open_encrypted`] for the ask-and-retry loop front ends want.
+/// [`open_encrypted`] for the ask-and-retry loop front ends want. What
+/// opening reads is counted in `reads`, which a front end can show from
+/// another thread: a compressed tar is read in full here.
 pub fn open(
     primary: &Path,
     paths: &Paths,
     output: Option<PathBuf>,
     writable: bool,
     password: Option<&str>,
+    reads: &Arc<Reads>,
 ) -> Result<State> {
     if paths.exists() {
         let (mut journal, tail) = Journal::load(paths)?;
@@ -73,10 +77,10 @@ pub fn open(
             }
             return Ok(State::Orphan(journal));
         }
-        let job = Job::resume(&journal, tail, writable, password)?;
+        let job = Job::resume(&journal, tail, writable, password, reads.clone())?;
         return Ok(State::Resume(job, journal));
     }
-    let job = Job::open(primary, writable, password)?;
+    let job = Job::open(primary, writable, password, reads.clone())?;
     let output = match output {
         Some(o) => std::path::absolute(o)?,
         None => default_output(primary),
@@ -98,6 +102,7 @@ pub fn open_encrypted(
     output: Option<PathBuf>,
     writable: bool,
     mut password: Option<String>,
+    reads: &Arc<Reads>,
     mut ask: impl FnMut(bool) -> Option<String>,
 ) -> Result<(State, Option<String>)> {
     let mut wrong = false;
@@ -108,6 +113,7 @@ pub fn open_encrypted(
             output.clone(),
             writable,
             password.as_deref(),
+            reads,
         );
         let failure = match attempt {
             Ok(State::Orphan(j)) => return Ok((State::Orphan(j), password)),
@@ -394,7 +400,7 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let archive = sample_zip(&dir);
         let out = dir.join("out");
-        let job = Job::open(&archive, false, None).unwrap();
+        let job = Job::open(&archive, false, None, Default::default()).unwrap();
         let files: u64 = job
             .units
             .iter()
@@ -436,7 +442,9 @@ mod tests {
         let archive = sample_zip(&dir);
         let before = fs::read(&archive).unwrap();
         let (primary, paths) = locate(&archive).unwrap();
-        let State::Fresh(job, out) = open(&primary, &paths, None, true, None).unwrap() else {
+        let reads = Arc::default();
+        let State::Fresh(job, out) = open(&primary, &paths, None, true, None, &reads).unwrap()
+        else {
             panic!("a new archive opens fresh");
         };
         let journal = begin(&job, &paths, out, true).unwrap();
@@ -451,7 +459,7 @@ mod tests {
 
         // The journal says so, and a resumed job is protected as well.
         let (journal, tail) = Journal::load(&paths).unwrap();
-        let job = Job::resume(&journal, tail, true, None).unwrap();
+        let job = Job::resume(&journal, tail, true, None, Default::default()).unwrap();
         assert!(job.storage.set_len(0).is_err());
         assert_eq!(job.units.len(), 8, "nothing is committed yet");
         drop(job);

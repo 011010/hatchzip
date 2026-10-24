@@ -34,7 +34,7 @@ Ticked when it is merged and tested, not when it is started.
 - [ ] Android app (the engine is a library; Android's storage access rules are the open question)
 - [ ] The other direction: compress in place when there is no room for a copy. A folder: delete each file once its compressed copy is safely on disk. One huge file: free its start with hole punching as it is compressed, with resume points like extraction has
 - [ ] Keep the archive when there is room: an option (CLI, GUI, right-click) to extract normally without removing anything, and say so in the space check (implemented, awaiting merge: `--keep-archive` on `extract` and `check`, "Remove the archive during extraction" in the app, "Extract here (keep archive)" in every right-click menu; resumable, journal version 4; tested for ZIP, 7z, tar, `.tar.gz` and split sets, with crashes)
-- [ ] Opening a huge archive must never sit silent: show progress while it is read and checked (a user saw "checking disk space" for 20 minutes)
+- [ ] Opening a huge archive must never sit silent: show progress while it is read and checked (a user saw "checking disk space" for 20 minutes). In review: a progress bar in the CLI and "Reading archive… N%" in the GUI while opening reads the archive; still to do: the GUI reads a `.tar.gz` in full twice before extracting (once to list it, once more under "Checking disk space"), which could reuse the first pass
 - [ ] Nested archives: offer to extract the archives found inside, in place too
 - [ ] Extract while downloading: read the archive from a URL and never store it (for formats that can be read front to back)
 - [ ] Windows Defender quarantining a file mid-run: read each file back before its bytes are cut (see Safety and polish)
@@ -111,5 +111,6 @@ Ticked when it is merged and tested, not when it is started.
 - [ ] Read each file back before cutting its bytes from the archive, to catch antivirus quarantine and bad writes
 - [x] Windows: reserved names (`CON`, `NUL`, ...), trailing dots and spaces, and forbidden characters are refused before anything is touched
 - [x] Paths over 260 characters extract and resume (test runs on Windows CI too)
+- [ ] Refuse links where other entries need a folder or that others would be written through (#10), and duplicate ZIP names (#11), before anything is touched; a run already stuck making its links says which and why, and finishes once the way is clear. In review
 - [ ] Benchmarks on more hardware, including a hard drive and a USB stick
 - [ ] macOS CI flake: once in a few runs, `archives_from_tar_gzip_and_pigz_extract_and_resume` finds nothing freed after a punch on a fresh `tar -czf` archive (passes on rerun). Find whether `F_PUNCHHOLE` refused (which silently turns freeing off for the rest of the run) or APFS reported the space late, and log it either way

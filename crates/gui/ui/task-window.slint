@@ -57,7 +57,7 @@ export component TaskWindow inherits Window {
         }
 
         if root.task.phase == Phase.checking: Busy {
-            text: "Checking disk space…";
+            text: root.task.busy;
         }
         if root.task.phase == Phase.verifying || root.task.phase == Phase.working || root.task.phase == Phase.pausing || root.task.phase == Phase.paused: Progress {
             task: root.task;
