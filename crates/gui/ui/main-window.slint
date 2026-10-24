@@ -434,6 +434,15 @@ export component MainWindow inherits Window {
                     horizontal-stretch: 1;
                     vertical-alignment: center;
                 }
+                // The archive is gone after a successful run, so Back has
+                // nothing to reopen; offer the same way out as the error
+                // screen instead of leaving only the folder.
+                if root.task.phase == Phase.done && root.task.can-open-folder: Button {
+                    text: "Open another archive…";
+                    clicked => {
+                        root.open-archive();
+                    }
+                }
                 TaskButtons {
                     task: root.task;
                     closable: false;
