@@ -1,0 +1,85 @@
+# Maintainer: Yash Bavadiya <krbavadiya11 at gmail dot com>
+
+pkgname=hatchzip
+pkgver=0.1.2
+pkgrel=1
+pkgdesc='Extract huge archives in place, without needing room for both the archive and its contents'
+arch=('x86_64' 'aarch64')
+url='https://hatchzip.dev'
+license=('MIT OR Apache-2.0')
+depends=('fontconfig' 'glibc' 'hicolor-icon-theme' 'libgcc')
+makedepends=('cargo')
+# The app opens its window through Wayland or X11 and draws with OpenGL or
+# on the CPU. It loads those libraries when it starts rather than linking
+# them.
+optdepends=('libxkbcommon: keyboard input in the desktop app'
+            'wayland: desktop app on Wayland'
+            'libxkbcommon-x11: desktop app on X11'
+            'libx11: desktop app on X11'
+            'libxcursor: desktop app on X11'
+            'libxi: desktop app on X11'
+            'libxrandr: desktop app on X11'
+            'libglvnd: OpenGL drawing in the desktop app')
+conflicts=('hatchzip-bin')
+# makepkg's LTO flags make GCC compile the bundled zstd into objects only
+# GCC's linker plugin can read, and the Rust link fails with undefined ZSTD_
+# symbols. The release profile already does its own thin LTO.
+options=('!lto')
+source=("$pkgname-$pkgver.tar.gz::https://github.com/xevrion/hatchzip/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('6872f90c06bf4ec0f0c8342728412f20812803452186c88883f972a878581be1')
+
+# rust-toolchain.toml pins the compiler upstream builds releases with; the
+# packaged one is used instead, which only has to be 1.93 or newer.
+prepare() {
+  cd "$pkgname-$pkgver"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc --print host-tuple)"
+}
+
+build() {
+  cd "$pkgname-$pkgver"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  cargo build --frozen --release -p hatchzip -p hatchzip-gui
+
+  local bin=target/release/hatchzip
+  mkdir -p generated
+  "$bin" man > generated/hatchzip.1
+  "$bin" completions bash > generated/hatchzip.bash
+  "$bin" completions zsh > generated/_hatchzip
+  "$bin" completions fish > generated/hatchzip.fish
+}
+
+# Not --release: the crash and resume tests stop the extraction at chosen
+# points through a hook that only debug builds have. The engine and the
+# CLI only, since the app's tests drive real windows.
+check() {
+  cd "$pkgname-$pkgver"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  cargo test --frozen -p hatchzip-core -p hatchzip
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+  local id=io.github.xevrion.hatchzip
+
+  install -Dm755 target/release/hatchzip target/release/hatchzip-gui -t "$pkgdir/usr/bin/"
+  ln -s hatchzip "$pkgdir/usr/bin/hz"
+
+  install -Dm644 generated/hatchzip.1 -t "$pkgdir/usr/share/man/man1/"
+  ln -s hatchzip.1 "$pkgdir/usr/share/man/man1/hz.1"
+
+  install -Dm644 generated/hatchzip.bash "$pkgdir/usr/share/bash-completion/completions/hatchzip"
+  install -Dm644 generated/_hatchzip -t "$pkgdir/usr/share/zsh/site-functions/"
+  install -Dm644 generated/hatchzip.fish -t "$pkgdir/usr/share/fish/vendor_completions.d/"
+
+  install -Dm644 "packaging/linux/$id.desktop" -t "$pkgdir/usr/share/applications/"
+  install -Dm644 "packaging/linux/$id.metainfo.xml" -t "$pkgdir/usr/share/metainfo/"
+  local icon
+  for icon in packaging/linux/icons/hicolor/*/apps/"$id".*; do
+    install -Dm644 "$icon" "$pkgdir/usr/share/icons/${icon#packaging/linux/icons/}"
+  done
+
+  install -Dm644 LICENSE-MIT LICENSE-APACHE -t "$pkgdir/usr/share/licenses/$pkgname/"
+}

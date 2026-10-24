@@ -103,6 +103,18 @@ Every release file from 0.1.3 on carries signed build provenance. To check that 
 gh attestation verify HatchZip-x64-setup.exe --repo xevrion/hatchzip
 ```
 
+### Package managers
+
+Coming soon: these packages are prepared in [`packaging/`](packaging/README.md#package-managers) but not published yet. Until this note is gone, a package under these names does not come from this project.
+
+| System | Command | Installs |
+|---|---|---|
+| Arch Linux (AUR) | `yay -S hatchzip-bin`, or `yay -S hatchzip` to build from source | App and CLI |
+| Windows (winget) | `winget install Xevrion.HatchZip` | App and CLI, same as the setup |
+| Windows (Scoop) | `scoop bucket add xevrion https://github.com/xevrion/scoop-bucket`, then `scoop install xevrion/hatchzip` | CLI |
+| macOS and Linux (Homebrew) | `brew install xevrion/tap/hatchzip` | CLI |
+| macOS (Homebrew) | `brew install --cask xevrion/tap/hatchzip` | App and CLI |
+
 ### With Cargo
 
 ```sh

@@ -1,0 +1,29 @@
+pkgbase = hatchzip-bin
+	pkgdesc = Extract huge archives in place, without needing room for both the archive and its contents
+	pkgver = 0.1.2
+	pkgrel = 1
+	url = https://hatchzip.dev
+	arch = x86_64
+	license = MIT OR Apache-2.0
+	depends = fontconfig
+	depends = glibc
+	depends = hicolor-icon-theme
+	depends = libgcc
+	optdepends = libxkbcommon: keyboard input in the desktop app
+	optdepends = wayland: desktop app on Wayland
+	optdepends = libxkbcommon-x11: desktop app on X11
+	optdepends = libx11: desktop app on X11
+	optdepends = libxcursor: desktop app on X11
+	optdepends = libxi: desktop app on X11
+	optdepends = libxrandr: desktop app on X11
+	optdepends = libglvnd: OpenGL drawing in the desktop app
+	provides = hatchzip=0.1.2
+	conflicts = hatchzip
+	options = !strip
+	options = !debug
+	source_x86_64 = hatchzip-bin-0.1.2-x86_64-linux.tar.gz::https://github.com/xevrion/hatchzip/releases/download/v0.1.2/hatchzip-x86_64-linux.tar.gz
+	source_x86_64 = hatchzip-bin-0.1.2-amd64.deb::https://github.com/xevrion/hatchzip/releases/download/v0.1.2/hatchzip_amd64.deb
+	sha256sums_x86_64 = ee7d838e8be7a8b65c792739f2b69d1008fddaf6a0be48e457eaef7e5253cc78
+	sha256sums_x86_64 = 46516904cb77013132161f9fd4a3129f2ff04c31e68e05669e9a2789147d4da6
+
+pkgname = hatchzip-bin

@@ -1,0 +1,69 @@
+# Maintainer: Yash Bavadiya <krbavadiya11 at gmail dot com>
+
+# The prebuilt release. The CLI, man page, completions and licenses come from
+# the static musl tarball; the desktop app, its menu entry, icons and
+# AppStream metadata from the .deb, whose app is built on Ubuntu 22.04 and
+# runs on any glibc from 2.35 on. Both files are checked against the
+# .sha256 published next to them on the release page.
+
+pkgname=hatchzip-bin
+pkgver=0.1.2
+pkgrel=1
+pkgdesc='Extract huge archives in place, without needing room for both the archive and its contents'
+arch=('x86_64')
+url='https://hatchzip.dev'
+license=('MIT OR Apache-2.0')
+depends=('fontconfig' 'glibc' 'hicolor-icon-theme' 'libgcc')
+# The app opens its window through Wayland or X11 and draws with OpenGL or
+# on the CPU. It loads those libraries when it starts rather than linking
+# them, the same set the .deb recommends.
+optdepends=('libxkbcommon: keyboard input in the desktop app'
+            'wayland: desktop app on Wayland'
+            'libxkbcommon-x11: desktop app on X11'
+            'libx11: desktop app on X11'
+            'libxcursor: desktop app on X11'
+            'libxi: desktop app on X11'
+            'libxrandr: desktop app on X11'
+            'libglvnd: OpenGL drawing in the desktop app')
+provides=("hatchzip=$pkgver")
+conflicts=('hatchzip')
+# Upstream already strips both binaries.
+options=('!strip' '!debug')
+_release="https://github.com/xevrion/hatchzip/releases/download/v$pkgver"
+# The release file names carry no version, so they are renamed here to keep
+# the download cache from mixing versions up.
+source_x86_64=("$pkgname-$pkgver-x86_64-linux.tar.gz::$_release/hatchzip-x86_64-linux.tar.gz"
+               "$pkgname-$pkgver-amd64.deb::$_release/hatchzip_amd64.deb")
+sha256sums_x86_64=('ee7d838e8be7a8b65c792739f2b69d1008fddaf6a0be48e457eaef7e5253cc78'
+                   '46516904cb77013132161f9fd4a3129f2ff04c31e68e05669e9a2789147d4da6')
+
+prepare() {
+  # makepkg unpacks the .deb itself; this unpacks the files inside it.
+  mkdir -p deb
+  bsdtar -xf data.tar.xz -C deb
+}
+
+package() {
+  local cli="hatchzip-$CARCH-linux"
+  local id=io.github.xevrion.hatchzip
+
+  install -Dm755 "$cli/hatchzip" "$pkgdir/usr/bin/hatchzip"
+  ln -s hatchzip "$pkgdir/usr/bin/hz"
+  install -Dm755 deb/usr/bin/hatchzip-gui "$pkgdir/usr/bin/hatchzip-gui"
+
+  install -Dm644 "$cli/man/hatchzip.1" "$pkgdir/usr/share/man/man1/hatchzip.1"
+  ln -s hatchzip.1 "$pkgdir/usr/share/man/man1/hz.1"
+
+  install -Dm644 "$cli/completions/hatchzip.bash" "$pkgdir/usr/share/bash-completion/completions/hatchzip"
+  install -Dm644 "$cli/completions/_hatchzip" "$pkgdir/usr/share/zsh/site-functions/_hatchzip"
+  install -Dm644 "$cli/completions/hatchzip.fish" "$pkgdir/usr/share/fish/vendor_completions.d/hatchzip.fish"
+
+  install -Dm644 "deb/usr/share/applications/$id.desktop" -t "$pkgdir/usr/share/applications/"
+  install -Dm644 "deb/usr/share/metainfo/$id.metainfo.xml" -t "$pkgdir/usr/share/metainfo/"
+  local icon
+  for icon in deb/usr/share/icons/hicolor/*/apps/"$id".*; do
+    install -Dm644 "$icon" "$pkgdir/${icon#deb/}"
+  done
+
+  install -Dm644 "$cli/LICENSE-MIT" "$cli/LICENSE-APACHE" -t "$pkgdir/usr/share/licenses/$pkgname/"
+}

@@ -17,6 +17,9 @@ before anything is published: in clean Ubuntu 22.04 and Fedora containers
 for the .deb and .rpm, by a silent install and uninstall on the Windows
 runner, and by opening the dmg on the Mac runner.
 
+The AUR, winget, Homebrew and Scoop manifests that install these
+downloads are in this folder too: see [Package managers](#package-managers).
+
 The Windows and macOS jobs build the app next to the CLI and package both.
 The Linux packages have a job of their own on Ubuntu 22.04: the app links
 the C library and fontconfig, so it's built on the oldest system it should
@@ -147,6 +150,136 @@ sudo ln -sf /Applications/HatchZip.app/Contents/MacOS/hatchzip /usr/local/bin/ha
 sudo ln -sf /Applications/HatchZip.app/Contents/MacOS/hatchzip /usr/local/bin/hz
 sudo ln -sf /Applications/HatchZip.app/Contents/Resources/man/man1/hatchzip.1 /usr/local/share/man/man1/hatchzip.1
 ```
+
+## Package managers
+
+The manifests for the AUR, winget, Homebrew and Scoop live here, ready to
+submit. They install the release downloads above, checked against their
+published `.sha256`, except the AUR `hatchzip` package and the
+homebrew-core formula, which build from the tagged source.
+
+| Folder | Package | Installs |
+|---|---|---|
+| `aur/hatchzip-bin/` | AUR `hatchzip-bin`, x86_64 | CLI, `hz`, app, man pages, completions, menu entry, icons, licenses. The CLI is the static tarball build, the app comes from the .deb |
+| `aur/hatchzip/` | AUR `hatchzip`, x86_64 and aarch64 | The same files, built from source with `cargo build --release` |
+| `winget/manifests/x/Xevrion/HatchZip/<version>/` | winget `Xevrion.HatchZip` | `HatchZip-x64-setup.exe`, per user, silent |
+| `homebrew/Formula/hatchzip.rb` | tap formula, macOS and Linux, arm64 and x86_64 | CLI, `hz`, man pages, completions, from the tarballs |
+| `homebrew/Casks/hatchzip.rb` | tap cask, macOS | `HatchZip.app` from the dmg, plus the CLI, `hz` and man page inside it |
+| `homebrew/core/hatchzip.rb` | for a later homebrew-core pull request | CLI built from source |
+| `scoop/hatchzip.json` | Scoop | CLI and `hz` from `hatchzip-x86_64-windows.zip` |
+
+The formula and the cask both put `hatchzip` on PATH, so a Mac user
+installs one or the other: the cask when they want the app too.
+
+### After each release
+
+The release workflow runs `update-manifests.py` after publishing and
+uploads the result as the `package-manifests` artifact of the run. It
+pushes nothing. To do the same by hand:
+
+```sh
+python3 packaging/update-manifests.py v0.1.3
+git diff packaging
+```
+
+It reads the version the manifests are at now, downloads that release's
+`.sha256` files and the new release's, and swaps each checksum for the new
+one of the same download, along with the version, the URLs, `pkgrel`, the
+winget `ReleaseDate` and the winget version folder. A checksum it can't
+match to a download stops it before it writes anything. Commit the result,
+then publish each one as below.
+
+### Publishing, the first time
+
+None of this is automated: each registry is published from the owner's own
+account.
+
+**AUR.** Create an account at <https://aur.archlinux.org/register> and add
+an SSH public key under My Account. Then, for `hatchzip-bin` and again for
+`hatchzip`:
+
+```sh
+git clone ssh://aur@aur.archlinux.org/hatchzip-bin.git aur-hatchzip-bin
+cp packaging/aur/hatchzip-bin/PKGBUILD aur-hatchzip-bin/
+cd aur-hatchzip-bin
+makepkg --printsrcinfo > .SRCINFO
+makepkg -si                 # on Arch: build, install and try it once
+namcap PKGBUILD *.pkg.tar.zst
+git add PKGBUILD .SRCINFO
+git commit -m "hatchzip-bin 0.1.2"
+git push origin HEAD:master
+```
+
+Cloning a name nobody has taken yet gives an empty repository, and the
+first push creates the package. The AUR only accepts the `master` branch.
+For later versions, copy the updated PKGBUILD, regenerate `.SRCINFO` and
+push again.
+
+**winget.** Either let `wingetcreate` fork and open the pull request, with a
+GitHub token that has the `public_repo` scope:
+
+```powershell
+winget install Microsoft.WingetCreate
+wingetcreate submit --token <token> packaging\winget\manifests\x\Xevrion\HatchZip\0.1.2
+```
+
+or fork [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs),
+copy the folder to the same path in the fork, and open the pull request by
+hand. On Windows, check it first:
+
+```powershell
+winget validate --manifest packaging\winget\manifests\x\Xevrion\HatchZip\0.1.2
+winget settings --enable LocalManifestFiles   # once, as administrator
+winget install --manifest packaging\winget\manifests\x\Xevrion\HatchZip\0.1.2
+```
+
+The first pull request is reviewed by hand, the installer is scanned, and
+a bot asks for the Microsoft CLA to be signed. Later versions go the same
+way, or with `wingetcreate update Xevrion.HatchZip --version <version>
+--urls <setup URL> --submit`.
+
+**Homebrew.** Create a public repository named `xevrion/homebrew-tap` and
+copy `Formula/` and `Casks/` into it:
+
+```sh
+gh repo create xevrion/homebrew-tap --public --clone
+cp -r packaging/homebrew/Formula packaging/homebrew/Casks homebrew-tap/
+cd homebrew-tap
+git add Formula Casks
+git commit -m "hatchzip 0.1.2"
+git push
+brew install xevrion/tap/hatchzip           # then check it works
+brew test xevrion/tap/hatchzip
+```
+
+`homebrew/core/hatchzip.rb` is for later. homebrew-core takes software
+that is notable enough (`brew audit --new` checks the stars, forks and
+watchers) and builds it from source. When it qualifies, fork
+[Homebrew/homebrew-core](https://github.com/Homebrew/homebrew-core), add
+the file as `Formula/h/hatchzip.rb`, run `brew audit --new --formula
+hatchzip`, `brew install --build-from-source hatchzip` and `brew test
+hatchzip`, and open the pull request. Then drop the formula from the tap,
+so the two don't shadow each other; the cask stays in the tap.
+
+**Scoop.** Create a public bucket repository, for example from
+[ScoopInstaller/BucketTemplate](https://github.com/ScoopInstaller/BucketTemplate),
+named `xevrion/scoop-bucket`, and add the manifest as `bucket/hatchzip.json`:
+
+```sh
+gh repo create xevrion/scoop-bucket --public --clone \
+    --template ScoopInstaller/BucketTemplate
+cp packaging/scoop/hatchzip.json scoop-bucket/bucket/
+cd scoop-bucket
+git add bucket/hatchzip.json
+git commit -m "hatchzip: Add version 0.1.2"
+git push
+```
+
+The manifest's `checkver` and `autoupdate` let Scoop's own tools update it:
+the template's scheduled workflow does that inside the bucket repository,
+if it is left enabled. Once HatchZip is well known, the same file can go to
+[ScoopInstaller/Main](https://github.com/ScoopInstaller/Main) by pull
+request.
 
 ## What the packages expect from `hatchzip-gui`
 

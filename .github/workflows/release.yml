@@ -282,3 +282,26 @@ jobs:
           else
             gh release create "$TAG" dist/* --generate-notes --title "HatchZip $TAG" --repo "$GITHUB_REPOSITORY"
           fi
+      # The AUR, winget, Homebrew and Scoop manifests for this release,
+      # rewritten from the .sha256 files above and uploaded as an artifact to
+      # review. Nothing is pushed or submitted: that stays manual, see
+      # "Package managers" in packaging/README.md. Checked out into its own
+      # folder so the checkout can't clean dist/.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.tag || github.ref }}
+          path: src
+      - name: package manager manifests
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: python3 src/packaging/update-manifests.py "$TAG" --sha256-dir dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: package-manifests
+          path: |
+            src/packaging/aur
+            src/packaging/homebrew
+            src/packaging/scoop
+            src/packaging/winget
+          if-no-files-found: error
