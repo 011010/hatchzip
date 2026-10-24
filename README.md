@@ -228,6 +228,18 @@ What it cannot protect against: if the download itself is damaged, the files bef
 
 ZIP, 7z and tar all store their contents as a sequence of independent pieces: files for ZIP and tar, solid blocks for 7z. ZIP and 7z keep their index at the very end. HatchZip saves that index to a side file, then extracts pieces starting from the last one in the archive. After each batch it truncates the archive to where that batch began, which every operating system and filesystem supports; for a split archive, that means deleting whole volumes and shortening one. A `.tar.gz` is one compressed stream that can only be decoded from the front, so HatchZip extracts it front to back and punches holes in the compressed bytes it has used, at resume points it can restart from after a crash. The full design, including the exact order of writes that makes a crash safe, is in [How it works](docs/how-it-works.md).
 
+## How it is built
+
+HatchZip is written with the help of AI coding assistants, and [AGENTS.md](AGENTS.md) is the rulebook they work under. It is the strict part of the project: the tool deletes its own input, so a change only lands with proof.
+
+- **More than 130 tests run on Linux, macOS and Windows** for every change, in CI on real machines of each kind.
+- **Crash tests kill the process at every step** where it writes a file, saves its progress or cuts the archive, then resume and compare every extracted file byte for byte.
+- **Freeing space is checked, not assumed.** CI fails if ext4, APFS or NTFS do not really give the space back.
+- **Damaged and hostile archives are part of the suite:** paths that escape the folder, overlapping entries, bad CRCs, truncated downloads, wrong passwords.
+- **Every number in this README was measured** on real hardware, and the conditions are written next to it.
+
+Pull requests and bug reports from people are held to the same rules, and are very welcome.
+
 ## Star history
 
 <a href="https://star-history.com/#xevrion/hatchzip&Date">
