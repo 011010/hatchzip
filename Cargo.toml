@@ -9,7 +9,7 @@ edition = "2024"
 rust-version = "1.93"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/xevrion/hatchzip"
-homepage = "https://github.com/xevrion/hatchzip"
+homepage = "https://hatchzip.dev"
 
 [workspace.dependencies]
 hatchzip-core = { path = "crates/core", version = "0.1.2" }

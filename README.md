@@ -30,7 +30,7 @@ It checks that the extraction will fit before it changes anything, keeps a safet
 ### Get it
 
 > [!IMPORTANT]
-> HatchZip is only distributed from this repository's [releases](https://github.com/xevrion/hatchzip/releases) and its site, [xevrion.github.io/hatchzip](https://xevrion.github.io/hatchzip/). Other sites using the name, such as hatchzip.com, are not affiliated with this project.
+> HatchZip is only distributed from this repository's [releases](https://github.com/xevrion/hatchzip/releases) and its site, [hatchzip.dev](https://hatchzip.dev). Other sites using the name, such as hatchzip.com, are not affiliated with this project.
 
 No coding needed. **[Download for Windows](https://github.com/xevrion/hatchzip/releases/latest/download/HatchZip-x64-setup.exe)** (Windows 10 and 11), or for [macOS (Apple Silicon)](https://github.com/xevrion/hatchzip/releases/latest/download/HatchZip-aarch64.dmg), [macOS (Intel)](https://github.com/xevrion/hatchzip/releases/latest/download/HatchZip-x86_64.dmg) and [Linux](#installation).
 

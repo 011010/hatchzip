@@ -22,14 +22,14 @@ Then open http://127.0.0.1:8000. The 404 page is not served for unknown paths by
 ## Before going live
 
 - The download links point at `releases/latest/download/<file>` and the install commands at `install.sh` and `install.ps1` on `main`. Both work only once the first release and the install scripts exist.
-- Once the domain is decided, replace `DOMAIN` in `sitemap.xml`, uncomment the `Sitemap:` line in `robots.txt`, and uncomment the canonical and `og:url` tags at the top of `index.html`.
+- The site lives at `https://hatchzip.dev`, a domain verified for the `xevrion` GitHub account. That address is written in `sitemap.xml`, `robots.txt` and the canonical, `og:url` and `og:image` tags of `index.html`.
 - After any change to `style.css`, bump the `?v=` number where `index.html` and `404.html` link it. The CSS is cached for a year.
 
 ## Option A: GitHub Pages
 
 1. In the repository, open Settings, Pages, and set Source to "GitHub Actions".
 2. Open the Actions tab, pick the `pages` workflow, and click "Run workflow" on `main`.
-3. The site is published at `https://xevrion.github.io/hatchzip/`. The run's summary shows the address.
+3. The site is published at `https://hatchzip.dev` (Settings, Pages, Custom domain; DNS is a `CNAME` to `xevrion.github.io` on Cloudflare, DNS only). `xevrion.github.io/hatchzip/` redirects there.
 
 The workflow (`.github/workflows/pages.yml`) only runs when started by hand. To deploy on every push to `main` that touches the site, add this under `on:`:
 
@@ -42,7 +42,7 @@ The workflow (`.github/workflows/pages.yml`) only runs when started by hand. To 
 Notes:
 
 - GitHub Pages ignores `_headers`. The CSP and referrer policy still apply through the `<meta>` tags in the HTML, but framing protection (`frame-ancestors`, `X-Frame-Options`) and the other headers are only sent by Cloudflare Pages or Netlify.
-- `404.html` links its stylesheet and home page with absolute paths (`/style.css`), which are correct at the root of a domain. Under `xevrion.github.io/hatchzip/` the 404 page shows without styles until a custom domain is set (Settings, Pages, Custom domain). The main page uses relative paths and works either way.
+- `404.html` links its stylesheet and home page with absolute paths (`/style.css`), which are correct at the root of the domain. The main page uses relative paths and works anywhere.
 
 ## Option B: Cloudflare Pages
 

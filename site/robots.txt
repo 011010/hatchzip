@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://xevrion.github.io/hatchzip/sitemap.xml
+Sitemap: https://hatchzip.dev/sitemap.xml
