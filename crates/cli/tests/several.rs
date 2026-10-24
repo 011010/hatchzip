@@ -208,7 +208,11 @@ fn check_test_and_list_go_through_every_archive() {
     assert_ok(&list);
     let out = text(&list);
     assert!(out.contains(&a.display().to_string()) && out.contains(&c.display().to_string()));
-    assert_eq!(out.matches("game/data/big.pak").count(), 2);
+    // Windows lists entries with backslashes.
+    assert_eq!(
+        out.replace('\\', "/").matches("game/data/big.pak").count(),
+        2
+    );
 }
 
 /// A misspelled name is found before the first archive is removed.
