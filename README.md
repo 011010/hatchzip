@@ -105,7 +105,7 @@ gh attestation verify HatchZip-x64-setup.exe --repo xevrion/hatchzip
 
 ### Package managers
 
-Coming soon: these packages are prepared in [`packaging/`](packaging/README.md#package-managers) but not published yet. Until this note is gone, a package under these names does not come from this project.
+Homebrew and Scoop are live. winget is in review, and the AUR packages are coming soon; until they are listed as live here, a package under those names does not come from this project.
 
 | System | Command | Installs |
 |---|---|---|
