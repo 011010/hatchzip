@@ -129,7 +129,17 @@ fn resume_byte(archive: &Path) -> Option<u64> {
 /// byte from the journaled resume point on untouched, and, where holes can
 /// be punched, the space before it given back. `probe_log` is the crashed
 /// run's punch-probe line, so a failure can tell a refusal from late space.
-fn check_crashed(archive: &Path, original: &[u8], punched: bool, what: &str, probe_log: &str) {
+/// `allocated_before` is what the archive occupied before the run, when the
+/// tool that wrote it may have left blocks allocated past its end (macOS
+/// `tar` on APFS does, now and then).
+fn check_crashed(
+    archive: &Path,
+    original: &[u8],
+    punched: bool,
+    what: &str,
+    probe_log: &str,
+    allocated_before: Option<u64>,
+) {
     let now = fs::read(archive).unwrap();
     assert_eq!(
         now.len(),
@@ -153,10 +163,13 @@ fn check_crashed(archive: &Path, original: &[u8], punched: bool, what: &str, pro
         && let Some(used) = allocated(archive)
     {
         let len = original.len() as u64;
+        let before = allocated_before
+            .unwrap_or(0)
+            .max(len.next_multiple_of(4096));
         assert!(
-            used + byte as u64 <= len.next_multiple_of(4096) + 2 * 65_536,
-            "{what}: {used} of {len} bytes still allocated past a punch to {byte}; \
-             probe said: {probe_log}"
+            used + byte as u64 <= before + 2 * 65_536,
+            "{what}: {used} of {len} bytes ({before} before the run) still allocated \
+             past a punch to {byte}; probe said: {probe_log}"
         );
     }
 }
@@ -203,6 +216,7 @@ fn crash_at_every_point(build: impl Fn(&Path) -> PathBuf, files: &Files, afters:
                 point == "stream-after-punch",
                 &what,
                 &punch_probe_log(&crashed),
+                None,
             );
 
             assert_ok(&extract(&archive, &out, &stream_env(&[])));
@@ -302,6 +316,7 @@ fn crashing_again_and_again_inside_one_tar_gz_entry_is_harmless() {
             point == "stream-after-punch",
             point,
             &punch_probe_log(&crashed),
+            None,
         );
         points.push(journal(&archive)["resume"].clone());
     }
@@ -775,6 +790,7 @@ fn archives_from_tar_gzip_and_pigz_extract_and_resume() {
             continue;
         }
         let original = fs::read(&archive).unwrap();
+        let allocated_before = allocated(&archive);
         let out = tmp.path().join("out");
         let crash = stream_env(&[
             ("HATCHZIP_CRASH_AT", "stream-after-punch"),
@@ -785,7 +801,14 @@ fn archives_from_tar_gzip_and_pigz_extract_and_resume() {
             // `gzip -1` may write too few blocks to have three points.
             eprintln!("{tool}: finished before the third point");
         } else {
-            check_crashed(&archive, &original, true, tool, &punch_probe_log(&crashed));
+            check_crashed(
+                &archive,
+                &original,
+                true,
+                tool,
+                &punch_probe_log(&crashed),
+                allocated_before,
+            );
             assert_ok(&extract(&archive, &out, &stream_env(&[])));
         }
         assert_tree(&out, &files);
