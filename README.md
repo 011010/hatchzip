@@ -95,6 +95,12 @@ irm https://raw.githubusercontent.com/xevrion/hatchzip/main/install.ps1 | iex
 
 Both download the build for your machine from the latest release, check it against its published SHA-256 checksum, and install `hatchzip` and `hz` for your user only, with the man page and shell completions. No root or administrator rights.
 
+Every release file from 0.1.3 on carries signed build provenance. To check that a download really was built from this repository by its release workflow, wherever you got it:
+
+```sh
+gh attestation verify HatchZip-x64-setup.exe --repo xevrion/hatchzip
+```
+
 ### With Cargo
 
 ```sh
