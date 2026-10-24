@@ -1,8 +1,9 @@
 //! ZIP compresses every entry on its own, so each entry is a unit.
 
+use std::io::{Read, Seek};
 use std::sync::Arc;
 
-use ::zip::read::ZipArchiveMetadata;
+use ::zip::read::{ArchiveOffset, Config, ZipArchiveMetadata};
 use ::zip::result::ZipError;
 use ::zip::{CompressionMethod, ZipArchive};
 use anyhow::{Context, Result, anyhow, bail};
@@ -19,14 +20,33 @@ struct Zip {
     password: Option<String>,
 }
 
+/// Opens the archive. The zip crate defaults to scanning the whole file for
+/// a central directory header, which costs a full read of a multi-gigabyte
+/// archive before extraction even starts. A normal ZIP starts at offset 0,
+/// so try that first and only pay for the scan when the archive has a prefix
+/// (self-extractors).
+fn open_archive<R>(mut make: impl FnMut() -> R) -> Result<ZipArchive<R>>
+where
+    R: Read + Seek,
+{
+    match ZipArchive::with_config(
+        Config {
+            archive_offset: ArchiveOffset::Known(0),
+        },
+        make(),
+    ) {
+        Ok(zip) => Ok(zip),
+        Err(_) => ZipArchive::new(make()).context("this is not a ZIP archive HatchZip can read"),
+    }
+}
+
 pub fn open(
     storage: &Arc<Storage>,
     tail: Option<Arc<Tail>>,
     password: Option<&str>,
 ) -> Result<Opened> {
     let resuming = tail.clone();
-    let mut zip = ZipArchive::new(storage.reader(tail))
-        .context("this is not a ZIP archive HatchZip can read")?;
+    let mut zip = open_archive(move || storage.reader(tail.clone()))?;
 
     let tail_start = match resuming {
         Some(t) => t.start,
@@ -304,11 +324,80 @@ fn local_header_offset(record: &[u8], mut extra: &[u8]) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{Cursor, Read, Write};
+    use std::io::{Cursor, Read, Seek, SeekFrom, Write};
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use ::zip::write::{SimpleFileOptions, ZipWriter};
 
     use super::*;
+
+    struct CountingReader<R> {
+        inner: R,
+        read: Arc<AtomicUsize>,
+    }
+
+    impl<R: Read> Read for CountingReader<R> {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let n = self.inner.read(buf)?;
+            self.read.fetch_add(n, Ordering::Relaxed);
+            Ok(n)
+        }
+    }
+
+    impl<R: Seek> Seek for CountingReader<R> {
+        fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+            self.inner.seek(pos)
+        }
+    }
+
+    fn stored_zip(len: usize) -> Vec<u8> {
+        let mut w = ZipWriter::new(Cursor::new(Vec::new()));
+        w.start_file(
+            "data.bin",
+            SimpleFileOptions::default().compression_method(CompressionMethod::Stored),
+        )
+        .unwrap();
+        w.write_all(&vec![0xAB; len]).unwrap();
+        w.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn opening_a_zip_does_not_read_the_entry_data() {
+        const LEN: usize = 1 << 20;
+        let bytes = stored_zip(LEN);
+        let read = Arc::new(AtomicUsize::new(0));
+        let mut zip = open_archive(|| CountingReader {
+            inner: Cursor::new(bytes.clone()),
+            read: read.clone(),
+        })
+        .unwrap();
+
+        let at_open = read.load(Ordering::Relaxed);
+        assert!(
+            at_open < LEN / 2,
+            "opening read {at_open} bytes for a {LEN} byte entry"
+        );
+
+        let mut out = Vec::new();
+        zip.by_index(0).unwrap().read_to_end(&mut out).unwrap();
+        assert_eq!(out.len(), LEN);
+    }
+
+    #[test]
+    fn opening_a_zip_with_a_prefix_still_finds_the_archive() {
+        let mut bytes = vec![0x90; 8192];
+        bytes.extend(stored_zip(4096));
+        let read = Arc::new(AtomicUsize::new(0));
+        let mut zip = open_archive(|| CountingReader {
+            inner: Cursor::new(bytes.clone()),
+            read: read.clone(),
+        })
+        .unwrap();
+
+        let mut out = Vec::new();
+        zip.by_index(0).unwrap().read_to_end(&mut out).unwrap();
+        assert_eq!(out, vec![0xAB; 4096]);
+    }
 
     /// Too many entries for the 16-bit counts, which the end-to-end tests
     /// can't afford to extract one by one.
