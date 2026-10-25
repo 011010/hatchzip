@@ -28,6 +28,9 @@ pub const WINDOW: usize = 32 * 1024;
 
 const INPUT_BUF: usize = 1024 * 1024;
 
+/// The longest file name or comment a gzip header may hold.
+const MAX_GZIP_NAME: usize = 64 * 1024;
+
 pub struct Decoder {
     inner: Inner,
 }
@@ -510,44 +513,59 @@ impl Gzip {
         if first != 0x1F {
             return Err(unexpected());
         }
-        let mut head = vec![first];
+        // Only the header's CRC needs its bytes, so they are hashed as they
+        // come instead of kept.
+        let mut head = crc32fast::Hasher::new();
+        head.update(&[first]);
         // The second magic byte, then the method, which is always deflate.
         for want in [0x8B, 8] {
             match self.z.raw_byte()? {
-                Some(b) if b == want => head.push(b),
+                Some(b) if b == want => head.update(&[b]),
                 _ => return Err(unexpected()),
             }
         }
-        for _ in 3..10 {
-            head.push(self.byte()?);
+        let mut fixed = [0u8; 7];
+        for b in &mut fixed {
+            *b = self.byte()?;
         }
-        let flags = head[3];
+        head.update(&fixed);
+        let flags = fixed[0];
         if flags & 0xE0 != 0 {
             bail!("the gzip member at byte {at} uses header flags that are not defined");
         }
         if flags & 4 != 0 {
             let (a, b) = (self.byte()?, self.byte()?);
-            head.extend([a, b]);
+            head.update(&[a, b]);
             for _ in 0..u16::from_le_bytes([a, b]) {
                 let b = self.byte()?;
-                head.push(b);
+                head.update(&[b]);
             }
         }
-        // The file name, then the comment, each ending in a zero byte.
+        // The file name, then the comment, each ending in a zero byte. Real
+        // ones are short; a longer one is refused rather than read to the
+        // end of the archive.
         for flag in [8, 16] {
             if flags & flag != 0 {
+                let mut len = 0;
                 loop {
                     let b = self.byte()?;
-                    head.push(b);
+                    head.update(&[b]);
                     if b == 0 {
                         break;
+                    }
+                    len += 1;
+                    if len > MAX_GZIP_NAME {
+                        bail!(
+                            "the gzip member at byte {at} has a file name or comment longer \
+                             than 64 KB, which is not supported"
+                        );
                     }
                 }
             }
         }
         if flags & 2 != 0 {
             let check = u16::from_le_bytes([self.byte()?, self.byte()?]);
-            if check != crc32fast::hash(&head) as u16 {
+            if check != head.finalize() as u16 {
                 bail!("the gzip member at byte {at} has a damaged header (CRC mismatch)");
             }
         }
@@ -759,6 +777,33 @@ mod tests {
         head.extend(crc32fast::hash(data).to_le_bytes());
         head.extend((data.len() as u32).to_le_bytes());
         head
+    }
+
+    /// A file name is read up to its zero byte; one that goes on and on is
+    /// refused instead. The header CRC covers names of any allowed length.
+    #[test]
+    fn gzip_names_have_a_limit() {
+        let dir = std::env::temp_dir().join(format!("hatchzip-gzip-name-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let data = text(10_000);
+        for (len, ok) in [(MAX_GZIP_NAME, true), (MAX_GZIP_NAME + 1, false)] {
+            let mut head = vec![0x1F, 0x8B, 8, 8 | 2, 1, 2, 3, 4, 0, 3];
+            head.extend(std::iter::repeat_n(b'n', len));
+            head.push(0);
+            let check = crc32fast::hash(&head) as u16;
+            head.extend(check.to_le_bytes());
+            head.extend(deflate_raw(&data, 6));
+            head.extend(crc32fast::hash(&data).to_le_bytes());
+            head.extend((data.len() as u32).to_le_bytes());
+            let path = dir.join(format!("name-{len}.gz"));
+            std::fs::write(&path, &head).unwrap();
+            let decoded = gzip_decode_all(&mut open_gzip(&path, &GzPoint::start()));
+            match decoded {
+                Ok(out) => assert!(ok && out == data, "{len}"),
+                Err(e) => assert!(!ok && format!("{e:#}").contains("longer than"), "{e:#}"),
+            }
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     fn gzip_decode_all(g: &mut Gzip) -> Result<Vec<u8>> {
