@@ -1,0 +1,28 @@
+# Unmaintained notices, not vulnerabilities. The same accepted risks as
+# deny.toml, for tools that read Cargo.lock with osv-scanner (OpenSSF
+# Scorecard among them). Each entry expires, so it gets looked at again.
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0141"
+ignoreUntil = 2027-04-30
+reason = "bincode: build-time only, via Slint's compiler (i-slint-compiler, typed-index-collections); never sees archive data"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0192"
+ignoreUntil = 2027-04-30
+reason = "ttf-parser: Wayland title bar font via winit's sctk-adwaita, never archive data"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0370"
+ignoreUntil = 2027-04-30
+reason = "zvariant, merged into zbus 6: Linux accessibility D-Bus via accesskit_unix and atspi on zbus 5"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0371"
+ignoreUntil = 2027-04-30
+reason = "zbus_names: same path as zvariant"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0372"
+ignoreUntil = 2027-04-30
+reason = "zvariant_derive: same path as zvariant"
