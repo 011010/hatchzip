@@ -15,6 +15,7 @@
 
 <p align="center">
   <a href="https://github.com/xevrion/hatchzip/actions/workflows/ci.yml"><img src="https://github.com/xevrion/hatchzip/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/xevrion/hatchzip"><img src="https://api.scorecard.dev/projects/github.com/xevrion/hatchzip/badge" alt="OpenSSF Scorecard" /></a>
   <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="MIT or Apache-2.0 licensed" /></a>
   <img src="https://img.shields.io/badge/platform-linux%20%7C%20windows%20%7C%20macos-blue.svg" alt="Linux, Windows and macOS" />
 </p>
@@ -258,17 +259,17 @@ What it cannot protect against: if the download itself is damaged, the files bef
 
 ### Antivirus warnings
 
-HatchZip does not connect to the network. It has no networking code and no networking library: `cargo tree` lists none, and the source is all here to read. It collects nothing and sends nothing.
+HatchZip does not connect to the network. It has no networking code and no networking library, and CI fails if an HTTP, TLS or socket crate enters the dependency tree ([deny.toml](deny.toml)). It collects nothing and sends nothing.
 
-The release files are not code-signed yet, and a new, unsigned program gets flagged by some antivirus engines that score files by machine learning or behaviour rather than by known malware. On VirusTotal, the v0.1.3 Windows setup is flagged by 4 of 70 engines (DeepInstinct, SecureAge, Skyhigh and Trapmine, all of them heuristic or machine-learning scores); Microsoft Defender and the other 66 report it clean. The behaviours sandboxes list are what any installer does: it writes program files, adds the right-click menu and "Open with" entries to the registry, and runs Inno Setup's own helper process.
+The release files are not code-signed yet, and some antivirus engines that score files by machine learning or behaviour flag new, unsigned programs. On VirusTotal, the v0.1.3 Windows setup is flagged by 4 of 70 engines, all heuristic or machine-learning scores; Microsoft Defender reports it clean. What sandboxes list is what any installer does: it writes program files, adds the right-click menu and "Open with" entries, and runs Inno Setup's helper process. Code signing is planned.
 
-To be sure a download is the real one, built by this repository's release workflow from the public source and not changed since:
+To check that a download is genuine, compare its SHA-256 with the `.sha256` file next to it, or verify that this repository's release workflow built it:
 
 ```sh
 gh attestation verify HatchZip-x64-setup.exe --repo xevrion/hatchzip
 ```
 
-Or build it yourself: `cargo install hatchzip`. Code signing is planned.
+[Verify your download](https://hatchzip.dev/verify.html) has the commands for every system and the checksum of every release file, each with its VirusTotal report. Or build it yourself: `cargo install hatchzip`.
 
 ## Supported formats
 
