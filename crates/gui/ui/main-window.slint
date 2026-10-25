@@ -136,6 +136,7 @@ export component MainWindow inherits Window {
     callback open-folder();
     callback back();
     callback about();
+    callback check-for-updates();
     callback quit();
 
     title: root.screen == Screen.opened ? root.archive-name + " - HatchZip" : "HatchZip";
@@ -194,6 +195,13 @@ export component MainWindow inherits Window {
         }
         Menu {
             title: "Help";
+            MenuItem {
+                title: "Check for updates";
+                activated => {
+                    root.check-for-updates();
+                }
+            }
+            MenuSeparator { }
             MenuItem {
                 title: "About HatchZip";
                 activated => {

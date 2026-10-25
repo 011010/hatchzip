@@ -24,6 +24,7 @@ use crate::work::{Request, sentence};
 use crate::{AboutWindow, MainWindow, Mode, PlanView, Screen, TaskView, platform, shell};
 
 const REPO: &str = "https://github.com/xevrion/hatchzip";
+const RELEASES: &str = "https://github.com/xevrion/hatchzip/releases/latest";
 /// What the Open dialog offers. `.r00` is the second volume of an old-style
 /// RAR set; any volume opens the whole set.
 const ARCHIVE_EXTENSIONS: &[&str] = if hatchzip_core::archive::RAR_SUPPORTED {
@@ -287,6 +288,11 @@ fn wire(ui: &MainWindow, app: &Rc<App>) {
     ui.on_back(move || a.back());
     let a = app.clone();
     ui.on_about(move || a.show_about());
+    // The releases page says whether a newer version exists; the app itself
+    // never connects to the network.
+    ui.on_check_for_updates(|| {
+        let _ = open::that_detached(RELEASES);
+    });
     let a = app.clone();
     ui.on_verify_first_toggled(move || {
         let on = a.ui().get_verify_first();
