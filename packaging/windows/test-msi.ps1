@@ -74,10 +74,10 @@ $installer = New-Object -ComObject WindowsInstaller.Installer
 function ComProperty($object, $name, $params) {
     $object.GetType().InvokeMember($name, 'GetProperty', $null, $object, $params)
 }
+# RelatedProducts returns a StringList, which PowerShell enumerates as it
+# leaves ComProperty: what arrives is nothing, one product code or several.
 function Products {
-    $list = ComProperty $installer 'RelatedProducts' @($upgradeCode)
-    $count = ComProperty $list 'Count' $null
-    for ($i = 0; $i -lt $count; $i++) { ComProperty $list 'Item' @($i) }
+    foreach ($code in (ComProperty $installer 'RelatedProducts' @($upgradeCode))) { [string] $code }
 }
 function ProductInfo($code, $attribute) {
     try { ComProperty $installer 'ProductInfo' @($code, $attribute) }
