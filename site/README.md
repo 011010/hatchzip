@@ -1,10 +1,12 @@
 # Website
 
-The HatchZip website: one static page, no build step, no JavaScript, no requests to other sites.
+The HatchZip website: static pages, no build step, no JavaScript, no requests to other sites.
 
 | File | Purpose |
 |---|---|
-| `index.html` | The page |
+| `index.html` | The main page |
+| `verify.html` | Verify your download: what HatchZip does, checksums, provenance, and the release file table |
+| `update-verify.py` | Regenerates the release file table in `verify.html` |
 | `style.css` | All styles, light and dark |
 | `404.html` | Page shown for unknown addresses |
 | `favicon.svg` | Browser tab icon |
@@ -23,7 +25,17 @@ Then open http://127.0.0.1:8000. The 404 page is not served for unknown paths by
 
 - The download links point at `releases/latest/download/<file>` and the install commands at `install.sh` and `install.ps1` on `main`. Both work only once the first release and the install scripts exist.
 - The site lives at `https://hatchzip.dev`, a domain verified for the `xevrion` GitHub account. That address is written in `sitemap.xml`, `robots.txt` and the canonical, `og:url` and `og:image` tags of `index.html`.
-- After any change to `style.css`, bump the `?v=` number where `index.html` and `404.html` link it. The CSS is cached for a year.
+- After any change to `style.css`, bump the `?v=` number where `index.html`, `verify.html` and `404.html` link it. The CSS is cached for a year.
+
+## After each release
+
+`verify.html` lists every file of one release with its SHA-256 and a VirusTotal link. Once the release is published, regenerate the table from its tag and commit the result:
+
+```sh
+python3 site/update-verify.py v0.1.4
+```
+
+It needs the GitHub CLI, signed in. It downloads the release's `.sha256` files, checks each against the SHA-256 GitHub computed for the uploaded file, and rewrites only the block between the `release-files` markers. If a checksum file is malformed or disagrees with GitHub, it stops and changes nothing. The page does not quote VirusTotal results, since they change; it links to them.
 
 ## Option A: GitHub Pages
 
@@ -56,4 +68,4 @@ npx wrangler pages deploy site --project-name hatchzip --branch main
 
 The site is published at `https://hatchzip.pages.dev` (the create command prints the exact address if that name is taken). Run the last command again to deploy a change. A custom domain is added in the Cloudflare dashboard under Workers and Pages, hatchzip, Custom domains.
 
-`wrangler pages deploy site` uploads every file in this folder, including this README, which then is reachable at `/README.md`. That is harmless, since it is public in the repository anyway.
+`wrangler pages deploy site` uploads every file in this folder, including this README and `update-verify.py`, which then are reachable at `/README.md` and `/update-verify.py`. That is harmless, since both are public in the repository anyway.

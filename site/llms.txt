@@ -31,6 +31,11 @@ The archive is used up as it extracts: when the run finishes, only the extracted
 - `.tar.xz` and `.tar.zst` are not supported yet.
 - RAR (RAR 5 and RAR 4, single files and `.part1.rar` or `.rar`/`.r00` volume sets) is freed file by file, each volume deleted once empty. A solid RAR is extracted only with `--keep-archive`; RAR archives with encrypted file names or links are refused before anything changes.
 
+## Safety
+
+- No network access: no networking code or library, no telemetry, no update checks. CI fails if an HTTP, TLS or socket library enters the dependencies.
+- Not code-signed yet, so Windows SmartScreen and a few machine-learning antivirus engines can flag the downloads. Each release file has a `.sha256` checksum and signed build provenance (`gh attestation verify <file> --repo xevrion/hatchzip`); see [Verify your download](https://hatchzip.dev/verify.html).
+
 ## Docs
 
 - [README](https://github.com/xevrion/hatchzip/blob/main/README.md)

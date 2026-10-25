@@ -23,7 +23,7 @@
 {"@context":"https://schema.org","@type":"SoftwareApplication","name":"HatchZip","description":"Extracts ZIP, 7z, tar and split archives in place, so you only need free space for the files, not for the files and the archive.","applicationCategory":"UtilitiesApplication","operatingSystem":"Windows, macOS, Linux","url":"https://hatchzip.dev/","downloadUrl":"https://github.com/xevrion/hatchzip/releases/latest","license":"https://github.com/xevrion/hatchzip/blob/main/LICENSE-MIT","isAccessibleForFree":true,"offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"author":{"@type":"Person","name":"Yash Bavadiya","url":"https://x.com/xevrion_the1"},"codeRepository":"https://github.com/xevrion/hatchzip"}
 </script>
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="style.css?v=4">
+<link rel="stylesheet" href="style.css?v=5">
 </head>
 <body>
 <div class="page">
@@ -35,6 +35,7 @@
 <li><a href="#features">What it does</a></li>
 <li><a href="#results">Results</a></li>
 <li><a href="#limits">Limits</a></li>
+<li><a href="verify.html">Verify a download</a></li>
 <li><a href="https://github.com/xevrion/hatchzip/blob/main/docs/how-it-works.md">How it works</a></li>
 <li><a href="https://github.com/xevrion/hatchzip">Source code</a></li>
 <li><a href="https://github.com/xevrion/hatchzip/issues">Report a bug</a></li>
@@ -110,6 +111,7 @@
 </tbody>
 </table>
 <p class="note">The Windows setup and the macOS apps are not code-signed yet. On Windows choose More info, then Run anyway. On macOS, open the app once, then allow it in System Settings, Privacy &amp; Security.</p>
+<p>HatchZip does not use the network. To check that a download is genuine, compare its SHA-256 checksum or verify its signed build provenance: <a href="verify.html">Verify your download</a>.</p>
 
 <p>Or install from a terminal. Linux and macOS:</p>
 <pre><code>curl -fsSL https://raw.githubusercontent.com/xevrion/hatchzip/main/install.sh | sh</code></pre>
@@ -169,7 +171,7 @@
 </main>
 
 <footer>
-<p>HatchZip is licensed under <a href="https://github.com/xevrion/hatchzip/blob/main/LICENSE-MIT">MIT</a> OR <a href="https://github.com/xevrion/hatchzip/blob/main/LICENSE-APACHE">Apache-2.0</a>. The downloads decode RAR with UnRAR, under its own <a href="https://github.com/xevrion/hatchzip/blob/main/LICENSE-UNRAR">license</a>. <a href="https://github.com/xevrion/hatchzip">Source on GitHub</a>. <a href="https://github.com/xevrion/hatchzip/issues">Report a bug</a>.</p>
+<p>HatchZip is licensed under <a href="https://github.com/xevrion/hatchzip/blob/main/LICENSE-MIT">MIT</a> OR <a href="https://github.com/xevrion/hatchzip/blob/main/LICENSE-APACHE">Apache-2.0</a>. The downloads decode RAR with UnRAR, under its own <a href="https://github.com/xevrion/hatchzip/blob/main/LICENSE-UNRAR">license</a>. <a href="https://github.com/xevrion/hatchzip">Source on GitHub</a>. <a href="verify.html">Verify your download</a>. <a href="https://github.com/xevrion/hatchzip/issues">Report a bug</a>.</p>
 <p>Made by Yash Bavadiya (<a href="https://x.com/xevrion_the1">@xevrion_the1</a>).</p>
 <p>HatchZip is only distributed from <a href="https://github.com/xevrion/hatchzip/releases">github.com/xevrion/hatchzip</a> and this site. Other sites using the name, such as hatchzip.com, are not affiliated with this project.</p>
 </footer>

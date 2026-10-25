@@ -214,6 +214,10 @@ tbody th { font-weight: normal; }
 td a, .nw { white-space: nowrap; }
 th code, td code { background: none; padding: 0; }
 
+/* SHA-256 values are 64 characters with no break opportunity; let them wrap
+   rather than push the table off a narrow screen. */
+.hashes code { white-space: normal; overflow-wrap: anywhere; }
+
 footer {
   margin-top: 40px;
   padding-top: 16px;

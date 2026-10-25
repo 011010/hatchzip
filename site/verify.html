@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="light dark">
+<title>Verify your download: HatchZip</title>
+<meta name="description" content="How to check that a HatchZip download is genuine: SHA-256 checksums, signed build provenance, or building from source. What HatchZip does on your computer, and why some antivirus tools flag unsigned programs.">
+<link rel="canonical" href="https://hatchzip.dev/verify.html">
+<meta property="og:url" content="https://hatchzip.dev/verify.html">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Verify your HatchZip download">
+<meta property="og:description" content="Checksums, signed build provenance and building from source: how to check that a HatchZip download is genuine.">
+<meta property="og:image" content="https://hatchzip.dev/img/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css?v=5">
+</head>
+<body>
+<div class="page">
+<aside class="side">
+<a class="brand" href="./"><img src="favicon.svg" alt="" width="48" height="48"><span>HatchZip</span></a>
+<nav aria-label="On this page">
+<ul>
+<li><a href="./">Home</a></li>
+<li><a href="./#download">Download</a></li>
+<li><a href="#what-it-does">What it does</a></li>
+<li><a href="#antivirus">Antivirus warnings</a></li>
+<li><a href="#check">Check a download</a></li>
+<li><a href="#files">Release files</a></li>
+<li><a href="https://github.com/xevrion/hatchzip/security/policy">Security policy</a></li>
+<li><a href="https://github.com/xevrion/hatchzip">Source code</a></li>
+</ul>
+</nav>
+</aside>
+
+<div class="content">
+<header class="top">
+<div>
+<h1>Verify your download</h1>
+<p class="lead">How to check that a HatchZip download is the one built from its public source, and what it does on your computer.</p>
+</div>
+</header>
+<main>
+<p>HatchZip is only distributed from <a href="https://github.com/xevrion/hatchzip/releases">github.com/xevrion/hatchzip</a>, from this site, and through the package managers listed in the <a href="https://github.com/xevrion/hatchzip#package-managers">README</a>. Other sites using the name, such as hatchzip.com, are not affiliated with this project.</p>
+
+<section aria-labelledby="what-it-does">
+<h2 id="what-it-does">What HatchZip does and does not do</h2>
+<ul>
+<li>It reads the archive you give it and writes the extracted files next to it. It works only with files on your computer.</li>
+<li>It does not use the network. It has no networking code and no networking library. Every change to the code is checked in CI against a list of HTTP, TLS and socket libraries, and the check fails if one of them enters the dependencies (<a href="https://github.com/xevrion/hatchzip/blob/main/deny.toml">deny.toml</a>). The one link in the desktop app, to the source code in the About window, opens in your web browser when you click it.</li>
+<li>It has no telemetry, no accounts and no update checks. It collects nothing and sends nothing.</li>
+<li>The Windows setup installs for the current user only, without administrator rights. It adds HatchZip to the right-click menu and to "Open with" for archive files, and puts the <code>hatchzip</code> command on your <code>PATH</code>. The uninstaller removes all of it.</li>
+<li>All of the source is public under the MIT or Apache-2.0 license. The downloads decode RAR archives with UnRAR, whose source is public under its own <a href="https://github.com/xevrion/hatchzip/blob/main/LICENSE-UNRAR">license</a>.</li>
+</ul>
+</section>
+
+<section aria-labelledby="antivirus">
+<h2 id="antivirus">Antivirus warnings</h2>
+<p>The release files are not code-signed yet. Windows SmartScreen shows "Windows protected your PC" for a new program without a signature, and macOS asks you to allow the app in System Settings. A few antivirus engines also flag new, unsigned programs, mostly the ones that score files with machine learning or behaviour rules rather than by matching known malware.</p>
+<p>The behaviours that sandboxes report for the Windows setup are what any installer does: it writes program files, adds the right-click menu and "Open with" entries to the registry, and runs the helper process of Inno Setup, the installer it is built with.</p>
+<p>Code signing is planned. Until then, the checks below show whether a file is genuine. Each file in the <a href="#files">table</a> links to its current VirusTotal report.</p>
+</section>
+
+<section aria-labelledby="check">
+<h2 id="check">Check a download</h2>
+
+<h3>1. Compare the SHA-256 checksum</h3>
+<p>Every release file has a <code>.sha256</code> file next to it on the <a href="https://github.com/xevrion/hatchzip/releases">releases page</a>, and its checksum is also in the <a href="#files">table below</a>. If the checksum of your file matches, it is byte for byte the published file. Download both into the same folder, then run the command for your system there.</p>
+<p>Windows, in PowerShell:</p>
+<pre><code>Get-FileHash .\HatchZip-x64-setup.exe -Algorithm SHA256</code></pre>
+<p>Compare the <code>Hash</code> it prints with the one in the <code>.sha256</code> file or the table; PowerShell prints it in capitals, which makes no difference. Or let PowerShell compare them, which prints <code>True</code> when they match:</p>
+<pre><code>(Get-FileHash .\HatchZip-x64-setup.exe).Hash -eq (Get-Content .\HatchZip-x64-setup.exe.sha256).Split(' ')[0]</code></pre>
+<p>Linux:</p>
+<pre><code>sha256sum -c hatchzip-x86_64-linux.tar.gz.sha256</code></pre>
+<p>macOS:</p>
+<pre><code>shasum -a 256 -c HatchZip-aarch64.dmg.sha256</code></pre>
+<p>Both print the file name followed by <code>OK</code> when it matches. The install scripts (<code>install.sh</code> and <code>install.ps1</code>) run this check themselves before installing.</p>
+
+<h3>2. Verify the signed build provenance</h3>
+<p>A checksum shows that the file was not changed after it was published. Build provenance also shows where it came from: every release file from 0.1.3 on carries a signed attestation that it was built by the release workflow in <a href="https://github.com/xevrion/hatchzip">github.com/xevrion/hatchzip</a>, from the commit of that release tag. With the <a href="https://cli.github.com">GitHub CLI</a> installed and signed in:</p>
+<pre><code>gh attestation verify HatchZip-x64-setup.exe --repo xevrion/hatchzip</code></pre>
+<p>It exits with success when the file matches an attestation from that repository, and fails with an error for any file that was changed or built anywhere else. Use the name of the file you downloaded.</p>
+
+<h3>3. Build it from source</h3>
+<p>With <a href="https://rustup.rs">Rust</a> installed, this downloads the source of the command-line tool from <a href="https://crates.io/crates/hatchzip">crates.io</a> and builds it on your machine:</p>
+<pre><code>cargo install hatchzip</code></pre>
+<p>That build reads every format except RAR. <code>cargo install hatchzip --features rar</code> adds RAR support and needs a C++ compiler. To build the desktop app too, clone the repository and run <code>cargo build --release</code>, as described in the <a href="https://github.com/xevrion/hatchzip#from-source">README</a>.</p>
+</section>
+
+<section aria-labelledby="files">
+<h2 id="files">Release files</h2>
+<!-- release-files: generated by update-verify.py, do not edit by hand -->
+<p>HatchZip <a href="https://github.com/xevrion/hatchzip/releases/tag/v0.1.3">0.1.3</a>, published 24 October 2026.</p>
+<table class="stack hashes">
+<thead>
+<tr><th scope="col">File</th><th scope="col">SHA-256</th><th scope="col">VirusTotal</th></tr>
+</thead>
+<tbody>
+<tr><th scope="row"><a href="https://github.com/xevrion/hatchzip/releases/download/v0.1.3/HatchZip-x64-setup.exe">HatchZip-x64-setup.exe</a></th><td data-label="SHA-256"><code>33cad5a3bda339e1a8e14a298305983e44b1fb33167114e802c3c18d99fadd73</code></td><td data-label="VirusTotal"><a href="https://www.virustotal.com/gui/file/33cad5a3bda339e1a8e14a298305983e44b1fb33167114e802c3c18d99fadd73" aria-label="VirusTotal report for HatchZip-x64-setup.exe">Report</a></td></tr>
+<tr><th scope="row"><a href="https://github.com/xevrion/hatchzip/releases/download/v0.1.3/hatchzip-x86_64-windows.zip">hatchzip-x86_64-windows.zip</a></th><td data-label="SHA-256"><code>899491663ed789a806f651f582d14d964efc36bc79df7de73806c70a412755b7</code></td><td data-label="VirusTotal"><a href="https://www.virustotal.com/gui/file/899491663ed789a806f651f582d14d964efc36bc79df7de73806c70a412755b7" aria-label="VirusTotal report for hatchzip-x86_64-windows.zip">Report</a></td></tr>
+<tr><th scope="row"><a href="https://github.com/xevrion/hatchzip/releases/download/v0.1.3/hatchzip-aarch64-macos.tar.gz">hatchzip-aarch64-macos.tar.gz</a></th><td data-label="SHA-256"><code>d5afa6ef14ee97d2df1740bd4eb8eeced2b83855b24ceb4b1d933d1a9c90d1ab</code></td><td data-label="VirusTotal"><a href="https://www.virustotal.com/gui/file/d5afa6ef14ee97d2df1740bd4eb8eeced2b83855b24ceb4b1d933d1a9c90d1ab" aria-label="VirusTotal report for hatchzip-aarch64-macos.tar.gz">Report</a></td></tr>
+<tr><th scope="row"><a href="https://github.com/xevrion/hatchzip/releases/download/v0.1.3/HatchZip-aarch64.dmg">HatchZip-aarch64.dmg</a></th><td data-label="SHA-256"><code>b5681f83ec7bd0bf660759a82c5c7b30223d3d5d7cb5b6cd4938d12b8f56f437</code></td><td data-label="VirusTotal"><a href="https://www.virustotal.com/gui/file/b5681f83ec7bd0bf660759a82c5c7b30223d3d5d7cb5b6cd4938d12b8f56f437" aria-label="VirusTotal report for HatchZip-aarch64.dmg">Report</a></td></tr>
+<tr><th scope="row"><a href="https://github.com/xevrion/hatchzip/releases/download/v0.1.3/hatchzip-x86_64-macos.tar.gz">hatchzip-x86_64-macos.tar.gz</a></th><td data-label="SHA-256"><code>6ac8bb9ec75b199f7161213fc2b1ddc4c16b0d68e44174e8b04074ebd26a2973</code></td><td data-label="VirusTotal"><a href="https://www.virustotal.com/gui/file/6ac8bb9ec75b199f7161213fc2b1ddc4c16b0d68e44174e8b04074ebd26a2973" aria-label="VirusTotal report for hatchzip-x86_64-macos.tar.gz">Report</a></td></tr>
+<tr><th scope="row"><a href="https://github.com/xevrion/hatchzip/releases/download/v0.1.3/HatchZip-x86_64.dmg">HatchZip-x86_64.dmg</a></th><td data-label="SHA-256"><code>2b878e8472914f17b9f3e63afa100a57e82afd46cf4587abdf72d3c4f6f35efc</code></td><td data-label="VirusTotal"><a href="https://www.virustotal.com/gui/file/2b878e8472914f17b9f3e63afa100a57e82afd46cf4587abdf72d3c4f6f35efc" aria-label="VirusTotal report for HatchZip-x86_64.dmg">Report</a></td></tr>
+<tr><th scope="row"><a href="https://github.com/xevrion/hatchzip/releases/download/v0.1.3/hatchzip-aarch64-linux.tar.gz">hatchzip-aarch64-linux.tar.gz</a></th><td data-label="SHA-256"><code>1b485355a986889c1c4b8b8c62670eaa8037a5aa9e528c4780c91efb1fd7961d</code></td><td data-label="VirusTotal"><a href="https://www.virustotal.com/gui/file/1b485355a986889c1c4b8b8c62670eaa8037a5aa9e528c4780c91efb1fd7961d" aria-label="VirusTotal report for hatchzip-aarch64-linux.tar.gz">Report</a></td></tr>
+<tr><th scope="row"><a href="https://github.com/xevrion/hatchzip/releases/download/v0.1.3/hatchzip-x86_64-linux.tar.gz">hatchzip-x86_64-linux.tar.gz</a></th><td data-label="SHA-256"><code>08ca9469878ce0ab14e275d4d4eb880e04cd57fa79097b0b4e649392011cc0fa</code></td><td data-label="VirusTotal"><a href="https://www.virustotal.com/gui/file/08ca9469878ce0ab14e275d4d4eb880e04cd57fa79097b0b4e649392011cc0fa" aria-label="VirusTotal report for hatchzip-x86_64-linux.tar.gz">Report</a></td></tr>
+<tr><th scope="row"><a href="https://github.com/xevrion/hatchzip/releases/download/v0.1.3/HatchZip-x86_64.AppImage">HatchZip-x86_64.AppImage</a></th><td data-label="SHA-256"><code>16a09a17ebd6cd099d1489fa8c5080c4231ee2acbf06f8094df80ff6ab541430</code></td><td data-label="VirusTotal"><a href="https://www.virustotal.com/gui/file/16a09a17ebd6cd099d1489fa8c5080c4231ee2acbf06f8094df80ff6ab541430" aria-label="VirusTotal report for HatchZip-x86_64.AppImage">Report</a></td></tr>
+<tr><th scope="row"><a href="https://github.com/xevrion/hatchzip/releases/download/v0.1.3/hatchzip-x86_64.rpm">hatchzip-x86_64.rpm</a></th><td data-label="SHA-256"><code>e662fe351b04fc6f9df91e869f75980ec3d27ae8b3ee471d7056f9913bab1aab</code></td><td data-label="VirusTotal"><a href="https://www.virustotal.com/gui/file/e662fe351b04fc6f9df91e869f75980ec3d27ae8b3ee471d7056f9913bab1aab" aria-label="VirusTotal report for hatchzip-x86_64.rpm">Report</a></td></tr>
+<tr><th scope="row"><a href="https://github.com/xevrion/hatchzip/releases/download/v0.1.3/hatchzip_amd64.deb">hatchzip_amd64.deb</a></th><td data-label="SHA-256"><code>96e59e1cac291eb75f267f36393d12a8d3f0508a8cf42dda00a0cefa53e590e8</code></td><td data-label="VirusTotal"><a href="https://www.virustotal.com/gui/file/96e59e1cac291eb75f267f36393d12a8d3f0508a8cf42dda00a0cefa53e590e8" aria-label="VirusTotal report for hatchzip_amd64.deb">Report</a></td></tr>
+</tbody>
+</table>
+<!-- /release-files -->
+<p class="note">VirusTotal results change over time as engines update their rules, so this page links to the current report instead of quoting it. If VirusTotal has no report for a file yet, you can upload the file there yourself.</p>
+</section>
+
+<section aria-labelledby="report">
+<h2 id="report">Report a problem</h2>
+<p>If a file does not match its checksum or its attestation, do not run it, and open an <a href="https://github.com/xevrion/hatchzip/issues">issue</a> saying where you downloaded it. Report security vulnerabilities in HatchZip privately, as the <a href="https://github.com/xevrion/hatchzip/security/policy">security policy</a> describes.</p>
+</section>
+</main>
+
+<footer>
+<p>HatchZip is licensed under <a href="https://github.com/xevrion/hatchzip/blob/main/LICENSE-MIT">MIT</a> OR <a href="https://github.com/xevrion/hatchzip/blob/main/LICENSE-APACHE">Apache-2.0</a>. The downloads decode RAR with UnRAR, under its own <a href="https://github.com/xevrion/hatchzip/blob/main/LICENSE-UNRAR">license</a>. <a href="https://github.com/xevrion/hatchzip">Source on GitHub</a>. <a href="https://github.com/xevrion/hatchzip/issues">Report a bug</a>.</p>
+<p>Made by Yash Bavadiya (<a href="https://x.com/xevrion_the1">@xevrion_the1</a>).</p>
+</footer>
+</div>
+</div>
+</body>
+</html>
