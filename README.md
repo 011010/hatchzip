@@ -6,9 +6,10 @@
 </p>
 
 <h4 align="center">
+  <a href="https://hatchzip.dev">hatchzip.dev</a> |
   <a href="#installation">Installation</a> |
   <a href="#usage">Usage</a> |
-  <a href="#is-it-safe">Safety</a> |
+  <a href="#is-hatchzip-safe">Safety</a> |
   <a href="docs/how-it-works.md">How it works</a> |
   <a href="CONTRIBUTING.md">Contributing</a>
 </h4>
@@ -23,6 +24,8 @@
 <p align="center">
   <img src="docs/media/hatchzip.gif" width="720" alt="HatchZip extracts the last part of the archive, then cuts it off the archive file, so the disk never holds the archive and all the files at once" />
 </p>
+
+HatchZip is a free, open-source archive extractor for Windows, macOS and Linux, with a desktop app and a command line tool. It extracts ZIP, 7z, RAR, tar and split archives in place, for when there is not enough disk space to extract an archive next to itself, such as a large game download on a nearly full disk. Download it from [hatchzip.dev](https://hatchzip.dev).
 
 A 180 GB game download that unpacks to 200 GB needs 380 GB of disk with WinRAR, 7-Zip or `unzip`, because the archive and everything extracted from it have to exist at the same time. HatchZip needs a little over 200 GB. It extracts the archive from the end and cuts each finished part off the archive file as it goes, so the space the archive gives back is reused for the next files.
 
@@ -43,7 +46,7 @@ HatchZip shows whether the files will fit before it changes anything. The archiv
 
 To keep the archive when there is room for both, choose **Extract here (keep archive)** in the right-click menu, or clear **Remove the archive during extraction** in the app. That is a normal extraction: the archive is not changed, and space is required for all extracted files.
 
-## Highlights
+## When there is not enough disk space to extract
 
 The same 200 MB of game data (21 files), packed by the real tools, extracted on a 220 MiB disk with about 50 MB free:
 
@@ -246,7 +249,7 @@ Plain tar has no checksums for file contents, so `test` on a tar only proves eve
 
 With several archives, the status is that of the first archive that did not succeed.
 
-## Is it safe
+## Is HatchZip safe
 
 HatchZip destroys the archive as it extracts, so it is built around never losing a file that has not safely landed on disk.
 
