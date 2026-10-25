@@ -55,16 +55,12 @@ pub fn open(
         bail!("this 7z archive contains deletion records (anti-items), which are not supported");
     }
 
-    let packed = SIGNATURE_HEADER_SIZE + archive.pack_pos();
-    let data_end = packed + archive.pack_sizes().iter().sum::<u64>();
+    let (starts, data_end) = block_starts(&archive)?;
     let tail_start = resuming.unwrap_or(data_end);
 
-    let first_pack = archive.stream_map.block_first_pack_stream_index();
-    let offsets = archive.stream_map.pack_stream_offsets();
     let mut covered = vec![false; archive.files.len()];
     let mut units = Vec::with_capacity(archive.blocks.len() + 1);
-    for block in 0..archive.blocks.len() {
-        let start = packed + offsets[first_pack[block]];
+    for (block, &start) in starts.iter().enumerate() {
         // Exactly the slice the decoder will walk, so items line up with
         // what it hands back.
         let first = archive.stream_map.block_first_file_index[block];
@@ -72,7 +68,17 @@ pub fn open(
         let files = archive
             .files
             .get(first..first + count)
-            .ok_or_else(|| anyhow!("this 7z archive's header is inconsistent"))?;
+            .ok_or_else(inconsistent)?;
+        let end = starts.get(block + 1).copied().unwrap_or(data_end);
+        if start == end {
+            // No packed bytes, so the block starts where the next one does,
+            // and committing it would truncate that block's data. All it can
+            // hold is empty files, which are made like those of no block.
+            if files.iter().any(|f| f.size() > 0) {
+                return Err(inconsistent());
+            }
+            continue;
+        }
         covered[first..first + count].fill(true);
         let items = files.iter().map(item).collect::<Result<_>>()?;
         let encrypted = archive.blocks[block]
@@ -112,6 +118,33 @@ pub fn open(
         units,
         tail_start,
     })
+}
+
+fn inconsistent() -> anyhow::Error {
+    anyhow!("this 7z archive's header is inconsistent")
+}
+
+/// Where each block's packed data begins, and where the packed data of the
+/// last one ends. A block's data runs up to the start of the next.
+fn block_starts(archive: &Archive) -> Result<(Vec<u64>, u64)> {
+    let packed = SIGNATURE_HEADER_SIZE
+        .checked_add(archive.pack_pos())
+        .ok_or_else(inconsistent)?;
+    let data_end = archive
+        .pack_sizes()
+        .iter()
+        .try_fold(packed, |end, &size| end.checked_add(size))
+        .ok_or_else(inconsistent)?;
+    let offsets = archive.stream_map.pack_stream_offsets();
+    let starts = archive
+        .stream_map
+        .block_first_pack_stream_index()
+        .iter()
+        .map(|&first| offsets.get(first).map(|o| packed + o))
+        .collect::<Option<Vec<u64>>>()
+        .filter(|s| s.len() == archive.blocks.len())
+        .ok_or_else(inconsistent)?;
+    Ok((starts, data_end))
 }
 
 fn item(f: &ArchiveEntry) -> Result<Item> {
@@ -226,25 +259,26 @@ pub fn rebuild_header(storage: &Storage, tail: Arc<Tail>, keep: u64) -> Result<(
     if archive.pack_pos() != 0 {
         return Err(unusual());
     }
-    let first_pack = archive.stream_map.block_first_pack_stream_index();
-    let offsets = archive.stream_map.pack_stream_offsets();
-    let starts: Vec<u64> = (0..archive.blocks.len())
-        .map(|b| SIGNATURE_HEADER_SIZE + offsets[first_pack[b]])
-        .collect();
+    let (starts, data_end) = block_starts(&archive)?;
     let kept = starts.iter().take_while(|&&s| s < keep).count();
     if starts[kept..].iter().any(|&s| s < keep) {
         return Err(unusual());
     }
+    // A block without packed bytes was never a unit of its own: `open` puts
+    // its empty files with those of no block, which were done first.
+    let kept: Vec<usize> = (0..kept)
+        .filter(|&b| starts[b] < starts.get(b + 1).copied().unwrap_or(data_end))
+        .collect();
 
     let encode = |e: sevenz_rust2::Error| anyhow!("writing the new 7z header: {e}");
     let mut w = ArchiveWriter::new(Sieve::new(keep)).map_err(encode)?;
-    for block in 0..kept {
+    for &block in &kept {
         w.push_raw_block(&archive, block, &mut Nothing, |e| e.name().to_string())
             .map_err(encode)?;
     }
     // Files with no data that the engine counts as part of a kept block, as
     // in `open`. Ones outside every block were done first and are gone.
-    for block in 0..kept {
+    for &block in &kept {
         let first = archive.stream_map.block_first_file_index[block];
         let count =
             BlockDecoder::new(1, block, &archive, &Password::empty(), &mut reader).entry_count();

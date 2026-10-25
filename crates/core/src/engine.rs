@@ -185,6 +185,15 @@ impl Job {
         let mut units = opened.units;
         units.retain(|u| u.start < top);
         units.sort_by_key(|u| std::cmp::Reverse(u.start));
+        // A unit owns its bytes up to the next one's start. Two that start
+        // at the same offset can't both own them: committing one would
+        // truncate the other before it is extracted.
+        if units.windows(2).any(|w| w[0].start == w[1].start) {
+            bail!(
+                "two parts of this archive start at the same offset, so extracting it in place \
+                 could destroy data before it is extracted; extraction refused"
+            );
+        }
 
         let mut seen = HashSet::new();
         for item in units.iter().flat_map(|u| &u.items) {
@@ -1731,5 +1740,69 @@ pub fn human(bytes: u64) -> String {
         format!("{bytes} B")
     } else {
         format!("{v:.1} {}", UNITS[unit])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::archive::{Opened, Worker};
+
+    /// Stands in for a format: these tests only plan, they never decode.
+    struct NoFormat;
+
+    impl Format for NoFormat {
+        fn worker(&self, _threads: u32) -> Result<Box<dyn Worker + '_>> {
+            bail!("nothing is decoded in these tests")
+        }
+    }
+
+    fn unit(start: u64, name: &str, size: u64) -> Unit {
+        Unit {
+            start,
+            key: 0,
+            items: vec![Item {
+                path: name.into(),
+                size,
+                kind: Kind::File,
+                mode: None,
+                mtime: None,
+            }],
+            encrypted: false,
+        }
+    }
+
+    /// A 64 byte file standing in for an archive, in its own folder.
+    fn storage(test: &str) -> (PathBuf, Arc<Storage>) {
+        let dir = std::env::temp_dir().join(format!("hatchzip-{test}-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("archive.bin");
+        fs::write(&path, [0u8; 64]).unwrap();
+        let storage = Arc::new(Storage::open(&path, false).unwrap());
+        (dir, storage)
+    }
+
+    fn opened(units: Vec<Unit>, tail_start: u64) -> Opened {
+        Opened {
+            name: "test",
+            format: Box::new(NoFormat),
+            units,
+            tail_start,
+        }
+    }
+
+    /// Committing one of two units that start at the same offset would
+    /// truncate the other before it is extracted.
+    #[test]
+    fn units_sharing_a_start_are_refused() {
+        let (dir, storage) = storage("shared-start");
+        let shared = vec![unit(10, "a", 1), unit(30, "b", 1), unit(10, "c", 1)];
+        let err = Job::build(storage.clone(), opened(shared, 40), 64)
+            .err()
+            .unwrap();
+        assert!(err.to_string().contains("same offset"), "{err:#}");
+        let apart = vec![unit(10, "a", 1), unit(30, "b", 1)];
+        assert!(Job::build(storage, opened(apart, 40), 64).is_ok());
+        fs::remove_dir_all(&dir).unwrap();
     }
 }

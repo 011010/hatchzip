@@ -608,6 +608,41 @@ fn restores_a_7z() {
     }
 }
 
+/// Stored, sevenz-rust2 gives an empty file a block with no packed bytes,
+/// which starts where the next block does. Its file is made with the
+/// folders, first, so the new header leaves that block out.
+#[test]
+fn restores_a_stored_7z_whose_empty_file_has_a_block() {
+    let tmp = TempDir::new().unwrap();
+    let mut files = Files::new();
+    files.insert("game/empty.txt".into(), Vec::new());
+    for i in 0..4 {
+        files.insert(format!("game/{i}.bin"), noise(2000, i));
+    }
+    let archive = tmp.path().join("game.7z");
+    let mut w = ArchiveWriter::create(&archive).unwrap();
+    w.set_content_methods(vec![sevenz_rust2::EncoderMethod::COPY.into()]);
+    w.push_archive_entry::<&[u8]>(ArchiveEntry::new_directory(EMPTY_DIR), None)
+        .unwrap();
+    for (name, data) in &files {
+        w.push_archive_entry(ArchiveEntry::new_file(name), Some(data.as_slice()))
+            .unwrap();
+    }
+    w.finish().unwrap();
+    let out = tmp.path().join("out");
+
+    crash_extract(&archive, &out, "after-journal", 2);
+    assert_ok(&restore(&archive, &[]));
+    let listing = read_7z(fs::read(&archive).unwrap());
+    assert!(out.join("game/empty.txt").is_file());
+    assert_split_between(&out, &listing, &files);
+    check_with_7z(&archive, &listing);
+
+    assert_ok(&extract(&archive, &out, &[]));
+    assert_tree(&out, &files);
+    assert_consumed(&archive);
+}
+
 #[test]
 fn restores_a_split_7z() {
     let tmp = TempDir::new().unwrap();
