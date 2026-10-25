@@ -28,6 +28,10 @@ rpassword = "7.5.4"
 # hatchzip-core. Off by default, on in the release builds.
 rar = ["hatchzip-core/rar"]
 
+[build-dependencies]
+# Only used when the target is Windows; see build.rs.
+winresource = { version = "0.1.34", default-features = false }
+
 [dev-dependencies]
 # Writes the .tar.gz test archives and the RAR 4 volumes; already in the tree.
 crc32fast = "1.5.3"
