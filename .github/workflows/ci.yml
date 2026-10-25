@@ -85,13 +85,38 @@ jobs:
           HATCHZIP_EXPECT_PUNCH: '1'
           FEATURES: ${{ matrix.features }}
 
+  # deny.toml: known vulnerabilities (RustSec), licenses, crates.io as the only
+  # source, and the network ban list, which fails if an HTTP, TLS or socket
+  # crate ever enters the dependency tree. With and without RAR, since the
+  # feature changes the tree. Reads Cargo.lock only, nothing is compiled.
+  deny:
+    name: cargo deny (${{ matrix.name }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: no rar
+            arguments: --locked
+          - name: rar
+            arguments: --locked --features rar
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          arguments: ${{ matrix.arguments }}
+          command-arguments: --hide-inclusion-graph
+
   # The one check branch protection requires, so adding or renaming a job
   # above never means editing the protection rules. This passes when
   # everything that ran passed, and treats skipped as fine.
   result:
     name: ci result
     if: always()
-    needs: [check, test]
+    needs: [check, test, deny]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

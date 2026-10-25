@@ -41,6 +41,7 @@ git config core.hooksPath .githooks
 | `cargo test` | Run all tests |
 | `cargo clippy --all-targets -- -D warnings` | Lint; warnings are errors |
 | `cargo fmt --all` | Format |
+| `cargo deny check`, and again with `cargo deny --features rar check` | Advisories, licenses, sources and the network ban list in `deny.toml`, as CI runs them. Needs [cargo-deny](https://github.com/EmbarkStudios/cargo-deny). |
 
 ### Git hooks
 
