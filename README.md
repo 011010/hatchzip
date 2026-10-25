@@ -256,6 +256,20 @@ HatchZip destroys the archive as it extracts, so it is built around never losing
 
 What it cannot protect against: if the download itself is damaged, the files before the damaged spot are extracted and the archive is partly gone. Use `--verify-first` when the archive can't be downloaded again. On btrfs or APFS, space held by a snapshot that includes the archive is not freed until the snapshot is deleted.
 
+### Antivirus warnings
+
+HatchZip does not connect to the network. It has no networking code and no networking library: `cargo tree` lists none, and the source is all here to read. It collects nothing and sends nothing.
+
+The release files are not code-signed yet, and a new, unsigned program gets flagged by some antivirus engines that score files by machine learning or behaviour rather than by known malware. On VirusTotal, the v0.1.3 Windows setup is flagged by 4 of 70 engines (DeepInstinct, SecureAge, Skyhigh and Trapmine, all of them heuristic or machine-learning scores); Microsoft Defender and the other 66 report it clean. The behaviours sandboxes list are what any installer does: it writes program files, adds the right-click menu and "Open with" entries to the registry, and runs Inno Setup's own helper process.
+
+To be sure a download is the real one, built by this repository's release workflow from the public source and not changed since:
+
+```sh
+gh attestation verify HatchZip-x64-setup.exe --repo xevrion/hatchzip
+```
+
+Or build it yourself: `cargo install hatchzip`. Code signing is planned.
+
 ## Supported formats
 
 | Format | Status | Freed in steps of |
