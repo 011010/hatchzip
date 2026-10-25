@@ -9,6 +9,7 @@ runs, so any step can be repeated by hand.
 | `hatchzip-<arch>-<os>.tar.gz`, `hatchzip-x86_64-windows.zip` | The CLI, man page, completions | `cargo build`, `tar`, `7z` | Each OS |
 | `HatchZip-x64-setup.exe` | App, CLI (`hatchzip.exe` and `hz.exe`) | [Inno Setup 6](https://jrsoftware.org/isinfo.php) | Windows |
 | `HatchZip-x64.msi` | The same as the setup | [WiX Toolset 5](https://wixtoolset.org) | Windows |
+| `HatchZip-x64-portable.zip` | The setup's files, nothing to install; the app adds the right-click menu from Settings | `7z` | Windows |
 | `HatchZip-aarch64.dmg`, `HatchZip-x86_64.dmg` | `HatchZip.app`, with the CLI and man page inside | `hdiutil`, `codesign` | macOS |
 | `hatchzip_amd64.deb`, `hatchzip-x86_64.rpm` | App, CLI, `hz` link, man pages, completions, menu entry, icons | [nfpm](https://nfpm.goreleaser.com) | Ubuntu 22.04 |
 | `HatchZip-x86_64.AppImage` | App | [linuxdeploy](https://github.com/linuxdeploy/linuxdeploy), [appimagetool](https://github.com/AppImage/appimagetool) | Ubuntu 22.04 |

@@ -223,6 +223,13 @@ jobs:
           cp -r dist/hatchzip-x86_64-windows/. dist/payload/
           cp target/release/hatchzip-gui.exe dist/payload/
           echo "HATCHZIP_VERSION=$(target/release/hatchzip.exe --version | awk '{print $2}')" >> "$GITHUB_ENV"
+      # The same files with nothing to install: unzip anywhere and run
+      # hatchzip-gui.exe. Settings, "Show in the Explorer context menu" adds
+      # the right-click entries for wherever it is, and removes them again.
+      - name: portable zip
+        run: |
+          (cd dist/payload && 7z a -tzip ../HatchZip-x64-portable.zip . > /dev/null)
+          (cd dist && sha256sum HatchZip-x64-portable.zip > HatchZip-x64-portable.zip.sha256)
       - name: build the setup
         shell: pwsh
         run: packaging/windows/build-setup.ps1 dist/payload $env:HATCHZIP_VERSION
