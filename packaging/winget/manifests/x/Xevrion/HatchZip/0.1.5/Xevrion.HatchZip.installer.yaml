@@ -6,7 +6,7 @@
 # /SUPPRESSMSGBOXES /NORESTART, are what a silent install needs, and the
 # "Open HatchZip" step at the end is skipped when silent.
 PackageIdentifier: Xevrion.HatchZip
-PackageVersion: 0.1.4
+PackageVersion: 0.1.5
 InstallerLocale: en-US
 MinimumOSVersion: 10.0.0.0
 InstallerType: inno
@@ -36,8 +36,8 @@ InstallationMetadata:
   DefaultInstallLocation: '%LocalAppData%\Programs\HatchZip'
 Installers:
 - Architecture: x64
-  InstallerUrl: https://github.com/xevrion/hatchzip/releases/download/v0.1.4/HatchZip-x64-setup.exe
-  InstallerSha256: 41433D4DE8834A211D7E5176B0101A7D4B04F5B8CC5C4B6E43D54A4285C3C497
+  InstallerUrl: https://github.com/xevrion/hatchzip/releases/download/v0.1.5/HatchZip-x64-setup.exe
+  InstallerSha256: AFD681DA329E1F98926C2F64D28EFF8270A6D75870823F4F9CD7E3444C04E101
   ProductCode: io.github.xevrion.hatchzip_is1
 ManifestType: installer
 ManifestVersion: 1.12.0

@@ -1,6 +1,6 @@
 pkgbase = hatchzip
 	pkgdesc = Extract huge archives in place, without needing room for both the archive and its contents
-	pkgver = 0.1.4
+	pkgver = 0.1.5
 	pkgrel = 1
 	url = https://hatchzip.dev
 	arch = x86_64
@@ -21,7 +21,7 @@ pkgbase = hatchzip
 	optdepends = libglvnd: OpenGL drawing in the desktop app
 	conflicts = hatchzip-bin
 	options = !lto
-	source = hatchzip-0.1.4.tar.gz::https://github.com/xevrion/hatchzip/archive/refs/tags/v0.1.4.tar.gz
-	sha256sums = 80d724259a6ee750f08343aa2cdf67a847036f20e80d6ff4e87cf9e91600c14b
+	source = hatchzip-0.1.5.tar.gz::https://github.com/xevrion/hatchzip/archive/refs/tags/v0.1.5.tar.gz
+	sha256sums = 54d4630bcdc7d2c1177814d17f2de7b1f545a1e06de116e3fa2b8f3899f0003e
 
 pkgname = hatchzip
