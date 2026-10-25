@@ -72,8 +72,15 @@ fn always_stream() -> bool {
     test_knob("HATCHZIP_STREAM_STEP").is_some()
 }
 
+/// More than any disk holds. An archive whose files add up to more is
+/// refused, so the space check's sums of sizes stay far from overflowing.
+const MAX_TOTAL_SIZE: u64 = 1 << 62;
+
 fn on_disk(u: &Unit) -> u64 {
-    u.items.iter().map(|i| i.size.next_multiple_of(4096)).sum()
+    u.items.iter().fold(0u64, |sum, i| {
+        let size = i.size.checked_next_multiple_of(4096).unwrap_or(u64::MAX);
+        sum.saturating_add(size)
+    })
 }
 
 pub struct Job {
@@ -193,6 +200,17 @@ impl Job {
                 "two parts of this archive start at the same offset, so extracting it in place \
                  could destroy data before it is extracted; extraction refused"
             );
+        }
+        let total = units
+            .iter()
+            .flat_map(|u| &u.items)
+            .try_fold(0u64, |sum, i| sum.checked_add(i.size));
+        if total.is_none_or(|t| t > MAX_TOTAL_SIZE) {
+            return Err(archive::Damaged(anyhow!(
+                "the file sizes recorded in this archive add up to more than any disk can hold, \
+                 so the archive is damaged. Nothing was modified"
+            ))
+            .into());
         }
 
         let mut seen = HashSet::new();
@@ -392,7 +410,10 @@ impl Job {
 
     pub fn remaining_size(&self) -> u64 {
         let done = self.resume.as_ref().map_or(0, |r| r.written);
-        self.units.iter().map(Unit::size).sum::<u64>() - done
+        self.units
+            .iter()
+            .fold(0u64, |sum, u| sum.saturating_add(u.size()))
+            .saturating_sub(done)
     }
 
     /// The resume point recorded for `units[i]`, if it is half streamed.
@@ -497,7 +518,7 @@ impl Job {
         // What a crashed run already wrote is on disk, so the free space
         // measured now has paid for it.
         let done = at.map_or(0, |r| r.written / 4096 * 4096);
-        let out_left = (on_disk(&self.units[i]) - done) as i128;
+        let out_left = on_disk(&self.units[i]).saturating_sub(done) as i128;
         let read_to = at.map_or(s.data_start, |r| r.bit / 8);
         let data_left = (s.data_start + s.packed).saturating_sub(read_to) as i128;
         // At most this much was punched already. It is free now, so the
@@ -1349,11 +1370,11 @@ impl Run<'_> {
         }
         let budget = avail.min(BATCH_MAX_BYTES.max(first));
         let max_units = test_knob("HATCHZIP_BATCH_ENTRIES").map_or(BATCH_MAX_UNITS, |n| n as usize);
-        let mut used = 0;
+        let mut used = 0u64;
         let mut end = start;
         while end < units.len() && end - start < max_units {
             let size = need(&units[end]);
-            if end > start && used + size > budget {
+            if end > start && used.saturating_add(size) > budget {
                 break;
             }
             if end > start && always_stream() && self.job.streams(end, reclaims).is_some() {
@@ -1803,6 +1824,32 @@ mod tests {
         assert!(err.to_string().contains("same offset"), "{err:#}");
         let apart = vec![unit(10, "a", 1), unit(30, "b", 1)];
         assert!(Job::build(storage, opened(apart, 40), 64).is_ok());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Sizes come from the archive's headers. Summed or rounded up to whole
+    /// blocks in 64 bits they could wrap, and the space check would count
+    /// next to nothing.
+    #[test]
+    fn sizes_too_large_to_add_up_are_refused() {
+        let (dir, storage) = storage("huge-sizes");
+        let half = 1u64 << 63;
+        for sizes in [vec![half, half], vec![u64::MAX - 10], vec![(1 << 62) + 1]] {
+            let units = sizes
+                .iter()
+                .enumerate()
+                .map(|(i, &s)| unit(10 + i as u64, &format!("f{i}"), s))
+                .collect();
+            let err = Job::build(storage.clone(), opened(units, 40), 64)
+                .err()
+                .unwrap();
+            assert!(err.is::<archive::Damaged>(), "{sizes:?}: {err:#}");
+        }
+        assert_eq!(on_disk(&unit(0, "f", u64::MAX - 10)), u64::MAX);
+        let mut two = unit(0, "f", half);
+        two.items.extend(unit(0, "g", half).items);
+        assert_eq!(two.size(), u64::MAX);
+        assert_eq!(on_disk(&two), u64::MAX);
         fs::remove_dir_all(&dir).unwrap();
     }
 }

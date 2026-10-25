@@ -123,8 +123,11 @@ pub enum PasswordCheck {
 }
 
 impl Unit {
+    /// Saturates instead of wrapping: sizes come straight from the archive.
     pub fn size(&self) -> u64 {
-        self.items.iter().map(|i| i.size).sum()
+        self.items
+            .iter()
+            .fold(0u64, |sum, i| sum.saturating_add(i.size))
     }
 }
 

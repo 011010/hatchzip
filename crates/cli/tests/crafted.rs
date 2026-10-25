@@ -242,3 +242,21 @@ fn a_7z_whose_encoded_header_data_is_inside_a_block_is_refused() {
         "lies among its packed data",
     );
 }
+
+/// Two files of 2^63 bytes each add up to zero in 64 bits, so the space
+/// check would count nothing for them.
+#[test]
+fn a_7z_whose_sizes_overflow_is_refused() {
+    let tmp = TempDir::new().unwrap();
+    let half = 1u64 << 63;
+    let h = header(&[16, 16], &[&[("a.bin", half)], &[("b.bin", half)]], &[]);
+    let archive = tmp.path().join("huge.7z");
+    fs::write(&archive, sevenz_with_header_last(&[&[1; 16], &[2; 16]], &h)).unwrap();
+    refused(
+        &archive,
+        &tmp.path().join("out"),
+        "more than any disk can hold",
+    );
+    let check = hatchzip(&["check", archive.to_str().unwrap()], &[]);
+    assert_eq!(check.status.code(), Some(4), "reported as damaged");
+}
