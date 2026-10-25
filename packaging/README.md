@@ -155,8 +155,12 @@ like 0.2.0-beta.1 is built as 0.2.0.
 
 The setup and the MSI are separate products to Windows, so each refuses to
 install while the other is installed: the MSI with a launch condition on
-the setup's uninstall entry, the setup with a check for an MSI entry named
-HatchZip. `test-msi.ps1` tries both ways.
+the setup's uninstall entry, the setup by asking Windows Installer for a
+product with the MSI's UpgradeCode. A per-user MSI has no key under
+`HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall`: Windows
+Installer keeps its Settings > Apps entry itself, so `test-msi.ps1` also
+reads the installed product's name, version, publisher and links from
+Windows Installer. It tries both refusals too.
 
 `build-msi.ps1` checks that the payload holds exactly the files the `.wxs`
 lists, since, unlike the setup, the MSI names each file. A file added to the
@@ -406,7 +410,9 @@ request.
 - `--register-shell` and `--unregister-shell` exit when done, with no window.
 - On Windows, the exe carries `assets/icon/hatchzip.ico` as its first icon
   resource (the right-click menu, Start menu and "Open with" all show icon 0
-  of the exe) and a version resource.
+  of the exe) and a version resource. `hatchzip.exe` carries a version
+  resource too (`crates/cli/build.rs`), with the same product and company
+  names.
 - On Linux, the window's Wayland app ID and X11 class are
   `io.github.xevrion.hatchzip`, so the desktop shows the menu entry's icon.
 - Inside an AppImage the program runs from a temporary mount, so

@@ -104,28 +104,25 @@ Type: filesandordirs; Name: "{app}"
 [Code]
 const
   EnvKey = 'Environment';
-  UninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall';
+  { The UpgradeCode in hatchzip.wxs. }
+  MsiUpgradeCode = '{083ECD39-645A-4455-AC0F-1647AC24D57A}';
 
-{ True if HatchZip-x64.msi is installed for this user. It installs to the
-  same folder, so the two must not be installed over each other; the MSI
-  refuses the other way round. }
+{ True if HatchZip-x64.msi is installed. It installs to the same folder, so
+  the two must not be installed over each other; the MSI refuses the other
+  way round. A per-user MSI has no key under HKCU\...\Uninstall, so this asks
+  Windows Installer for products with the MSI's UpgradeCode. }
 function MsiInstalled: Boolean;
 var
-  Keys: TArrayOfString;
-  I: Integer;
-  Name: String;
-  IsMsi: Cardinal;
+  Installer, Products: Variant;
 begin
   Result := False;
-  if not RegGetSubkeyNames(HKCU, UninstallKey, Keys) then
-    exit;
-  for I := 0 to GetArrayLength(Keys) - 1 do
-    if RegQueryStringValue(HKCU, UninstallKey + '\' + Keys[I], 'DisplayName', Name) and (Name = 'HatchZip')
-      and RegQueryDWordValue(HKCU, UninstallKey + '\' + Keys[I], 'WindowsInstaller', IsMsi) and (IsMsi = 1) then
-    begin
-      Result := True;
-      exit;
-    end;
+  try
+    Installer := CreateOleObject('WindowsInstaller.Installer');
+    Products := Installer.RelatedProducts(MsiUpgradeCode);
+    Result := Products.Count > 0;
+  except
+    Log('Could not ask Windows Installer for HatchZip-x64.msi: ' + GetExceptionMessage);
+  end;
 end;
 
 function InitializeSetup: Boolean;
