@@ -7,6 +7,8 @@ The HatchZip website: static pages, no build step, no JavaScript, no requests to
 | `index.html` | The main page |
 | `verify.html` | Verify your download: what HatchZip does, checksums, provenance, and the release file table |
 | `update-verify.py` | Regenerates the release file table in `verify.html` |
+| `not-enough-space-to-extract.html`, `winrar-not-enough-space.html`, `7zip-not-enough-space.html` | Guides for people whose extraction ran out of disk space |
+| `indexnow.py`, `4114b1f4eb288ada55a869db5d3b852f.txt` | Submits the sitemap's URLs to IndexNow; the key file proves the site is ours |
 | `style.css` | All styles, light and dark |
 | `404.html` | Page shown for unknown addresses |
 | `favicon.svg` | Browser tab icon |
@@ -25,7 +27,17 @@ Then open http://127.0.0.1:8000. The 404 page is not served for unknown paths by
 
 - The download links point at `releases/latest/download/<file>` and the install commands at `install.sh` and `install.ps1` on `main`. Both work only once the first release and the install scripts exist.
 - The site lives at `https://hatchzip.dev`, a domain verified for the `xevrion` GitHub account. That address is written in `sitemap.xml`, `robots.txt` and the canonical, `og:url` and `og:image` tags of `index.html`.
-- After any change to `style.css`, bump the `?v=` number where `index.html`, `verify.html` and `404.html` link it. The CSS is cached for a year.
+- After any change to `style.css`, bump the `?v=` number where every HTML page links it (`index.html`, `verify.html`, `404.html` and the guides). The CSS is cached for a year.
+
+## After each deploy
+
+Tell the IndexNow search engines (Bing, Yandex, Seznam, Naver and others) that pages changed:
+
+```sh
+python3 site/indexnow.py
+```
+
+It POSTs every URL in `sitemap.xml` to `https://api.indexnow.org/indexnow`, with the key from `4114b1f4eb288ada55a869db5d3b852f.txt`, which must be live at the site root first. A 200 or 202 answer means the URLs were received; a 403 usually means the key file is not reachable yet. `--dry-run` prints the request without sending it. When a page changes, update its `lastmod` in `sitemap.xml` before running it. Google does not use IndexNow; request indexing for new pages in Search Console instead.
 
 ## After each release
 
