@@ -186,6 +186,39 @@ fn tar_links_are_made_after_their_targets() {
     assert_eq!(fs::read(out.join("bin/soft")).unwrap(), b"hello\n");
 }
 
+/// A hard link is copied where the filesystem can't link, so the space check
+/// counts it at its file's size, even when the link comes first.
+#[test]
+fn tar_links_before_their_targets_count_at_the_target_size() {
+    let tmp = TempDir::new().unwrap();
+    let mut b = tar::Builder::new(Vec::new());
+    let mut link = tar::Header::new_gnu();
+    link.set_entry_type(tar::EntryType::Link);
+    link.set_size(0);
+    b.append_link(&mut link, "copy.bin", "big.bin").unwrap();
+    let mut h = tar::Header::new_gnu();
+    h.set_size(1_000_000);
+    h.set_mode(0o644);
+    b.append_data(&mut h, "big.bin", &noise(1_000_000, 1)[..])
+        .unwrap();
+    let bytes = b.into_inner().unwrap();
+    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+    gz.write_all(&bytes).unwrap();
+
+    for (name, bytes) in [("links.tar", bytes), ("links.tar.gz", gz.finish().unwrap())] {
+        let archive = tmp.path().join(name);
+        fs::write(&archive, bytes).unwrap();
+        let check = hatchzip(&["check", archive.to_str().unwrap()], &[]);
+        assert_ok(&check);
+        let stdout = String::from_utf8_lossy(&check.stdout);
+        let needs = stdout
+            .lines()
+            .find(|l| l.contains("standard extraction needs"))
+            .unwrap_or_else(|| panic!("{stdout}"));
+        assert!(needs.ends_with(" 2.0 MB"), "{name}: {needs}");
+    }
+}
+
 #[test]
 fn refuses_tar_paths_that_escape() {
     let tmp = TempDir::new().unwrap();

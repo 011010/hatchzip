@@ -33,7 +33,6 @@ pub fn open(storage: &Arc<Storage>, tail: Option<Arc<Tail>>) -> Result<Opened> {
     let mut archive = ::tar::Archive::new(storage.reader(tail));
     let mut units = Vec::new();
     let mut entries = Vec::new();
-    let mut sizes = HashMap::new();
     let mut end = 0;
 
     for entry in archive
@@ -46,7 +45,7 @@ pub fn open(storage: &Arc<Storage>, tail: Option<Arc<Tail>>) -> Result<Opened> {
         // is skipped.
         let start = end;
         end = e.raw_file_position() + e.size().next_multiple_of(512);
-        let Some((item, target)) = describe(&e, &mut sizes)? else {
+        let Some((item, target)) = describe(&e)? else {
             continue;
         };
         units.push(Unit {
@@ -61,6 +60,7 @@ pub fn open(storage: &Arc<Storage>, tail: Option<Arc<Tail>>) -> Result<Opened> {
             target,
         });
     }
+    size_links(units.iter_mut().flat_map(|u: &mut Unit| &mut u.items));
 
     Ok(Opened {
         name: "tar",
@@ -77,11 +77,10 @@ pub fn open(storage: &Arc<Storage>, tail: Option<Arc<Tail>>) -> Result<Opened> {
 /// the header rather than the data. `None` for entries that extract to
 /// nothing: "./", and pax global headers, which carry defaults such as the
 /// commit id `git archive` records. Shared with compressed tar, so both
-/// refuse and accept exactly the same entries. `sizes` holds the size of
-/// every path seen so far, for hard links.
+/// refuse and accept exactly the same entries. A hard link's size is left
+/// at 0 for [`size_links`] to fill in.
 pub(super) fn describe<R: Read>(
     e: &::tar::Entry<'_, R>,
-    sizes: &mut HashMap<PathBuf, u64>,
 ) -> Result<Option<(Item, Option<Vec<u8>>)>> {
     let header = e.header();
     let name = String::from_utf8_lossy(&e.path_bytes()).into_owned();
@@ -124,12 +123,8 @@ pub(super) fn describe<R: Read>(
     let size = match &kind {
         Kind::File => e.size(),
         Kind::Symlink => target.as_ref().map_or(0, |t| t.len() as u64),
-        // Linked files are copied if the filesystem can't hard link, so
-        // the space check counts them at the target's size.
-        Kind::HardLink(t) => sizes.get(t).copied().unwrap_or(0),
-        Kind::Dir => 0,
+        Kind::HardLink(_) | Kind::Dir => 0,
     };
-    sizes.insert(path.clone(), size);
     let mtime = header
         .mtime()
         .ok()
@@ -145,6 +140,24 @@ pub(super) fn describe<R: Read>(
         },
         target,
     )))
+}
+
+/// Gives every hard link the size of the file it points to. Links are
+/// copied where the filesystem can't hard link, so the space check counts
+/// them at that size, and the file may come after the link in the archive,
+/// so this waits for the whole listing.
+pub(super) fn size_links<'a>(items: impl IntoIterator<Item = &'a mut Item>) {
+    let mut items: Vec<&mut Item> = items.into_iter().collect();
+    let files: HashMap<PathBuf, u64> = items
+        .iter()
+        .filter(|i| i.kind == Kind::File)
+        .map(|i| (i.path.clone(), i.size))
+        .collect();
+    for item in &mut items {
+        if let Kind::HardLink(target) = &item.kind {
+            item.size = files.get(target).copied().unwrap_or(0);
+        }
+    }
 }
 
 impl Format for Tar {

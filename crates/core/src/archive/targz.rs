@@ -16,7 +16,6 @@
 //! walks the same way with the same buffer sizes, so it meets exactly the
 //! points the scan measured.
 
-use std::collections::HashMap;
 use std::io::{self, Cursor, Read};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -158,7 +157,6 @@ pub struct Walker {
     restartable: bool,
     /// A file a resumed run continues, announced by the first event.
     resumed: Option<(Item, u64)>,
-    sizes: HashMap<PathBuf, u64>,
 }
 
 impl Walker {
@@ -200,7 +198,6 @@ impl Walker {
             state,
             restartable: false,
             resumed,
-            sizes: HashMap::new(),
         })
     }
 
@@ -359,7 +356,7 @@ impl Walker {
             .ok_or_else(|| anyhow!("reading the tar headers: an entry is incomplete"))?
             .context("reading the tar headers")?;
         let size = e.size();
-        let described = super::tar::describe(&e, &mut self.sizes)?;
+        let described = super::tar::describe(&e)?;
         let data_start = self.tar_pos;
         let span = size
             .checked_next_multiple_of(512)
@@ -533,8 +530,6 @@ fn scan(solid: &Solid, from: Option<&Resume>) -> Result<(Vec<Item>, Profile)> {
             Event::Entry { item, .. } => {
                 if item.kind == Kind::File {
                     size = item.size;
-                } else {
-                    p.links += item.size.next_multiple_of(4096);
                 }
                 items.push(item);
             }
@@ -551,6 +546,14 @@ fn scan(solid: &Solid, from: Option<&Resume>) -> Result<(Vec<Item>, Profile)> {
     }
     p.gap = p.gap.max(out - last);
     p.files = out;
+    super::tar::size_links(&mut items);
+    p.links = items
+        .iter()
+        .filter(|i| i.kind != Kind::File)
+        .fold(0u64, |sum, i| {
+            let size = i.size.checked_next_multiple_of(4096).unwrap_or(u64::MAX);
+            sum.saturating_add(size)
+        });
     Ok((items, p))
 }
 
