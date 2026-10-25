@@ -48,7 +48,7 @@ HatchZip opens archives downloaded from anywhere and writes their contents to di
 | Archive parsing and decompression | The `zip`, `sevenz-rust2` and `tar` crates, zlib-rs and UnRAR process untrusted input. |
 | Output paths | Entry names decide where files are written. |
 | Symlinks and permissions | Entries can carry symlinks and Unix mode bits. |
-| Journal and saved tail | Plain files next to the archive, readable and writable by the same user. |
+| Journal and saved tail | Plain files next to the archive, so they can arrive with a download. A resume acts only on the archive's own volumes, links inside the output folder, and the default folder or one chosen on this computer. |
 | Network | None. No telemetry, accounts or update checks. |
 
 ### In scope
@@ -58,11 +58,12 @@ HatchZip opens archives downloaded from anywhere and writes their contents to di
 - An archive that makes HatchZip delete or truncate data it has not extracted and verified, including overlapping-entry tricks.
 - An archive whose declared sizes let it write far more than the space check accounted for.
 - Memory safety issues or code execution triggered by a crafted archive.
+- A journal or saved tail delivered next to an archive that makes a resume touch anything outside the archive's own volumes and the output folder.
 - A release file whose checksum or attestation does not match, or a dependency that opens network connections.
 
 ### Out of scope
 
-- Attacks that require running code as the same user, including editing the journal or saved tail by hand.
+- Attacks that require running code as the same user, including editing the journal, the saved tail or the record of chosen folders while HatchZip runs.
 - Disk exhaustion that the space check reports correctly before starting.
 - Bugs in third-party decoders that do not affect HatchZip's own behavior; report those upstream.
 - Antivirus detections of the unsigned release files on their own; see [Verify your download](https://hatchzip.dev/verify.html).
