@@ -43,6 +43,7 @@ Ticked when it is merged and tested, not when it is started.
 - [ ] File-manager menus: Windows 11 top-level menu, COSMIC Files, Thunar
 - [ ] Antivirus false positives: signed Windows builds, a notarized macOS app (unsigned builds get flagged by VirusTotal engines and moved to the Trash by macOS), and an FAQ until then
 - [ ] Android (several requests); iOS is out of reach for in-place work
+- [ ] `.dmg` disk images (requested): read-only UDIF images (zlib, bzip2, LZFSE, LZMA chunks) holding HFS+ or APFS; extracting the files means reading the file system inside, so first check whether a Rust reader exists
 
 ## GUI, like WinRAR and 7-Zip
 
