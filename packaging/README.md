@@ -8,14 +8,15 @@ runs, so any step can be repeated by hand.
 |---|---|---|---|
 | `hatchzip-<arch>-<os>.tar.gz`, `hatchzip-x86_64-windows.zip` | The CLI, man page, completions | `cargo build`, `tar`, `7z` | Each OS |
 | `HatchZip-x64-setup.exe` | App, CLI (`hatchzip.exe` and `hz.exe`) | [Inno Setup 6](https://jrsoftware.org/isinfo.php) | Windows |
+| `HatchZip-x64.msi` | The same as the setup | [WiX Toolset 5](https://wixtoolset.org) | Windows |
 | `HatchZip-aarch64.dmg`, `HatchZip-x86_64.dmg` | `HatchZip.app`, with the CLI and man page inside | `hdiutil`, `codesign` | macOS |
 | `hatchzip_amd64.deb`, `hatchzip-x86_64.rpm` | App, CLI, `hz` link, man pages, completions, menu entry, icons | [nfpm](https://nfpm.goreleaser.com) | Ubuntu 22.04 |
 | `HatchZip-x86_64.AppImage` | App | [linuxdeploy](https://github.com/linuxdeploy/linuxdeploy), [appimagetool](https://github.com/AppImage/appimagetool) | Ubuntu 22.04 |
 
 Every file gets a `.sha256` next to it. Every package is installed and run
 before anything is published: in clean Ubuntu 22.04 and Fedora containers
-for the .deb and .rpm, by a silent install and uninstall on the Windows
-runner, and by opening the dmg on the Mac runner.
+for the .deb and .rpm, by a silent install and uninstall of the setup and
+of the MSI on the Windows runner, and by opening the dmg on the Mac runner.
 
 The AUR, winget, Homebrew and Scoop manifests that install these
 downloads are in this folder too: see [Package managers](#package-managers).
@@ -37,6 +38,10 @@ does one thing that's easy to check:
 - **nfpm** writes .deb and .rpm from one YAML file, without dpkg or rpmbuild.
 - **Inno Setup** is already on GitHub's Windows runners, installs per user
   without admin rights, and its Pascal code makes the PATH edit exact.
+- **WiX** writes the MSI from one XML file. It's a .NET tool, installed at
+  a fixed version by `build-msi.ps1`. It stays on version 5: WiX 6
+  introduced the [Open Source Maintenance Fee](https://docs.firegiant.com/wix/osmf/),
+  and WiX 7 won't build until its EULA is accepted.
 - **hdiutil** and **codesign** come with macOS; an `.app` is a folder and a
   plist.
 - **linuxdeploy** copies in any shared library the app links that isn't on
@@ -114,10 +119,114 @@ The setup installs for the current user to
 `%LOCALAPPDATA%\Programs\HatchZip`, the folder `install.ps1` uses, with no
 admin prompt. It adds a Start menu entry, an entry in Settings > Apps that
 uninstalls it, `hz.exe` as a copy of `hatchzip.exe`, the folder on the user
-PATH, and HatchZip under "Open with" for .zip, .7z, .tar and .001 files. It
-runs `hatchzip-gui --register-shell` after installing and
-`hatchzip-gui --unregister-shell` before uninstalling. Uninstalling removes
-all of it, PATH entry included.
+PATH, and HatchZip under "Open with" for .zip, .7z, .tar, .tgz, .gz, .001,
+.rar and .r00 files. It runs `hatchzip-gui --register-shell` after
+installing and `hatchzip-gui --unregister-shell` before uninstalling.
+Uninstalling removes all of it, PATH entry included.
+
+The setup carries a full version resource (company, description, product
+name, copyright, version), which Windows shows under Properties > Details
+and antivirus engines read. Its compression (`lzma2/max`, solid) is left as
+it is: any compressed installer holds high-entropy data, and there is no
+measurement showing that another setting changes what the heuristic
+engines report.
+
+## Windows: MSI
+
+```powershell
+# dist\payload: the same folder as for the setup
+packaging\windows\build-msi.ps1 dist\payload 0.1.0
+packaging\windows\test-msi.ps1 dist\HatchZip-x64.msi dist\HatchZip-x64-setup.exe
+```
+
+`windows/hatchzip.wxs` installs the same files to the same folder as the
+setup, for the current user and without an admin prompt (`Scope="perUser"`):
+`hatchzip-gui.exe`, `hatchzip.exe`, `hz.exe`, the PowerShell completion
+script, the README and the three licenses. It adds the Start menu shortcut,
+the folder to the user PATH, the same "Open with" keys as the setup, and an
+entry in Settings > Apps with the icon and links to hatchzip.dev and the
+repository. A deferred custom action runs the installed
+`hatchzip-gui --register-shell` after the files are in, and
+`--unregister-shell` before they are removed, each with a rollback action
+that undoes it if the install fails later on. A new version replaces the
+installed one (`MajorUpgrade`, keyed by the `UpgradeCode`, which never
+changes); Windows Installer versions are three numbers, so a pre-release
+like 0.2.0-beta.1 is built as 0.2.0.
+
+The setup and the MSI are separate products to Windows, so each refuses to
+install while the other is installed: the MSI with a launch condition on
+the setup's uninstall entry, the setup with a check for an MSI entry named
+HatchZip. `test-msi.ps1` tries both ways.
+
+`build-msi.ps1` checks that the payload holds exactly the files the `.wxs`
+lists, since, unlike the setup, the MSI names each file. A file added to the
+zip has to be added there too.
+
+## Windows: signing
+
+The release workflow can sign everything Windows runs with Authenticode:
+`hatchzip.exe` and `hatchzip-gui.exe` right after the build, so the zip,
+the setup and the MSI all carry signed copies (`hz.exe` is a copy of
+`hatchzip.exe`), then the setup and the MSI once they are built. Each signed
+file is checked for a valid, timestamped signature before it replaces the
+unsigned one, and the install tests run on the signed installers.
+
+Signing runs when one of the two services below is set up, and is skipped
+otherwise; the workflow log says which one it used. Builds of a tag are
+signed. Dry runs (the workflow run by hand without a tag) are signed only
+when the repository variable `SIGN_DRY_RUNS` is `true`, since a signing
+policy can wait for a person to approve each request. If both services are
+set up, SignPath is used.
+
+Secrets and variables are created under the repository's Settings >
+Secrets and variables > Actions.
+
+**SignPath** ([signpath.io](https://signpath.io); free for open source
+through the [SignPath Foundation](https://signpath.org)):
+
+1. In the SignPath project, add the predefined trusted build system
+   "GitHub.com" and link it to the project.
+2. Create two artifact configurations with the slugs `programs` and
+   `installers`, from `.signpath/artifact-configurations/programs.xml` and
+   `installers.xml`. SignPath keeps artifact configurations in the project,
+   so these files are the copies to paste in; change both together.
+3. Create a signing policy, and an API token for a user that can submit
+   signing requests with it.
+
+| Kind | Name | Value |
+|---|---|---|
+| Secret | `SIGNPATH_API_TOKEN` | The API token |
+| Variable | `SIGNPATH_ORGANIZATION_ID` | The organization ID |
+| Variable | `SIGNPATH_PROJECT_SLUG` | The project slug |
+| Variable | `SIGNPATH_SIGNING_POLICY_SLUG` | The signing policy slug, such as `release-signing` |
+
+The workflow uploads the files to sign as the artifacts `signing-programs`
+and `signing-installers`, which SignPath downloads (the Windows job has
+`actions: read` for that), and waits up to 10 minutes for each request. The
+publish job leaves those two artifacts out, since they hold unsigned
+copies.
+
+**Azure Artifact Signing** (formerly Trusted Signing): an Artifact Signing
+account with a certificate profile, and an app registration with a client
+secret that has the "Artifact Signing Certificate Profile Signer" role on
+the account.
+
+| Kind | Name | Value |
+|---|---|---|
+| Secret | `AZURE_TENANT_ID` | The directory (tenant) ID |
+| Secret | `AZURE_CLIENT_ID` | The app registration's client ID |
+| Secret | `AZURE_CLIENT_SECRET` | The app registration's client secret |
+| Variable | `AZURE_SIGNING_ENDPOINT` | The account's endpoint, such as `https://eus.codesigning.azure.net/` |
+| Variable | `AZURE_SIGNING_ACCOUNT` | The signing account name |
+| Variable | `AZURE_CERTIFICATE_PROFILE` | The certificate profile name |
+
+Files are signed with SHA-256 and timestamped by
+`http://timestamp.acs.microsoft.com`.
+
+Either way, the uninstaller the setup writes on the user's machine
+(`unins000.exe`) is not signed: Inno Setup signs it while compiling, through
+its `SignTool` setting, which needs a signing command on the build machine
+rather than a service the workflow calls afterwards.
 
 ## macOS: dmg
 
@@ -162,7 +271,7 @@ homebrew-core formula, which build from the tagged source.
 |---|---|---|
 | `aur/hatchzip-bin/` | AUR `hatchzip-bin`, x86_64 | CLI, `hz`, app, man pages, completions, menu entry, icons, licenses. The CLI is the static tarball build, the app comes from the .deb |
 | `aur/hatchzip/` | AUR `hatchzip`, x86_64 and aarch64 | The same files, built from source with `cargo build --release` |
-| `winget/manifests/x/Xevrion/HatchZip/<version>/` | winget `Xevrion.HatchZip` | `HatchZip-x64-setup.exe`, per user, silent |
+| `winget/manifests/x/Xevrion/HatchZip/<version>/` | winget `Xevrion.HatchZip` | `HatchZip-x64-setup.exe`, per user, silent. Not the MSI yet: see below |
 | `homebrew/Formula/hatchzip.rb` | tap formula, macOS and Linux, arm64 and x86_64 | CLI, `hz`, man pages, completions, from the tarballs |
 | `homebrew/Casks/hatchzip.rb` | tap cask, macOS | `HatchZip.app` from the dmg, plus the CLI, `hz` and man page inside it |
 | `homebrew/core/hatchzip.rb` | for a later homebrew-core pull request | CLI built from source |
@@ -170,6 +279,15 @@ homebrew-core formula, which build from the tagged source.
 
 The formula and the cask both put `hatchzip` on PATH, so a Mac user
 installs one or the other: the cask when they want the app too.
+
+winget lists only the setup. Its manifests can list an MSI next to it for
+the same architecture and scope, since installers differ by type, but
+v0.1.3, the release the manifests are at, has no MSI, and
+`update-manifests.py` only swaps the checksums of installers a manifest
+already lists. Once a release ships `HatchZip-x64.msi`, it can be added as a
+second installer with `InstallerType: wix` and an `AppsAndFeaturesEntries`
+entry carrying the MSI's `UpgradeCode` (in `windows/hatchzip.wxs`), and
+`HatchZip-x64.msi` added to `ASSETS` in the script.
 
 ### After each release
 

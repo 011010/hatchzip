@@ -74,13 +74,14 @@ Download from the [latest release](https://github.com/xevrion/hatchzip/releases/
 | System | File |
 |---|---|
 | Windows 10 and 11 (x64) | [`HatchZip-x64-setup.exe`](https://github.com/xevrion/hatchzip/releases/latest/download/HatchZip-x64-setup.exe): installs per user, no admin rights, adds the right-click menu |
+| Windows 10 and 11 (x64), MSI | [`HatchZip-x64.msi`](https://github.com/xevrion/hatchzip/releases/latest/download/HatchZip-x64.msi): the same app and install as the setup, as a Windows Installer package for deployment tools and `msiexec /i HatchZip-x64.msi /qn`. Install one or the other |
 | macOS, Apple Silicon | [`HatchZip-aarch64.dmg`](https://github.com/xevrion/hatchzip/releases/latest/download/HatchZip-aarch64.dmg) |
 | macOS, Intel | [`HatchZip-x86_64.dmg`](https://github.com/xevrion/hatchzip/releases/latest/download/HatchZip-x86_64.dmg) |
 | Debian, Ubuntu | [`hatchzip_amd64.deb`](https://github.com/xevrion/hatchzip/releases/latest/download/hatchzip_amd64.deb) |
 | Fedora, openSUSE | [`hatchzip-x86_64.rpm`](https://github.com/xevrion/hatchzip/releases/latest/download/hatchzip-x86_64.rpm) |
 | Any Linux | [`HatchZip-x86_64.AppImage`](https://github.com/xevrion/hatchzip/releases/latest/download/HatchZip-x86_64.AppImage) |
 
-The installers also put the `hatchzip` command (and its short name `hz`) on your `PATH`. The Windows setup and the macOS apps are not code-signed yet: on Windows choose **More info**, then **Run anyway**; on macOS 15 and later, open the app once, then allow it under System Settings, Privacy & Security.
+The installers also put the `hatchzip` command (and its short name `hz`) on your `PATH`. The Windows installers and the macOS apps are not code-signed yet: on Windows choose **More info**, then **Run anyway**; on macOS 15 and later, open the app once, then allow it under System Settings, Privacy & Security.
 
 ### Command line only
 
