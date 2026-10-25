@@ -171,3 +171,74 @@ fn a_7z_block_without_packed_bytes_but_with_data_is_refused() {
     fs::write(&archive, sevenz_with_header_last(&[&data], &h)).unwrap();
     refused(&archive, &tmp.path().join("out"), "header is inconsistent");
 }
+
+/// A last packed stream no block uses would be truncated with the block
+/// before it, and could hold the header.
+#[test]
+fn a_7z_with_packed_data_no_block_uses_is_refused() {
+    let tmp = TempDir::new().unwrap();
+    let (a, b) = (noise(1000, 1), noise(1000, 2));
+    let h = header(
+        &[1000, 1000, 300],
+        &[&[("a.bin", 1000)], &[("b.bin", 1000)]],
+        &[],
+    );
+    let archive = tmp.path().join("unused.7z");
+    fs::write(&archive, sevenz_with_header_last(&[&a, &b, &[0; 300]], &h)).unwrap();
+    refused(&archive, &tmp.path().join("out"), "no block uses");
+}
+
+/// The header doubles as the data of the last block. Committing that block
+/// would truncate the header, which every resume and restore reads again.
+#[test]
+fn a_7z_whose_header_is_inside_a_block_is_refused() {
+    let tmp = TempDir::new().unwrap();
+    let victim = noise(1000, 1);
+    let h = header(
+        &[1000, 400],
+        &[&[("victim.bin", 1000)], &[("carrier.bin", 400)]],
+        &[],
+    );
+    let mut carrier = h.clone();
+    carrier.resize(400, 0);
+    let archive = tmp.path().join("inside.7z");
+    let body = [victim, carrier].concat();
+    fs::write(&archive, sevenz(&body, 1000, h.len())).unwrap();
+    refused(
+        &archive,
+        &tmp.path().join("out"),
+        "lies among its packed data",
+    );
+}
+
+/// The same with an encoded header, whose packed data is the inside of a
+/// block while the encoded header itself sits at the end.
+#[test]
+fn a_7z_whose_encoded_header_data_is_inside_a_block_is_refused() {
+    let tmp = TempDir::new().unwrap();
+    let victim = noise(1000, 1);
+    let h = header(
+        &[1000, 400],
+        &[&[("victim.bin", 1000)], &[("carrier.bin", 400)]],
+        &[],
+    );
+    let mut carrier = h.clone();
+    carrier.resize(400, 0);
+    // Encoded header, pack info: the raw header, stored where the carrier's
+    // data begins. Unpack info: one Copy coder of the same size.
+    let mut encoded = vec![0x17, 0x06];
+    number(&mut encoded, 1000);
+    encoded.extend([0x01, 0x09]);
+    number(&mut encoded, h.len() as u64);
+    encoded.extend([0x00, 0x07, 0x0B, 0x01, 0x00, 0x01, 0x01, 0x00, 0x0C]);
+    number(&mut encoded, h.len() as u64);
+    encoded.extend([0x00, 0x00]);
+    let archive = tmp.path().join("encoded.7z");
+    let body = [victim, carrier, encoded.clone()].concat();
+    fs::write(&archive, sevenz(&body, 1400, encoded.len())).unwrap();
+    refused(
+        &archive,
+        &tmp.path().join("out"),
+        "lies among its packed data",
+    );
+}

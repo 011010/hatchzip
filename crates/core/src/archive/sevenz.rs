@@ -2,13 +2,13 @@
 //! blocks in order. A solid block can only be decoded from its start, so the
 //! unit is the whole block, and it is freed once all its files are out.
 
-use std::io::{self, Read};
+use std::io::{self, Read, Seek, SeekFrom};
 use std::sync::Arc;
 use std::time::SystemTime;
 
 use anyhow::{Context, Result, anyhow, bail};
 use sevenz_rust2::{
-    Archive, ArchiveEntry, ArchiveWriter, BlockDecoder, Password, SIGNATURE_HEADER_SIZE,
+    Archive, ArchiveEntry, ArchiveWriter, Block, BlockDecoder, Password, SIGNATURE_HEADER_SIZE,
 };
 
 use super::storage::{Reader, Storage, Tail};
@@ -56,6 +56,9 @@ pub fn open(
     }
 
     let (starts, data_end) = block_starts(&archive)?;
+    if resuming.is_none() {
+        check_layout(&archive, &mut reader, data_end)?;
+    }
     let tail_start = resuming.unwrap_or(data_end);
 
     let mut covered = vec![false; archive.files.len()];
@@ -145,6 +148,105 @@ fn block_starts(archive: &Archive) -> Result<(Vec<u64>, u64)> {
         .filter(|s| s.len() == archive.blocks.len())
         .ok_or_else(inconsistent)?;
     Ok((starts, data_end))
+}
+
+/// Refuses layouts that extracting in place would break. A resumed run reads
+/// the header again after blocks are truncated, so the header, and the
+/// packed data of an encoded one, must lie in the tail saved before anything
+/// is truncated. Packed streams that no block uses are refused as well: they
+/// would go with the last block, and nothing checks what they hold.
+fn check_layout(archive: &Archive, reader: &mut Reader, data_end: u64) -> Result<()> {
+    let first_pack = archive.stream_map.block_first_pack_stream_index();
+    let mut used = 0;
+    for (block, &first) in archive.blocks.iter().zip(first_pack) {
+        if first != used {
+            return Err(inconsistent());
+        }
+        used += packed_streams(block);
+    }
+    if used > archive.pack_sizes().len() {
+        return Err(inconsistent());
+    }
+    if used < archive.pack_sizes().len() {
+        bail!(
+            "this 7z archive holds packed data that no block uses, which cannot be extracted in \
+             place safely. Nothing was modified"
+        );
+    }
+    if header_starts(reader)?.into_iter().any(|at| at < data_end) {
+        bail!(
+            "the header of this 7z archive lies among its packed data instead of after it, so \
+             extracting in place would destroy it before the extraction completes. Nothing was \
+             modified"
+        );
+    }
+    Ok(())
+}
+
+/// How many packed streams a block reads. sevenz-rust2 keeps the count to
+/// itself, but every coder it decodes has one input and one output except
+/// BCJ2, which has four inputs. All outputs but the last feed another coder.
+fn packed_streams(block: &Block) -> usize {
+    const BCJ2: &[u8] = &[0x03, 0x03, 0x01, 0x1B];
+    let inputs: usize = block
+        .coders
+        .iter()
+        .map(|c| if c.encoder_method_id() == BCJ2 { 4 } else { 1 })
+        .sum();
+    inputs + 1 - block.coders.len()
+}
+
+/// Where the header begins, and for an encoded header, where its packed
+/// data begins, read from the start header the way sevenz-rust2 reads it.
+fn header_starts(reader: &mut Reader) -> Result<Vec<u64>> {
+    const ENCODED_HEADER: u8 = 0x17;
+    const PACK_INFO: u8 = 0x06;
+    let mut start = [0u8; SIGNATURE_HEADER_SIZE as usize];
+    reader.seek(SeekFrom::Start(0))?;
+    reader.read_exact(&mut start)?;
+    if start[8..].iter().all(|&b| b == 0) {
+        // sevenz-rust2 then searches the end of the file for anything that
+        // parses as a header, which may well be inside a block.
+        bail!(
+            "the start header of this 7z archive is blank, as an interrupted write leaves it, so \
+             it cannot be extracted in place safely. Nothing was modified"
+        );
+    }
+    let offset = u64::from_le_bytes(start[12..20].try_into().expect("8 bytes"));
+    let header = SIGNATURE_HEADER_SIZE
+        .checked_add(offset)
+        .ok_or_else(inconsistent)?;
+    let mut found = vec![header];
+    let mut kind = [0u8; 2];
+    reader.seek(SeekFrom::Start(header))?;
+    reader.read_exact(&mut kind)?;
+    if kind == [ENCODED_HEADER, PACK_INFO] {
+        let pos = number(reader)?;
+        found.push(
+            SIGNATURE_HEADER_SIZE
+                .checked_add(pos)
+                .ok_or_else(inconsistent)?,
+        );
+    }
+    Ok(found)
+}
+
+/// A 7z variable-length number: the leading one bits of the first byte say
+/// how many bytes follow, and its remaining bits are the highest.
+fn number(r: &mut impl Read) -> io::Result<u64> {
+    let mut b = [0u8; 1];
+    r.read_exact(&mut b)?;
+    let first = b[0];
+    let mut value = 0;
+    for i in 0..8 {
+        let mask = 0x80u8 >> i;
+        if first & mask == 0 {
+            return Ok(value | (u64::from(first & (mask - 1)) << (8 * i)));
+        }
+        r.read_exact(&mut b)?;
+        value |= u64::from(b[0]) << (8 * i);
+    }
+    Ok(value)
 }
 
 fn item(f: &ArchiveEntry) -> Result<Item> {
@@ -381,5 +483,39 @@ impl io::Seek for Sieve {
             io::SeekFrom::End(_) => return Err(io::Error::other("no end to seek from")),
         };
         Ok(self.pos)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use super::*;
+
+    #[test]
+    fn numbers_read_as_7z_writes_them() {
+        let read = |bytes: &[u8]| number(&mut &bytes[..]).unwrap();
+        assert_eq!(read(&[0x7F]), 0x7F);
+        assert_eq!(read(&[0x81, 0x23]), 0x123);
+        assert_eq!(read(&[0xC1, 0x23, 0x45]), 0x14523);
+        assert_eq!(read(&[0xFF, 1, 2, 3, 4, 5, 6, 7, 8]), 0x0807060504030201);
+    }
+
+    /// sevenz-rust2 finds the header of an archive with a blank start header
+    /// by searching the end of the file, where a block's data can pass for
+    /// one, so where the header lies is unknown.
+    #[test]
+    fn a_blank_start_header_is_refused() {
+        let dir = std::env::temp_dir().join(format!("hatchzip-blank-7z-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("blank.7z");
+        let mut bytes = b"7z\xBC\xAF\x27\x1C\x00\x04".to_vec();
+        bytes.resize(64, 0);
+        fs::write(&path, &bytes).unwrap();
+        let storage = Storage::open(&path, false).unwrap();
+        let err = header_starts(&mut storage.reader(None)).unwrap_err();
+        assert!(err.to_string().contains("start header"), "{err:#}");
+        drop(storage);
+        fs::remove_dir_all(&dir).unwrap();
     }
 }
