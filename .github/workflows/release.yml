@@ -124,10 +124,25 @@ jobs:
           test -s cli/hatchzip-aarch64-linux/LICENSE-UNRAR
           python3 .github/scripts/smoke.py cli/hatchzip-aarch64-linux/hatchzip
 
+  # The CLI zip, the Inno setup and the MSI, each installed, run and
+  # uninstalled on the runner. With signing set up (see "Windows: signing"
+  # in packaging/README.md), the programs are signed before they're packaged
+  # and the two installers after they're built; without it, those steps are
+  # skipped.
   windows:
     name: windows x86_64
     runs-on: windows-2025
-    timeout-minutes: 30
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      # SignPath downloads the files to sign from this run's artifacts.
+      actions: read
+    env:
+      # The signing service: SignPath if its token is set, else Azure
+      # Artifact Signing if its secret is, else none. Dry runs are signed
+      # only when the variable SIGN_DRY_RUNS is true, since a signing policy
+      # may wait for a person to approve each request.
+      SIGNER: ${{ (startsWith(github.ref, 'refs/tags/') || inputs.tag != '' || vars.SIGN_DRY_RUNS == 'true') && ((secrets.SIGNPATH_API_TOKEN != '' && 'signpath') || (secrets.AZURE_CLIENT_SECRET != '' && 'azure')) || '' }}
     defaults:
       run:
         shell: bash
@@ -140,6 +155,55 @@ jobs:
       # needed; cc-rs sees crt-static and builds UnRAR with /MT to match.
       - name: build
         run: cargo build --release --locked -p hatchzip -p hatchzip-gui --features rar
+      - name: signing
+        run: echo "signing with ${SIGNER:-nothing, signing is not set up for this run}"
+
+      # Sign the programs. hz.exe is a copy of hatchzip.exe, made when
+      # packaging.
+      - name: stage the programs for signing
+        if: env.SIGNER != ''
+        run: mkdir signing-programs && cp target/release/hatchzip.exe target/release/hatchzip-gui.exe signing-programs/
+      - id: unsigned-programs
+        if: env.SIGNER == 'signpath'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signing-programs
+          path: signing-programs/
+          if-no-files-found: error
+          retention-days: 1
+      - name: sign the programs (SignPath)
+        if: env.SIGNER == 'signpath'
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: programs
+          github-artifact-id: ${{ steps.unsigned-programs.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed-programs
+      - name: sign the programs (Azure Artifact Signing)
+        if: env.SIGNER == 'azure'
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_CERTIFICATE_PROFILE }}
+          files-folder: ${{ github.workspace }}\signing-programs
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+      - name: use the signed programs
+        if: env.SIGNER != ''
+        shell: pwsh
+        # SignPath returns the signed files; Azure signs them where they are.
+        run: packaging/windows/check-signed.ps1 ${{ env.SIGNER == 'signpath' && 'signed-programs' || 'signing-programs' }} target/release hatchzip.exe hatchzip-gui.exe
+
       - name: smoke test
         run: python .github/scripts/smoke.py target/release/hatchzip.exe
       - name: package
@@ -154,8 +218,8 @@ jobs:
           target/release/hatchzip.exe completions powershell > "dist/$name/hatchzip-completion.ps1"
           (cd "dist/$name" && 7z a -tzip "../$name.zip" . > /dev/null)
           (cd dist && sha256sum "$name.zip" > "$name.zip.sha256")
-      # The setup holds what the zip holds, plus the desktop app.
-      - name: stage the setup
+      # The setup and the MSI hold what the zip holds, plus the desktop app.
+      - name: stage the installers
         run: |
           mkdir -p dist/payload
           cp -r dist/hatchzip-x86_64-windows/. dist/payload/
@@ -164,17 +228,73 @@ jobs:
       - name: build the setup
         shell: pwsh
         run: packaging/windows/build-setup.ps1 dist/payload $env:HATCHZIP_VERSION
+      - name: build the MSI
+        shell: pwsh
+        run: packaging/windows/build-msi.ps1 dist/payload $env:HATCHZIP_VERSION
+
+      # Sign the installers, then test what was signed.
+      - name: stage the installers for signing
+        if: env.SIGNER != ''
+        run: mkdir signing-installers && cp dist/HatchZip-x64-setup.exe dist/HatchZip-x64.msi signing-installers/
+      - id: unsigned-installers
+        if: env.SIGNER == 'signpath'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signing-installers
+          path: signing-installers/
+          if-no-files-found: error
+          retention-days: 1
+      - name: sign the installers (SignPath)
+        if: env.SIGNER == 'signpath'
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: installers
+          github-artifact-id: ${{ steps.unsigned-installers.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed-installers
+      - name: sign the installers (Azure Artifact Signing)
+        if: env.SIGNER == 'azure'
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_CERTIFICATE_PROFILE }}
+          files-folder: ${{ github.workspace }}\signing-installers
+          files-folder-filter: exe,msi
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+      - name: use the signed installers
+        if: env.SIGNER != ''
+        shell: pwsh
+        run: packaging/windows/check-signed.ps1 ${{ env.SIGNER == 'signpath' && 'signed-installers' || 'signing-installers' }} dist HatchZip-x64-setup.exe HatchZip-x64.msi
+
       - name: install, run and uninstall the setup
         shell: pwsh
         run: packaging/windows/test-setup.ps1 dist/HatchZip-x64-setup.exe
-      - name: checksum the setup
-        run: (cd dist && sha256sum HatchZip-x64-setup.exe > HatchZip-x64-setup.exe.sha256)
+      - name: install, run and uninstall the MSI
+        shell: pwsh
+        run: packaging/windows/test-msi.ps1 dist/HatchZip-x64.msi dist/HatchZip-x64-setup.exe
+      - name: checksum the installers
+        run: |
+          cd dist
+          for f in HatchZip-x64-setup.exe HatchZip-x64.msi; do
+            sha256sum "$f" > "$f.sha256"
+          done
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-x86_64
           path: |
             dist/*.zip*
             dist/HatchZip-x64-setup.exe*
+            dist/HatchZip-x64.msi*
           if-no-files-found: error
 
   # Both Mac architectures from one Apple Silicon runner. Only the native one
@@ -316,9 +436,13 @@ jobs:
       id-token: write
       attestations: write
     steps:
+      # Every download, but not the signing-* artifacts the Windows job
+      # hands to SignPath, which hold unsigned copies. A new job's artifact
+      # has to be added here.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: dist
+          pattern: '{linux-*,windows-*,macos,linux-packages}'
           merge-multiple: true
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:

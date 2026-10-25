@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  HatchZip-x64.msi, built with WiX 5 from the same folder as the setup: the
+  files of the CLI release zip plus hatchzip-gui.exe (see build-msi.ps1).
+
+    wix build -arch x64 -d Payload=C:\path\to\payload -d Version=0.1.0 -o dist\HatchZip-x64.msi packaging\windows\hatchzip.wxs
+
+  It installs what hatchzip.iss installs, to the same folder, for the
+  current user only and without administrator rights. The two are separate
+  products to Windows, so each refuses to install over the other.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <?ifndef Version?>
+    <?error Pass the version: -d Version=0.1.0?>
+  <?endif?>
+  <?ifndef Payload?>
+    <?define Payload = $(sys.SOURCEFILEDIR)..\..\dist\payload?>
+  <?endif?>
+
+  <!-- Never change the UpgradeCode: a new version finds and replaces the
+       installed one by it. -->
+  <Package
+      Name="HatchZip"
+      Manufacturer="Yash Bavadiya"
+      Version="$(var.Version)"
+      UpgradeCode="083ECD39-645A-4455-AC0F-1647AC24D57A"
+      Scope="perUser"
+      Language="1033">
+    <SummaryInformation Description="HatchZip installer" Manufacturer="Yash Bavadiya" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of HatchZip is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="hatchzip.ico" SourceFile="$(sys.SOURCEFILEDIR)..\..\assets\icon\hatchzip.ico" />
+    <Property Id="ARPPRODUCTICON" Value="hatchzip.ico" />
+    <Property Id="ARPURLINFOABOUT" Value="https://hatchzip.dev" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/xevrion/hatchzip" />
+    <Property Id="ARPURLUPDATEINFO" Value="https://github.com/xevrion/hatchzip/releases" />
+    <Property Id="ARPCOMMENTS" Value="Extract huge archives in place" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <Property Id="ARPNOREPAIR" Value="1" />
+
+    <!-- The setup's uninstall entry: its AppId plus "_is1". -->
+    <Property Id="HATCHZIPSETUP">
+      <RegistrySearch Id="HatchZipSetup" Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\io.github.xevrion.hatchzip_is1" Name="DisplayName" Type="raw" />
+    </Property>
+    <Launch Condition="Installed OR NOT HATCHZIPSETUP" Message="HatchZip is already installed by HatchZip-x64-setup.exe. Uninstall it under Settings, Apps, then run this installer again." />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsDir" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="HatchZip" />
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder" />
+    <StandardDirectory Id="PersonalFolder" />
+
+    <!-- One component: everything goes in and comes out together. Files in a
+         user's profile can't be a component's key path, so a registry value
+         is. -->
+    <Component Id="HatchZip" Directory="INSTALLFOLDER" Guid="CFD8DFE3-6B45-471E-AC29-05B26668E3B3">
+      <File Id="HatchZipGui" Source="$(var.Payload)\hatchzip-gui.exe" KeyPath="no" />
+      <File Id="HatchZipCli" Source="$(var.Payload)\hatchzip.exe" KeyPath="no" />
+      <!-- The short name for the CLI. A copy, since Windows has no symlinks
+           without developer mode. -->
+      <File Id="Hz" Source="$(var.Payload)\hatchzip.exe" Name="hz.exe" KeyPath="no" />
+      <File Id="Completion" Source="$(var.Payload)\hatchzip-completion.ps1" KeyPath="no" />
+      <File Id="Readme" Source="$(var.Payload)\README.md" KeyPath="no" />
+      <File Id="LicenseMit" Source="$(var.Payload)\LICENSE-MIT.txt" KeyPath="no" />
+      <File Id="LicenseApache" Source="$(var.Payload)\LICENSE-APACHE.txt" KeyPath="no" />
+      <File Id="LicenseUnrar" Source="$(var.Payload)\LICENSE-UNRAR.txt" KeyPath="no" />
+      <RemoveFolder Id="RemoveInstallFolder" On="uninstall" />
+      <!-- Only removed when empty, which it rarely is. -->
+      <RemoveFolder Id="RemoveProgramsDir" Directory="ProgramsDir" On="uninstall" />
+
+      <Shortcut Id="StartMenu" Directory="ProgramMenuFolder" Name="HatchZip" Target="[#HatchZipGui]" WorkingDirectory="PersonalFolder" Description="Extract huge archives in place" />
+
+      <!-- [ProgramsDir] ends in a backslash; the folder on PATH doesn't, as
+           with the setup and install.ps1. -->
+      <Environment Id="UserPath" Name="Path" Value="[ProgramsDir]HatchZip" Part="last" Action="set" System="no" Permanent="no" />
+
+      <!-- "Open with" for each archive type, without taking over the default
+           app. The same keys as hatchzip.iss. -->
+      <RegistryKey Root="HKCU" Key="Software\Classes\HatchZip.Archive" ForceDeleteOnUninstall="yes">
+        <RegistryValue Type="string" Value="Archive" />
+        <RegistryValue Key="DefaultIcon" Type="string" Value="&quot;[#HatchZipGui]&quot;,0" />
+        <RegistryValue Key="shell\open\command" Type="string" Value="&quot;[#HatchZipGui]&quot; &quot;%1&quot;" KeyPath="yes" />
+      </RegistryKey>
+      <RegistryKey Root="HKCU" Key="Software\Classes\Applications\hatchzip-gui.exe" ForceDeleteOnUninstall="yes">
+        <RegistryValue Name="FriendlyAppName" Type="string" Value="HatchZip" />
+      </RegistryKey>
+      <RegistryValue Root="HKCU" Key="Software\Classes\.zip\OpenWithProgids" Name="HatchZip.Archive" Type="string" Value="" />
+      <RegistryValue Root="HKCU" Key="Software\Classes\.7z\OpenWithProgids" Name="HatchZip.Archive" Type="string" Value="" />
+      <RegistryValue Root="HKCU" Key="Software\Classes\.tar\OpenWithProgids" Name="HatchZip.Archive" Type="string" Value="" />
+      <RegistryValue Root="HKCU" Key="Software\Classes\.tgz\OpenWithProgids" Name="HatchZip.Archive" Type="string" Value="" />
+      <RegistryValue Root="HKCU" Key="Software\Classes\.gz\OpenWithProgids" Name="HatchZip.Archive" Type="string" Value="" />
+      <RegistryValue Root="HKCU" Key="Software\Classes\.001\OpenWithProgids" Name="HatchZip.Archive" Type="string" Value="" />
+      <RegistryValue Root="HKCU" Key="Software\Classes\.rar\OpenWithProgids" Name="HatchZip.Archive" Type="string" Value="" />
+      <RegistryValue Root="HKCU" Key="Software\Classes\.r00\OpenWithProgids" Name="HatchZip.Archive" Type="string" Value="" />
+    </Component>
+
+    <!-- The right-click menu is written by the app itself, as the setup does,
+         so the installer and the app's settings switch agree. Each action
+         has a rollback twin that undoes it if the install fails later on. -->
+    <CustomAction Id="RegisterShell" FileRef="HatchZipGui" ExeCommand="--register-shell" Execute="deferred" Impersonate="yes" Return="ignore" />
+    <CustomAction Id="RegisterShellRollback" FileRef="HatchZipGui" ExeCommand="--unregister-shell" Execute="rollback" Impersonate="yes" Return="ignore" />
+    <CustomAction Id="UnregisterShell" FileRef="HatchZipGui" ExeCommand="--unregister-shell" Execute="deferred" Impersonate="yes" Return="ignore" />
+    <CustomAction Id="UnregisterShellRollback" FileRef="HatchZipGui" ExeCommand="--register-shell" Execute="rollback" Impersonate="yes" Return="ignore" />
+    <InstallExecuteSequence>
+      <Custom Action="RegisterShellRollback" After="InstallFiles" Condition="NOT REMOVE~=&quot;ALL&quot;" />
+      <Custom Action="RegisterShell" After="RegisterShellRollback" Condition="NOT REMOVE~=&quot;ALL&quot;" />
+      <Custom Action="UnregisterShellRollback" Before="UnregisterShell" Condition="REMOVE~=&quot;ALL&quot;" />
+      <Custom Action="UnregisterShell" Before="RemoveFiles" Condition="REMOVE~=&quot;ALL&quot;" />
+    </InstallExecuteSequence>
+  </Package>
+</Wix>

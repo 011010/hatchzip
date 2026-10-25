@@ -13,6 +13,11 @@
 #ifndef AppVersion
   #define AppVersion GetStringFileInfo(Payload + "\hatchzip-gui.exe", "ProductVersion")
 #endif
+; The four numbers of the exe's version resource, such as 0.1.0.0. AppVersion
+; can carry a suffix like -beta.1, which a version resource can't.
+#ifndef NumVersion
+  #define NumVersion GetVersionNumbersString(Payload + "\hatchzip-gui.exe")
+#endif
 
 [Setup]
 ; Never change: Windows finds the installed copy to update or remove by it.
@@ -25,6 +30,18 @@ AppPublisherURL=https://github.com/xevrion/hatchzip
 AppSupportURL=https://github.com/xevrion/hatchzip/issues
 AppUpdatesURL=https://github.com/xevrion/hatchzip/releases
 AppComments=Extract huge archives in place
+AppCopyright=Copyright (c) 2026 Yash Bavadiya
+; The setup's own version resource, which Windows shows under Properties >
+; Details and which antivirus engines read. Without these, Inno Setup fills
+; in only part of it.
+VersionInfoVersion={#NumVersion}
+VersionInfoTextVersion={#AppVersion}
+VersionInfoProductVersion={#NumVersion}
+VersionInfoProductTextVersion={#AppVersion}
+VersionInfoCompany=Yash Bavadiya
+VersionInfoDescription=HatchZip Setup
+VersionInfoProductName=HatchZip
+VersionInfoCopyright=Copyright (c) 2026 Yash Bavadiya
 DefaultDirName={localappdata}\Programs\HatchZip
 DisableDirPage=yes
 DisableProgramGroupPage=yes
@@ -87,6 +104,37 @@ Type: filesandordirs; Name: "{app}"
 [Code]
 const
   EnvKey = 'Environment';
+  UninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall';
+
+{ True if HatchZip-x64.msi is installed for this user. It installs to the
+  same folder, so the two must not be installed over each other; the MSI
+  refuses the other way round. }
+function MsiInstalled: Boolean;
+var
+  Keys: TArrayOfString;
+  I: Integer;
+  Name: String;
+  IsMsi: Cardinal;
+begin
+  Result := False;
+  if not RegGetSubkeyNames(HKCU, UninstallKey, Keys) then
+    exit;
+  for I := 0 to GetArrayLength(Keys) - 1 do
+    if RegQueryStringValue(HKCU, UninstallKey + '\' + Keys[I], 'DisplayName', Name) and (Name = 'HatchZip')
+      and RegQueryDWordValue(HKCU, UninstallKey + '\' + Keys[I], 'WindowsInstaller', IsMsi) and (IsMsi = 1) then
+    begin
+      Result := True;
+      exit;
+    end;
+end;
+
+function InitializeSetup: Boolean;
+begin
+  Result := not MsiInstalled;
+  if not Result then
+    SuppressibleMsgBox('HatchZip is already installed by HatchZip-x64.msi. Uninstall it under Settings, Apps, then run this setup again.',
+      mbError, MB_OK, IDOK);
+end;
 
 { True if Dir is one of the entries of the user's PATH, ignoring case. }
 function PathHas(Path, Dir: String): Boolean;

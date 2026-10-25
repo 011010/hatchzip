@@ -27,6 +27,12 @@ function UserPath {
     [Environment]::GetEnvironmentVariable('Path', 'User') -split ';' | Where-Object { $_ }
 }
 
+$info = (Get-Item $Setup).VersionInfo
+foreach ($field in 'CompanyName', 'FileDescription', 'ProductName', 'LegalCopyright', 'FileVersion', 'ProductVersion') {
+    if (-not $info.$field) { throw "the setup's version info has no $field" }
+}
+Write-Host "version info: $($info.ProductName) $($info.ProductVersion) ($($info.FileVersion)), $($info.CompanyName), $($info.LegalCopyright)"
+
 Write-Host 'install'
 Run $Setup $quiet
 foreach ($f in 'hatchzip-gui.exe', 'hatchzip.exe', 'hz.exe', 'hatchzip-completion.ps1', 'unins000.exe') {

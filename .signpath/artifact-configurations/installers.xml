@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SignPath artifact configuration "installers": the setup and the MSI, built
+  from the programs signed with "programs". The release workflow uploads
+  them as the GitHub artifact signing-installers, a zip with both at its
+  root. This file is the copy to paste into the SignPath project. See
+  "Windows: signing" in packaging/README.md.
+-->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <zip-file>
+    <pe-file path="HatchZip-x64-setup.exe">
+      <authenticode-sign />
+    </pe-file>
+    <msi-file path="HatchZip-x64.msi">
+      <authenticode-sign />
+    </msi-file>
+  </zip-file>
+</artifact-configuration>
