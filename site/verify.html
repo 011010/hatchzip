@@ -65,6 +65,7 @@
 <ul>
 <li>It reads the archive you give it and writes the extracted files next to it. It works only with files on your computer.</li>
 <li>It does not use the network. It has no networking code and no networking library. Every change to the code is checked in CI against a list of HTTP, TLS and socket libraries, and the check fails if one of them enters the dependencies (<a href="https://github.com/xevrion/hatchzip/blob/main/deny.toml">deny.toml</a>). The one link in the desktop app, to the source code in the About window, opens in your web browser when you click it.</li>
+<li>The programs themselves are checked too. Before a release is published, the release workflow checks that the Windows and macOS programs import no networking library and no socket function, and that no Windows networking library is named anywhere in them, so none can be loaded later (<a href="https://github.com/xevrion/hatchzip/blob/main/.github/scripts/no-network.py">no-network.py</a>). In 0.1.5, <code>hatchzip.exe</code> imports 6 Windows system libraries and the desktop app 20, for files, windows, drawing, fonts, text input, accessibility and the registry.</li>
 <li>It has no telemetry, no accounts and no update checks. It collects nothing and sends nothing.</li>
 <li>The Windows setup installs for the current user only, without administrator rights. It adds HatchZip to the right-click menu and to "Open with" for archive files, and puts the <code>hatchzip</code> command on your <code>PATH</code>. The uninstaller removes all of it.</li>
 <li>All of the source is public under the MIT or Apache-2.0 license. The downloads decode RAR archives with UnRAR, whose source is public under its own <a href="https://github.com/xevrion/hatchzip/blob/main/LICENSE-UNRAR">license</a>.</li>
@@ -75,6 +76,7 @@
 <h2 id="antivirus">Antivirus warnings</h2>
 <p>The release files are not code-signed yet. Windows SmartScreen shows "Windows protected your PC" for a new program without a signature, and macOS asks you to allow the app in System Settings. A few antivirus engines also flag new, unsigned programs, mostly the ones that score files with machine learning or behaviour rules rather than by matching known malware.</p>
 <p>The behaviours that sandboxes report for the Windows setup are what any installer does: it writes program files, adds the right-click menu and "Open with" entries to the registry, and runs the helper process of Inno Setup, the installer it is built with.</p>
+<p id="sandbox-labels">For the desktop app, some sandboxes also list abilities such as "takes screenshots", "reads the keyboard" or "uses the clipboard". These labels come from Windows functions that every app drawing its own window imports: <code>BitBlt</code> and <code>GetDC</code> put each frame of the window on screen, <code>GetKeyState</code> and raw input read the keys typed into the app while its window is in front, and the clipboard functions serve copy and paste in its text fields. With no networking library and no socket function, the app has no way to send anything anywhere, by email or otherwise.</p>
 <p>Code signing is planned. Until then, the checks below show whether a file is genuine. Each file in the <a href="#files">table</a> links to its current VirusTotal report.</p>
 </section>
 
@@ -96,7 +98,8 @@
 <h3>2. Verify the signed build provenance</h3>
 <p>A checksum shows that the file was not changed after it was published. Build provenance also shows where it came from: every release file from 0.1.3 on carries a signed attestation that it was built by the release workflow in <a href="https://github.com/xevrion/hatchzip">github.com/xevrion/hatchzip</a>, from the commit of that release tag. With the <a href="https://cli.github.com">GitHub CLI</a> installed and signed in:</p>
 <pre><code>gh attestation verify HatchZip-x64-setup.exe --repo xevrion/hatchzip</code></pre>
-<p>It exits with success when the file matches an attestation from that repository, and fails with an error for any file that was changed or built anywhere else. Use the name of the file you downloaded.</p>
+<p>It exits with success when the file matches an attestation from that repository, and fails with an error for any file that was changed or built anywhere else. Use the name of the file you downloaded. To also check that it was built by the release workflow from the tag of its version, add the workflow and the tag:</p>
+<pre><code>gh attestation verify HatchZip-x64-setup.exe --repo xevrion/hatchzip --signer-workflow xevrion/hatchzip/.github/workflows/release.yml --source-ref refs/tags/v0.1.5</code></pre>
 
 <h3>3. Build it from source</h3>
 <p>With <a href="https://rustup.rs">Rust</a> installed, this downloads the source of the command-line tool from <a href="https://crates.io/crates/hatchzip">crates.io</a> and builds it on your machine:</p>

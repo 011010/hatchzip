@@ -125,6 +125,8 @@ def main():
     if start < 0 or end < start:
         sys.exit(f"{PAGE}: the release-files markers are missing")
     updated = page[:start] + render(args.tag, args.repo, release, sums) + page[end + len(END):]
+    # The strict attestation example names the tag of the files listed.
+    updated = re.sub(r"--source-ref refs/tags/v[\w.-]+", f"--source-ref refs/tags/{args.tag}", updated)
     if updated == page:
         print(f"{PAGE.name} already lists {args.tag}")
         return

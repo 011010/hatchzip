@@ -32,7 +32,8 @@ Findings from automated scanners are accepted only when they have been confirmed
 The release files are not code-signed yet, so Windows SmartScreen, macOS Gatekeeper and a few antivirus engines that score unknown programs can warn about them. To check that a file is genuine:
 
 - **Checksum:** every release file has a `.sha256` file next to it. Compare with `Get-FileHash <file>` in PowerShell, `sha256sum -c <file>.sha256` on Linux or `shasum -a 256 -c <file>.sha256` on macOS.
-- **Build provenance:** every release file from 0.1.3 on has a signed attestation that it was built by this repository's release workflow from the release tag. Check it with `gh attestation verify <file> --repo xevrion/hatchzip`.
+- **Build provenance:** every release file from 0.1.3 on has a signed attestation that it was built by this repository's release workflow from the release tag. Check it with `gh attestation verify <file> --repo xevrion/hatchzip`, and add `--signer-workflow xevrion/hatchzip/.github/workflows/release.yml --source-ref refs/tags/v<version>` to also require that workflow and that tag.
+- **No networking in the programs:** before a release is published, its Windows and macOS programs are checked to import no networking library or socket function ([no-network.py](.github/scripts/no-network.py)).
 - **From source:** `cargo install hatchzip` builds the command-line tool from the published source.
 
 [Verify your download](https://hatchzip.dev/verify.html) has the commands in full and the SHA-256 of every file in the latest release, each with a link to its VirusTotal report.
