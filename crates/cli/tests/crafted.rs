@@ -260,3 +260,56 @@ fn a_7z_whose_sizes_overflow_is_refused() {
     let check = hatchzip(&["check", archive.to_str().unwrap()], &[]);
     assert_eq!(check.status.code(), Some(4), "reported as damaged");
 }
+
+/// The last block's coder takes no input, so it has no packed stream, and
+/// its start would be looked up one past the last stream. sevenz-rust2
+/// allows that for a block holding no files.
+#[test]
+fn a_7z_block_without_packed_streams_is_refused() {
+    let tmp = TempDir::new().unwrap();
+    let mut h = header(&[16], &[&[("a.bin", 16)], &[]], &[]);
+    // The second block's one coder becomes Copy with zero inputs and one
+    // output: after its coder count, flags with the complex bit, the method
+    // id, then the stream counts.
+    let at = h.windows(2).position(|w| w == [0x07, 0x0B]).unwrap() + 8;
+    h.splice(at..at + 2, [0x11, 0x00, 0x00, 0x01]);
+    let archive = tmp.path().join("noinput.7z");
+    fs::write(&archive, sevenz_with_header_last(&[&[1; 16]], &h)).unwrap();
+    refused(&archive, &tmp.path().join("out"), "header is inconsistent");
+}
+
+/// A tar entry whose data runs past the end of the file, the last thing in
+/// the archive, as a cut-off download leaves it.
+fn tar_cut_off(kind: tar::EntryType) -> Vec<u8> {
+    let mut b = tar::Builder::new(Vec::new());
+    let mut h = tar::Header::new_gnu();
+    h.set_size(4);
+    h.set_mode(0o644);
+    b.append_data(&mut h, "first.txt", &b"data"[..]).unwrap();
+    let mut bytes = b.into_inner().unwrap();
+    bytes.truncate(1024);
+    let mut last = tar::Header::new_gnu();
+    last.set_entry_type(kind);
+    last.set_path("last").unwrap();
+    last.set_mode(0o755);
+    last.set_size(1_000_000);
+    last.set_cksum();
+    bytes.extend(last.as_bytes());
+    bytes
+}
+
+/// Its end lies past the end of the file, and nothing past the end can be
+/// truncated or saved; a folder there was dropped and never made.
+#[test]
+fn a_tar_entry_past_the_end_of_the_file_is_refused() {
+    for kind in [tar::EntryType::Directory, tar::EntryType::Regular] {
+        let tmp = TempDir::new().unwrap();
+        let archive = tmp.path().join("cut.tar");
+        fs::write(&archive, tar_cut_off(kind)).unwrap();
+        refused(
+            &archive,
+            &tmp.path().join("out"),
+            "past the end of the file",
+        );
+    }
+}

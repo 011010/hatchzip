@@ -384,16 +384,17 @@ pub fn rebuild_header(storage: &Storage, tail: Arc<Tail>, keep: u64) -> Result<(
         let first = archive.stream_map.block_first_file_index[block];
         let count =
             BlockDecoder::new(1, block, &archive, &Password::empty(), &mut reader).entry_count();
-        for f in archive.files[first..first + count]
-            .iter()
-            .filter(|f| !f.has_stream)
-        {
+        let files = archive
+            .files
+            .get(first..first + count)
+            .ok_or_else(inconsistent)?;
+        for f in files.iter().filter(|f| !f.has_stream) {
             w.push_archive_entry::<&[u8]>(f.clone(), None)
                 .map_err(encode)?;
         }
     }
     let sieve = w.finish().context("writing the new 7z header")?;
-    if sieve.skipped != keep - SIGNATURE_HEADER_SIZE {
+    if Some(sieve.skipped) != keep.checked_sub(SIGNATURE_HEADER_SIZE) {
         return Err(unusual());
     }
     let start = sieve.start.ok_or_else(unusual)?;

@@ -190,6 +190,17 @@ impl Job {
 
     fn build(storage: Arc<Storage>, opened: archive::Opened, top: u64) -> Result<Self> {
         let mut units = opened.units;
+        // Units from `top` up were extracted by an earlier run. Ones that
+        // start at or past the end of the file never existed, and dropping
+        // them quietly would lose their files with the archive.
+        let len = storage.original_len();
+        if opened.tail_start > len || units.iter().any(|u| u.start >= len) {
+            return Err(archive::Damaged(anyhow!(
+                "this archive records data past the end of the file, so it is damaged or \
+                 incomplete. Nothing was modified"
+            ))
+            .into());
+        }
         units.retain(|u| u.start < top);
         units.sort_by_key(|u| std::cmp::Reverse(u.start));
         // A unit owns its bytes up to the next one's start. Two that start
@@ -466,7 +477,7 @@ impl Job {
     /// saved yet; `reclaims` that freed archive space lands on the output's
     /// disk.
     pub fn space_needed(&self, fresh: bool, reclaims: bool) -> (u64, i128) {
-        let tail = (self.storage.original_len() - self.tail_start) as i128;
+        let tail = self.storage.original_len().saturating_sub(self.tail_start) as i128;
         let mut extra: i128 = if fresh { tail } else { 0 };
         let mut peak = extra;
         for (i, u) in self.units.iter().enumerate() {
@@ -1824,6 +1835,31 @@ mod tests {
         assert!(err.to_string().contains("same offset"), "{err:#}");
         let apart = vec![unit(10, "a", 1), unit(30, "b", 1)];
         assert!(Job::build(storage, opened(apart, 40), 64).is_ok());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A unit at or past the end of the file used to be dropped as if an
+    /// earlier run had extracted it, and a tail past the end can't be saved.
+    #[test]
+    fn data_past_the_end_of_the_file_is_refused() {
+        let (dir, storage) = storage("past-the-end");
+        for (starts, tail_start) in [(vec![10, 64], 40), (vec![10, 70], 40), (vec![10], 65)] {
+            let units = starts
+                .iter()
+                .map(|&s| unit(s, &format!("f{s}"), 1))
+                .collect();
+            let err = Job::build(storage.clone(), opened(units, tail_start), 64)
+                .err()
+                .unwrap();
+            assert!(err.is::<archive::Damaged>(), "{starts:?}: {err:#}");
+        }
+        // Resumed with the end already truncated away, it is simply done.
+        let job = Job::build(
+            storage,
+            opened(vec![unit(10, "a", 1), unit(50, "b", 1)], 60),
+            40,
+        );
+        assert_eq!(job.unwrap().units.len(), 1);
         fs::remove_dir_all(&dir).unwrap();
     }
 

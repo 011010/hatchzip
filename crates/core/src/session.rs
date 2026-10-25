@@ -458,7 +458,7 @@ pub fn plan(
         job.space_needed(!resuming, reclaims)
     };
     // The saved index is deleted at the end, when the archive is kept too.
-    let tail = (job.storage.original_len() - job.tail_start) as i128;
+    let tail = job.storage.original_len().saturating_sub(job.tail_start) as i128;
     let normal_end = normal_end - if reclaims { tail } else { 0 };
     let (needed, end) = if keep_archive {
         (normal_needs, normal_end)

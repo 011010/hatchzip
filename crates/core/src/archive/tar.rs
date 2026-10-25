@@ -44,7 +44,11 @@ pub fn open(storage: &Arc<Storage>, tail: Option<Arc<Tail>>) -> Result<Opened> {
         // or pax records in between belong to it, and so does an entry that
         // is skipped.
         let start = end;
-        end = e.raw_file_position() + e.size().next_multiple_of(512);
+        end = e
+            .size()
+            .checked_next_multiple_of(512)
+            .and_then(|n| n.checked_add(e.raw_file_position()))
+            .ok_or_else(|| anyhow!("reading the tar headers: an entry size is invalid"))?;
         let Some((item, target)) = describe(&e)? else {
             continue;
         };
