@@ -294,9 +294,10 @@ fn extract(
     let output = journal.output.clone();
     let keep = journal.keep;
     counters.total.store(journal.total_size, Ordering::Relaxed);
-    counters
-        .done
-        .store(journal.total_size - job.remaining_size(), Ordering::Relaxed);
+    counters.done.store(
+        journal.total_size.saturating_sub(job.remaining_size()),
+        Ordering::Relaxed,
+    );
     // A kept archive never shrinks, so there is nothing to count down.
     if !keep {
         counters
@@ -353,7 +354,7 @@ fn test(
 
 fn restore(archive: &Path, send: &dyn Fn(Update)) -> Result<()> {
     send(Update::Checking);
-    let r = hatchzip_core::restore::restore(archive)?;
+    let r = hatchzip_core::restore::restore(archive, None)?;
     send(Update::Restored {
         entries: r.entries,
         output: r.output,

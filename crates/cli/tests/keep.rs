@@ -196,7 +196,7 @@ fn restore_discards_the_progress_of_a_kept_run() {
     assert!(!crashed.status.success());
 
     let a = archive.to_str().unwrap();
-    let restored = hatchzip(&["restore", a], &[]);
+    let restored = hatchzip(&["restore", a, "-o", out.to_str().unwrap()], &[]);
     assert_ok(&restored);
     assert!(
         stdout(&restored).contains("Extraction progress discarded."),

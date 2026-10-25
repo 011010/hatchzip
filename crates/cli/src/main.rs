@@ -205,7 +205,7 @@ fn run(command: Command) -> Result<u8> {
             }
             Ok(code)
         }
-        Command::Restore { archive } => restore(&archive),
+        Command::Restore { archive, output } => restore(&archive, output.as_deref()),
         Command::Completions { shell } => {
             // Named after however we were called, so `hz completions bash`
             // completes the `hz` alias.
@@ -462,8 +462,8 @@ fn entries(n: usize) -> String {
     }
 }
 
-fn restore(archive: &Path) -> Result<u8> {
-    let r = hatchzip_core::restore::restore(archive)?;
+fn restore(archive: &Path, output: Option<&Path>) -> Result<u8> {
+    let r = hatchzip_core::restore::restore(archive, output)?;
     let name = r.archive.file_name().unwrap_or_default().to_string_lossy();
     if r.kept {
         say!("{GOOD}Extraction progress discarded.{GOOD:#} {name} was kept and was not modified.");
@@ -671,7 +671,7 @@ fn extract(
 
     let keep = journal.keep;
     let bar = progress_bar(journal.total_size, "Extracting");
-    bar.set_position(journal.total_size - job.remaining_size());
+    bar.set_position(journal.total_size.saturating_sub(job.remaining_size()));
     if !keep {
         bar.set_message(format!("archive: {}", human(journal.committed_len)));
     }

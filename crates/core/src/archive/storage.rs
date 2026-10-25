@@ -100,6 +100,20 @@ impl Storage {
     }
 
     fn with_parts(parts: Vec<Part>, writable: bool) -> Result<Self> {
+        // Extracting in place shrinks and deletes the volumes. Through a
+        // link, that would happen to whatever file it points to, which need
+        // not be an archive at all.
+        if writable {
+            for p in &parts {
+                if fs::symlink_metadata(&p.path).is_ok_and(|m| m.is_symlink()) {
+                    bail!(
+                        "{} is a link. HatchZip changes the archive file itself, so open the file \
+                         the link points to instead. Nothing was modified",
+                        p.path.display()
+                    );
+                }
+            }
+        }
         let path = &parts[0].path;
         let first = if writable {
             platform::open_exclusive(path).map_err(|e| match e.kind() {
@@ -391,6 +405,22 @@ pub fn first_volume(path: &Path) -> PathBuf {
     }
 }
 
+/// The path volume `index` of the archive whose first volume is `primary`
+/// has, whether or not it exists. `None` past the only volume of an archive
+/// that is not split.
+pub fn volume_path(primary: &Path, index: usize) -> Option<PathBuf> {
+    if index == 0 {
+        return Some(primary.to_path_buf());
+    }
+    if let Some(rar) = rar_naming(primary) {
+        return Some(rar.volume(index));
+    }
+    match split_suffix(primary) {
+        Some((base, width, _)) => Some(numbered(&base, width, index as u64 + 1)),
+        None => (index == 0).then(|| primary.to_path_buf()),
+    }
+}
+
 fn volume_set(path: &Path) -> Result<Vec<PathBuf>> {
     if let Some(rar) = rar_volume(path) {
         if rar.index != 0 {
@@ -562,6 +592,16 @@ impl RarSet {
 /// Recognises a volume of a RAR set by its name. A bare `name.rar` counts
 /// only if `name.r00` sits next to it, so a single RAR file is not a set.
 fn rar_volume(path: &Path) -> Option<RarSet> {
+    let set = rar_naming(path)?;
+    if matches!(set.style, RarStyle::Old) && set.index == 0 && !set.volume(1).exists() {
+        return None;
+    }
+    Some(set)
+}
+
+/// [`rar_volume`] by the name alone: a bare `name.rar` is the first volume
+/// of a set whether or not `name.r00` is there, as it may already be gone.
+fn rar_naming(path: &Path) -> Option<RarSet> {
     let name = path.file_name()?.to_str()?;
     let lower = name.to_ascii_lowercase();
     let upper = name.chars().rev().take(3).all(|c| !c.is_ascii_lowercase());
@@ -582,13 +622,12 @@ fn rar_volume(path: &Path) -> Option<RarSet> {
                 upper,
             });
         }
-        let set = RarSet {
+        return Some(RarSet {
             stem: path.with_file_name(stem),
             style: RarStyle::Old,
             index: 0,
             upper,
-        };
-        return set.volume(1).exists().then_some(set);
+        });
     }
     let bytes = ext.as_bytes();
     if bytes.len() == 3

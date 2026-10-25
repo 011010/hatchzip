@@ -124,8 +124,19 @@ fn crash_extract(archive: &Path, out: &Path, point: &str, after: u32) {
     assert!(!run.status.success(), "{point}#{after} should have crashed");
 }
 
+/// Every test here extracts into `out` next to the archive, a folder of its
+/// own choosing, so restore names it again, as a person who chose one must.
 fn restore(archive: &Path, env: &[(&str, &str)]) -> Output {
-    hatchzip(&["restore", archive.to_str().unwrap()], env)
+    let out = archive.parent().unwrap().join("out");
+    hatchzip(
+        &[
+            "restore",
+            archive.to_str().unwrap(),
+            "-o",
+            out.to_str().unwrap(),
+        ],
+        env,
+    )
 }
 
 /// The archive's bytes, joining the volumes of a split set.

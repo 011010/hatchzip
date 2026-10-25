@@ -26,6 +26,17 @@ pub fn same_filesystem(a: &Path, b: &Path) -> bool {
     platform::same_filesystem(&existing_ancestor(a), &existing_ancestor(b))
 }
 
+/// Whether two absolute paths name the same location. Windows and macOS
+/// file systems ignore case by default, so a path typed in another case is
+/// still the same one there.
+pub fn same_path(a: &Path, b: &Path) -> bool {
+    if cfg!(any(windows, target_os = "macos")) {
+        a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase()
+    } else {
+        a == b
+    }
+}
+
 /// The output folder may not exist yet, so ask about the nearest parent that
 /// does.
 fn existing_ancestor(path: &Path) -> PathBuf {

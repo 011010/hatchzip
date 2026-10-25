@@ -13,6 +13,7 @@
 //! one instead.
 
 pub mod archive;
+mod chosen;
 pub mod engine;
 mod fsutil;
 pub mod journal;

@@ -49,9 +49,17 @@ pub fn sample_files() -> Files {
     files
 }
 
+/// Where runs note the folders chosen for them, instead of the profile of
+/// whoever runs the tests. Records are per archive path, and every test has
+/// its own folder, so the suites can share it.
+pub fn state_dir() -> PathBuf {
+    Path::new(env!("CARGO_TARGET_TMPDIR")).join("chosen-outputs")
+}
+
 pub fn hatchzip(args: &[&str], env: &[(&str, &str)]) -> Output {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_hatchzip"));
     cmd.args(args);
+    cmd.env("HATCHZIP_STATE_DIR", state_dir());
     for (k, v) in env {
         cmd.env(k, v);
     }

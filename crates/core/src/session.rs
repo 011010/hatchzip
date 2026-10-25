@@ -47,13 +47,9 @@ pub fn open(
 ) -> Result<State> {
     if paths.exists() {
         let (mut journal, tail) = Journal::load(paths)?;
-        if let Some(o) = &output
-            && std::path::absolute(o)? != journal.output
-        {
-            bail!(
-                "this archive is already partially extracted to {}. Complete or restore that extraction first",
-                journal.output.display()
-            );
+        // Only a writable open deletes or writes anything in the folder.
+        if writable || output.is_some() {
+            check_output(&journal, primary, output.as_deref(), "extract")?;
         }
         if journal.restoring.is_some() {
             if !writable {
@@ -78,18 +74,107 @@ pub fn open(
             return Ok(State::Orphan(journal));
         }
         let job = Job::resume(&journal, tail, writable, password, reads.clone())?;
+        check_no_links_on_the_way(&job, &journal.output)?;
         return Ok(State::Resume(job, journal));
     }
     let job = Job::open(primary, writable, password, reads.clone())?;
     let output = match output {
         Some(o) => std::path::absolute(o)?,
-        None => default_output(primary),
+        None => {
+            let output = default_output(primary);
+            refuse_linked_default(&output)?;
+            output
+        }
     };
     check_path_lengths(&job, &output)?;
     if writable {
         check_collisions(&job, &output)?;
     }
     Ok(State::Fresh(job, output))
+}
+
+/// The journal lies next to the archive, where anyone who supplied the
+/// archive could have put one, so the folder it names is used only if it is
+/// the archive's default folder, one this person chose for it (see
+/// [`crate::chosen`]), or the one they give again (`given`). Otherwise a
+/// planted journal could have a resume delete and write files anywhere.
+/// `command` is the one to run again, with `-o`.
+pub fn check_output(
+    journal: &Journal,
+    primary: &Path,
+    given: Option<&Path>,
+    command: &str,
+) -> Result<()> {
+    match given {
+        Some(o) => {
+            if !fsutil::same_path(&std::path::absolute(o)?, &journal.output) {
+                bail!(
+                    "this archive is already partially extracted to {}. Complete or restore that \
+                     extraction first",
+                    journal.output.display()
+                );
+            }
+        }
+        None => {
+            let default = default_output(primary);
+            if fsutil::same_path(&default, &journal.output) {
+                refuse_linked_default(&default)?;
+            } else if !crate::chosen::chose(primary, &journal.output) {
+                bail!(
+                    "{} was partially extracted to {}, a folder not chosen on this computer. If \
+                     you started that extraction, continue it by naming the folder again: \
+                     hatchzip {command} \"{}\" -o \"{}\". Nothing was modified",
+                    primary.display(),
+                    journal.output.display(),
+                    primary.display(),
+                    journal.output.display()
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A link at the default output folder, next to the archive, would send the
+/// extraction wherever it points. A folder the person names is theirs to
+/// choose.
+fn refuse_linked_default(output: &Path) -> Result<()> {
+    if fs::symlink_metadata(output).is_ok_and(|m| m.is_symlink()) {
+        bail!(
+            "{} is a link, so files extracted there would land somewhere else. Remove the link, \
+             or choose the destination folder. Nothing was modified",
+            output.display()
+        );
+    }
+    Ok(())
+}
+
+/// A resume deletes and writes the files of the entries left, and its own
+/// links are only made once every entry is done. A link on the way to one of
+/// those files was put there by someone else, and following it would leave
+/// the output folder.
+pub(crate) fn check_no_links_on_the_way(job: &Job, out: &Path) -> Result<()> {
+    let mut checked = std::collections::HashSet::new();
+    for item in job.units.iter().flat_map(|u| &u.items) {
+        for parent in item
+            .path
+            .ancestors()
+            .skip(1)
+            .filter(|p| !p.as_os_str().is_empty())
+        {
+            if !checked.insert(parent.to_path_buf()) {
+                break;
+            }
+            if fs::symlink_metadata(out.join(parent)).is_ok_and(|m| m.is_symlink()) {
+                bail!(
+                    "{} is a link, and '{}' would be extracted through it. Nothing was modified",
+                    out.join(parent).display(),
+                    item.path.display()
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 /// A path the system can't create would only fail halfway through a run,
@@ -413,6 +498,9 @@ pub fn begin(job: &Job, paths: &Paths, output: PathBuf, keep_archive: bool) -> R
         // Front ends say this earlier; this is the last line.
         bail!("{why}. It can be extracted while keeping the archive");
     }
+    if !fsutil::same_path(&output, &default_output(&paths.archive)) {
+        crate::chosen::remember(&paths.archive, &output);
+    }
     let plan = Plan {
         format: job.format_name,
         tail_start: job.tail_start,
@@ -426,6 +514,7 @@ pub fn begin(job: &Job, paths: &Paths, output: PathBuf, keep_archive: bool) -> R
 /// Before continuing a crashed run, deletes what it wrote for batches it
 /// never committed.
 pub fn clear_uncommitted(job: &Job, out: &Path) -> Result<()> {
+    check_no_links_on_the_way(job, out)?;
     for (p, _) in job.uncommitted(out) {
         fs::remove_file(&p).with_context(|| format!("removing stale {}", p.display()))?;
     }

@@ -670,7 +670,15 @@ fn restore_refuses_a_partly_freed_tar_gz() {
 
         let before = fs::read(&archive).unwrap();
         let journal = fs::read(&side_files(&archive)[0]).unwrap();
-        let run = hatchzip(&["restore", archive.to_str().unwrap()], &[]);
+        let run = hatchzip(
+            &[
+                "restore",
+                archive.to_str().unwrap(),
+                "-o",
+                out.to_str().unwrap(),
+            ],
+            &[],
+        );
         if !refused {
             assert_ok(&run);
             assert_eq!(fs::read(&archive).unwrap(), original);

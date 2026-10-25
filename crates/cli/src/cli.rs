@@ -180,6 +180,10 @@ pub enum Command {
     Restore {
         /// The partially extracted archive, or any part of a split archive
         archive: PathBuf,
+        /// The destination folder the extraction was started with, if it was
+        /// not the default one
+        #[arg(short, long, value_name = "DIR")]
+        output: Option<PathBuf>,
     },
     /// Print a shell completion script
     #[command(long_about = "Print a shell completion script.\n\n\

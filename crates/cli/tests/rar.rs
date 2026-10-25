@@ -1064,7 +1064,15 @@ fn restore_refuses_encrypted_file_names_and_extract_completes() {
         );
         assert!(!crashed.status.success());
         let before = snapshot_dir(tmp.path());
-        let r = hatchzip(&["restore", archive.to_str().unwrap()], &WITH_PW);
+        let r = hatchzip(
+            &[
+                "restore",
+                archive.to_str().unwrap(),
+                "-o",
+                out.to_str().unwrap(),
+            ],
+            &WITH_PW,
+        );
         assert_eq!(r.status.code(), Some(1), "{set}: {}", stderr(&r));
         assert!(
             stderr(&r).contains("encrypted file names"),
@@ -1398,7 +1406,15 @@ fn restore_gives_back_a_set_holding_the_rest() {
             ],
         );
         assert!(!crashed.status.success());
-        assert_ok(&hatchzip(&["restore", archive.to_str().unwrap()], &[]));
+        assert_ok(&hatchzip(
+            &[
+                "restore",
+                archive.to_str().unwrap(),
+                "-o",
+                out.to_str().unwrap(),
+            ],
+            &[],
+        ));
         assert_no_side_files(&archive);
         assert_ok(&hatchzip(&["test", archive.to_str().unwrap()], &[]));
 
@@ -1436,7 +1452,7 @@ fn an_interrupted_restore_can_be_run_again() {
     assert!(!crashed.status.success());
     let a = archive.to_str().unwrap();
     let r = hatchzip(
-        &["restore", a],
+        &["restore", a, "-o", out.to_str().unwrap()],
         &[("HATCHZIP_CRASH_AT", "restore-appended")],
     );
     assert!(!r.status.success());

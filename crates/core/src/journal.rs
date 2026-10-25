@@ -7,13 +7,13 @@
 
 use std::fs;
 use std::io::{self, Read, Seek, SeekFrom};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 
-use crate::archive::storage::{Storage, Tail};
+use crate::archive::storage::{self, Storage, Tail};
 pub use crate::archive::targz::{StreamPoint, TarAt};
 use crate::fsutil;
 
@@ -94,6 +94,8 @@ pub struct Journal {
 }
 
 pub struct Paths {
+    /// The first volume of the archive the side files belong to.
+    pub archive: PathBuf,
     pub journal: PathBuf,
     pub tail: PathBuf,
 }
@@ -106,6 +108,7 @@ impl Paths {
             PathBuf::from(s)
         };
         Self {
+            archive: archive.to_path_buf(),
             journal: with(".hatchzip"),
             tail: with(".hatchzip-tail"),
         }
@@ -116,6 +119,7 @@ impl Paths {
     }
 
     pub fn remove(&self) -> Result<()> {
+        crate::chosen::forget(&self.archive);
         for p in [&self.tail, &self.journal] {
             match fs::remove_file(p) {
                 Err(e) if e.kind() != io::ErrorKind::NotFound => {
@@ -195,6 +199,7 @@ impl Journal {
             bail!("{} is damaged", paths.journal.display());
         }
         journal.version = version_for(journal.keep);
+        journal.check_bound(paths)?;
         let tail =
             fs::read(&paths.tail).with_context(|| format!("reading {}", paths.tail.display()))?;
         let len: u64 = journal.parts.iter().map(|(_, l)| l).sum();
@@ -212,6 +217,64 @@ impl Journal {
 
     pub fn save(&self, paths: &Paths) -> Result<()> {
         fsutil::write_atomic(&paths.journal, &serde_json::to_vec(self)?)
+    }
+
+    /// The journal is a file next to the archive, so anyone who could put
+    /// the archive there could have written it too. Whatever it names may
+    /// only be what an extraction of this archive touches: the archive's own
+    /// volumes, and links inside the output folder. The output folder itself
+    /// is checked by [`crate::session::check_output`].
+    fn check_bound(&self, paths: &Paths) -> Result<()> {
+        let foreign = || {
+            anyhow!(
+                "{} does not belong to {}, so it was not used and nothing was modified. If the \
+                 archive was moved during an extraction, move it back to resume; otherwise \
+                 delete {} and {}",
+                paths.journal.display(),
+                paths.archive.display(),
+                paths.journal.display(),
+                paths.tail.display()
+            )
+        };
+        if self.parts.is_empty() {
+            return Err(foreign());
+        }
+        for (i, (part, _)) in self.parts.iter().enumerate() {
+            if !storage::volume_path(&paths.archive, i).is_some_and(|v| fsutil::same_path(&v, part))
+            {
+                return Err(foreign());
+            }
+        }
+        // Restore only ever saves bytes it overwrites inside the archive.
+        let len: u64 = self.parts.iter().map(|(_, l)| l).sum();
+        let within = |(at, bytes): &(u64, Vec<u8>)| {
+            at.checked_add(bytes.len() as u64)
+                .is_some_and(|end| end <= len)
+        };
+        if self
+            .restoring
+            .as_ref()
+            .is_some_and(|r| !r.iter().all(within))
+        {
+            bail!(
+                "{} is damaged: it records bytes outside the archive. Nothing was modified",
+                paths.journal.display()
+            );
+        }
+        let inside = |p: &Path| {
+            p.components().next().is_some()
+                && p.components().all(|c| matches!(c, Component::Normal(_)))
+        };
+        for link in &self.links {
+            if !inside(&link.path) || (link.hard && !inside(&link.target)) {
+                bail!(
+                    "{} is damaged: it records a link outside the output folder. Nothing was \
+                     modified",
+                    paths.journal.display()
+                );
+            }
+        }
+        Ok(())
     }
 }
 

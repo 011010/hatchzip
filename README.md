@@ -216,6 +216,8 @@ hatchzip extract game.zip
 
 The same applies after a crash, a power cut, or running out of space because something else filled the disk. Progress lives in two small files next to the archive, `game.zip.hatchzip` and `game.zip.hatchzip-tail`. **Do not delete them while an extraction is unfinished**: they hold the archive's index, which is no longer inside the archive itself.
 
+Anyone who supplies an archive could also supply progress files next to it, so HatchZip follows them only to the archive's own files, and only into the archive's default folder or one you chose for it. The folders you choose are noted in your user profile, outside the archive's folder, so a resume on the same computer needs no options. On another computer, name the folder again with `-o`; `restore` takes it too.
+
 ### Stop for good
 
 To give up on an unfinished extraction instead, restore the archive:
@@ -256,7 +258,7 @@ HatchZip destroys the archive as it extracts, so it is built around never losing
 - **Nothing changes until the plan fits.** The space check runs before the first byte is touched, and it replays the whole extraction to find the moment that needs the most free space, not just the total.
 - **A file is written, flushed to the physical disk and renamed into place before the part of the archive holding it is cut off.** A crash at any point leaves either the file or its bytes in the archive, never neither.
 - **Damage stops the run where it is.** Every file's CRC-32 is checked as it is extracted. A damaged file is not written, and it stays in the archive along with everything before it.
-- **Hostile archives are refused before anything is deleted:** paths that escape the output folder, entries that overlap each other, entries that appear twice, and links where other entries need a folder. Setuid and setgid bits are never restored, and symlinks are created only after every regular file is written, so nothing can be written through one.
+- **Hostile archives are refused before anything is deleted:** paths that escape the output folder, entries that overlap each other, entries that appear twice, and links where other entries need a folder. Setuid and setgid bits are never restored, and symlinks are created only after every regular file is written, so nothing can be written through one. Progress files found next to an archive are checked the same way: they may only name that archive's own volumes and links inside the output folder.
 - **A kept archive stays as it was.** With `--keep-archive`, the code that shrinks, frees or deletes archive bytes refuses to run for the whole extraction, and its progress file has a format older versions refuse, so none of them can resume it in place.
 
 What it cannot protect against: if the download itself is damaged, the files before the damaged spot are extracted and the archive is partly gone. Use `--verify-first` when the archive can't be downloaded again. On btrfs or APFS, space held by a snapshot that includes the archive is not freed until the snapshot is deleted.

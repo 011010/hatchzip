@@ -391,7 +391,15 @@ fn links_that_cannot_be_made_at_the_end_can_be_fixed_and_resumed() {
         assert_eq!(journal(&archive)["links"].as_array().unwrap().len(), 2);
     }
 
-    let restore = hatchzip(&["restore", archive.to_str().unwrap()], &[]);
+    let restore = hatchzip(
+        &[
+            "restore",
+            archive.to_str().unwrap(),
+            "-o",
+            out.to_str().unwrap(),
+        ],
+        &[],
+    );
     let stderr = String::from_utf8_lossy(&restore.stderr);
     assert!(!restore.status.success());
     assert!(stderr.contains("nothing to restore"), "{stderr}");

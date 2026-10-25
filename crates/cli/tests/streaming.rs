@@ -408,7 +408,15 @@ fn restore_refuses_an_archive_with_a_partly_freed_entry() {
 
         let before = fs::read(&archive).unwrap();
         let journal = fs::read(&side_files(&archive)[0]).unwrap();
-        let run = hatchzip(&["restore", archive.to_str().unwrap()], &[]);
+        let run = hatchzip(
+            &[
+                "restore",
+                archive.to_str().unwrap(),
+                "-o",
+                out.to_str().unwrap(),
+            ],
+            &[],
+        );
         if !refused {
             assert_ok(&run);
             continue;
