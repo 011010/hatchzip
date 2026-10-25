@@ -397,7 +397,7 @@ impl Storage {
 /// The path of the first volume, if `path` names any volume of a split set.
 pub fn first_volume(path: &Path) -> PathBuf {
     if let Some(rar) = rar_volume(path) {
-        return rar.volume(0);
+        return rar.first();
     }
     match split_suffix(path) {
         Some((base, width, _)) => numbered(&base, width, 1),
@@ -413,7 +413,7 @@ pub fn volume_path(primary: &Path, index: usize) -> Option<PathBuf> {
         return Some(primary.to_path_buf());
     }
     if let Some(rar) = rar_naming(primary) {
-        return Some(rar.volume(index));
+        return rar.volume(index);
     }
     match split_suffix(primary) {
         Some((base, width, _)) => Some(numbered(&base, width, index as u64 + 1)),
@@ -427,12 +427,12 @@ fn volume_set(path: &Path) -> Result<Vec<PathBuf>> {
             bail!(
                 "{} is not the first volume. Open {} instead",
                 path.display(),
-                rar.volume(0).display()
+                rar.first().display()
             );
         }
         let mut volumes = vec![path.to_path_buf()];
-        while rar.volume(volumes.len()).exists() {
-            volumes.push(rar.volume(volumes.len()));
+        while let Some(next) = rar.volume(volumes.len()).filter(|p| p.exists()) {
+            volumes.push(next);
         }
         return Ok(volumes);
     }
@@ -571,21 +571,33 @@ enum RarStyle {
 }
 
 impl RarSet {
-    fn volume(&self, index: usize) -> PathBuf {
+    fn first(&self) -> PathBuf {
+        self.volume(0).expect("the first volume always has a name")
+    }
+
+    /// `None` past `name.z99`, the last name the old style has.
+    fn volume(&self, index: usize) -> Option<PathBuf> {
         let mut name = self.stem.as_os_str().to_owned();
         let case = |s: String| if self.upper { s.to_uppercase() } else { s };
         match self.style {
             RarStyle::Part { width } => {
-                name.push(case(format!(".part{:0width$}.rar", index + 1)));
+                name.push(case(format!(".part{:0width$}.rar", index.checked_add(1)?)));
             }
             RarStyle::Old if index == 0 => name.push(case(".rar".into())),
             RarStyle::Old => {
                 let n = index - 1;
-                let letter = (b'r' + (n / 100) as u8) as char;
-                name.push(case(format!(".{letter}{:02}", n % 100)));
+                let letter = u8::try_from(n / 100)
+                    .ok()
+                    .and_then(|l| b'r'.checked_add(l))
+                    .filter(|l| *l <= b'z')?;
+                name.push(case(format!(".{}{:02}", letter as char, n % 100)));
             }
         }
-        PathBuf::from(name)
+        Some(PathBuf::from(name))
+    }
+
+    fn has_volume(&self, index: usize) -> bool {
+        self.volume(index).is_some_and(|p| p.exists())
     }
 }
 
@@ -593,7 +605,7 @@ impl RarSet {
 /// only if `name.r00` sits next to it, so a single RAR file is not a set.
 fn rar_volume(path: &Path) -> Option<RarSet> {
     let set = rar_naming(path)?;
-    if matches!(set.style, RarStyle::Old) && set.index == 0 && !set.volume(1).exists() {
+    if matches!(set.style, RarStyle::Old) && set.index == 0 && !set.has_volume(1) {
         return None;
     }
     Some(set)
@@ -646,7 +658,7 @@ fn rar_naming(path: &Path) -> Option<RarSet> {
         };
         // Other formats number their volumes the same way (`.z01` for a
         // split ZIP), so it is a RAR volume only next to its first one.
-        return set.volume(0).exists().then_some(set);
+        return set.has_volume(0).then_some(set);
     }
     None
 }
@@ -654,6 +666,25 @@ fn rar_naming(path: &Path) -> Option<RarSet> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The letter of `.r00` counts up to `z`; a set that needs more names is
+    /// not followed past `.z99`, where the letter would leave the alphabet.
+    #[test]
+    fn old_style_rar_volume_names_end_at_z99() {
+        let set = RarSet {
+            stem: PathBuf::from("set"),
+            style: RarStyle::Old,
+            index: 0,
+            upper: false,
+        };
+        let name = |i| set.volume(i).map(|p| p.to_string_lossy().into_owned());
+        assert_eq!(name(0).as_deref(), Some("set.rar"));
+        assert_eq!(name(1).as_deref(), Some("set.r00"));
+        assert_eq!(name(101).as_deref(), Some("set.s00"));
+        assert_eq!(name(900).as_deref(), Some("set.z99"));
+        assert_eq!(name(901), None);
+        assert_eq!(name(14_301), None);
+    }
 
     /// What front ends show while an archive opens: every reader counts, a
     /// split set is one pass, and a pass can start part way in.
