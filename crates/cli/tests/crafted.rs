@@ -313,3 +313,31 @@ fn a_tar_entry_past_the_end_of_the_file_is_refused() {
         );
     }
 }
+
+/// Everything after the last entry is read into memory and kept there for
+/// the whole run, so there is a limit to it, lowered here to 4 KB.
+#[test]
+fn too_much_after_the_last_entry_is_refused() {
+    let tmp = TempDir::new().unwrap();
+    let mut b = tar::Builder::new(Vec::new());
+    let mut h = tar::Header::new_gnu();
+    h.set_size(4);
+    h.set_mode(0o644);
+    b.append_data(&mut h, "first.txt", &b"data"[..]).unwrap();
+    let tar = b.into_inner().unwrap();
+    let limit = [("HATCHZIP_MAX_TAIL", "4096")];
+
+    let fits = tmp.path().join("fits.tar");
+    fs::write(&fits, &tar).unwrap();
+    assert_ok(&hatchzip(&["check", fits.to_str().unwrap()], &limit));
+
+    let archive = tmp.path().join("junk.tar");
+    fs::write(&archive, [tar, noise(5000, 1)].concat()).unwrap();
+    let before = fs::read(&archive).unwrap();
+    let run = extract(&archive, &tmp.path().join("out"), &limit);
+    assert!(!run.status.success());
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(stderr.contains("after its last entry"), "{stderr}");
+    assert_eq!(fs::read(&archive).unwrap(), before);
+    assert_no_side_files(&archive);
+}

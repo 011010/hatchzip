@@ -76,6 +76,12 @@ fn always_stream() -> bool {
 /// refused, so the space check's sums of sizes stay far from overflowing.
 const MAX_TOTAL_SIZE: u64 = 1 << 62;
 
+/// The most an archive may hold after its last unit: the index and whatever
+/// else is saved before the extraction starts.
+fn max_tail() -> u64 {
+    test_knob("HATCHZIP_MAX_TAIL").map_or(1_000_000_000, u64::from)
+}
+
 fn on_disk(u: &Unit) -> u64 {
     u.items.iter().fold(0u64, |sum, i| {
         let size = i.size.checked_next_multiple_of(4096).unwrap_or(u64::MAX);
@@ -131,6 +137,16 @@ impl Job {
         let storage = Arc::new(storage);
         let opened = archive::open(&storage, None, password)?;
         let top = storage.original_len();
+        // The tail is read into memory when the extraction begins and stays
+        // there until it ends. An index is nowhere near this big. A run
+        // that already began has it loaded, so only a new one is refused.
+        if top.saturating_sub(opened.tail_start) > max_tail() {
+            bail!(
+                "this archive holds more than {} after its last entry, which HatchZip would \
+                 have to keep in memory for the whole extraction. The archive was not modified",
+                human(max_tail())
+            );
+        }
         Self::build(storage, opened, top)
     }
 
