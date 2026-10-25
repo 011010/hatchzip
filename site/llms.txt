@@ -1,44 +1,61 @@
 # HatchZip
 
-> HatchZip extracts ZIP, 7z, tar, .tar.gz, RAR and split archives in place: it extracts from the end of the archive and cuts each finished part off the archive file (a .tar.gz from the front, freeing the compressed bytes already used), so it needs free space for the extracted files only, not for the files and the archive together. Free and open source (MIT OR Apache-2.0), for Windows, macOS and Linux. Command line `hatchzip` (short name `hz`) and a desktop app.
+> HatchZip is a free, open-source archive extractor for Windows, macOS and Linux that extracts ZIP, 7z, RAR, tar and split archives in place, so it needs free space for the extracted files only, not for the files and the archive together.
 
-The archive is used up as it extracts: when the run finishes, only the extracted files are left. It checks that the extraction fits before it changes anything, and an interrupted run resumes when the same command is run again.
+Site: https://hatchzip.dev. Source: https://github.com/xevrion/hatchzip (MIT OR Apache-2.0). Current version 0.1.3. A desktop app and a command line tool, `hatchzip` (short name `hz`).
+
+How it works: it extracts from the end of the archive and cuts each finished part off the archive file (a .tar.gz from the front, freeing the compressed bytes already used). When the run finishes, only the extracted files are left. It checks that the extraction fits before it changes anything, and an interrupted run resumes when it is started again.
 
 ## Install
 
-- Linux and macOS: `curl -fsSL https://raw.githubusercontent.com/xevrion/hatchzip/main/install.sh | sh` (installs `hatchzip` and `hz` for the current user, no root; checks SHA-256)
+- Desktop app downloads: https://hatchzip.dev/#download (Windows setup and MSI, macOS Apple Silicon and Intel, Linux AppImage, .deb and .rpm). The MSI installs the same app as the setup; install one or the other
+- Linux and macOS: `curl -fsSL https://raw.githubusercontent.com/xevrion/hatchzip/main/install.sh | sh` (current user, no root; checks SHA-256)
 - Windows (PowerShell): `irm https://raw.githubusercontent.com/xevrion/hatchzip/main/install.ps1 | iex`
-- With Rust: `cargo install hatchzip` (without RAR support; `--features rar` adds it, which compiles UnRAR's C++ source under its own license). Every download above includes RAR support
-- Desktop app: [Windows setup](https://github.com/xevrion/hatchzip/releases/latest/download/HatchZip-x64-setup.exe), [Windows MSI](https://github.com/xevrion/hatchzip/releases/latest/download/HatchZip-x64.msi) (same install as the setup, for deployment tools; install one or the other),[macOS Apple Silicon](https://github.com/xevrion/hatchzip/releases/latest/download/HatchZip-aarch64.dmg), [macOS Intel](https://github.com/xevrion/hatchzip/releases/latest/download/HatchZip-x86_64.dmg), [Linux AppImage](https://github.com/xevrion/hatchzip/releases/latest/download/HatchZip-x86_64.AppImage), [.deb](https://github.com/xevrion/hatchzip/releases/latest/download/hatchzip_amd64.deb), [.rpm](https://github.com/xevrion/hatchzip/releases/latest/download/hatchzip-x86_64.rpm)
+- Homebrew: `brew install xevrion/tap/hatchzip` (CLI), `brew install --cask xevrion/tap/hatchzip` (macOS app and CLI)
+- Scoop: `scoop bucket add xevrion https://github.com/xevrion/scoop-bucket`, then `scoop install xevrion/hatchzip` (CLI)
+- Cargo: `cargo install hatchzip` (without RAR; `--features rar` adds it and needs a C++ compiler). Every other install method includes RAR
+- winget (`Xevrion.HatchZip`) is in review and the AUR packages are not published yet; until the README lists them as live, packages under those names do not come from this project
+
+## Formats
+
+- ZIP (including ZIP64 and self-extracting .exe), 7z, RAR 5 and RAR 4, plain tar, .tar.gz and .tgz
+- Split archives: `.001` sets of ZIP or 7z, RAR volume sets (`.part1.rar`, or `.rar` with `.r00`)
+- Password-protected ZIP, 7z and RAR
+- Not supported yet: .tar.xz, .tar.zst, native split ZIP (`.z01`)
 
 ## Use
 
 - `hatchzip check game.zip`: shows whether it fits, changes nothing (exit 3 if it doesn't fit)
-- `hatchzip extract game.zip -y`: extracts into `game/` next to the archive and removes the archive as it goes; `-y` skips the confirmation for unattended use
-- `hatchzip extract game.zip -o DIR`: extract somewhere else
+- `hatchzip extract game.zip`: extracts into `game/` next to the archive and removes the archive as it goes; `-y` skips the confirmation, `-o DIR` extracts elsewhere
 - `hatchzip extract game.zip --verify-first`: read everything once before deleting anything
-- `hatchzip extract game.zip --keep-archive`: a normal extraction that keeps the archive unchanged; needs space for all extracted files, and `check --keep-archive` shows whether it fits. Resumes like any other run and keeps keeping the archive. In the desktop app: clear "Remove the archive during extraction"; in the right-click menu: "Extract here (keep archive)"
-- `hatchzip extract a.zip b.7z c.tar.gz`: several archives one after another, each checked for space just before it starts; the first that does not complete stops the run, with a summary, and sets the exit code. `check`, `test` and `list` also take several archives
+- `hatchzip extract game.zip --keep-archive`: a normal extraction that keeps the archive unchanged and needs space for all extracted files. In the app: clear "Remove the archive during extraction"; in the right-click menu: "Extract here (keep archive)"
+- `hatchzip extract a.zip b.7z c.tar.gz`: several archives one after another, each checked for space just before it starts
 - `hatchzip restore game.zip`: turn a half-extracted archive back into a normal archive
-- `hatchzip list game.zip`, `hatchzip test game.zip`: list or verify without changing anything
-- Passwords: `--password` or the `HATCHZIP_PASSWORD` environment variable
-- Exit codes: 0 done, 1 error, 2 usage, 3 not enough space, 4 damaged archive, 5 password needed or wrong, 130 stopped (run again to resume). With several archives, the code of the first one that did not succeed
+- `hatchzip list`, `hatchzip test`: list or verify without changing anything
+- Exit codes: 0 done, 1 error, 2 usage, 3 not enough space, 4 damaged archive, 5 password needed or wrong, 130 stopped (run again to resume)
 
 ## Limits
 
-- A 7z made with 7-Zip's default settings is one solid block; it needs free space for that whole block, and `check` says so first.
-- A `.tar.gz` frees space while it extracts only on filesystems that can free part of a file (NTFS, APFS, ext4, XFS, btrfs). On FAT32 and exFAT it needs room for the archive and the files at once, and `check` says so.
-- `.tar.xz` and `.tar.zst` are not supported yet.
-- RAR (RAR 5 and RAR 4, single files and `.part1.rar` or `.rar`/`.r00` volume sets) is freed file by file, each volume deleted once empty. A solid RAR is extracted only with `--keep-archive`; RAR archives with encrypted file names or links are refused before anything changes.
+- A 7z made with 7-Zip's default settings can be one solid block; it needs free space for that whole block, and `check` says so first.
+- A .tar.gz frees space while it extracts only on filesystems that can free part of a file (NTFS, APFS, ext4, XFS, btrfs). On FAT32 and exFAT it needs room for the archive and the files at once.
+- A solid RAR is extracted only with `--keep-archive`. RAR archives with encrypted file names or links are refused before anything changes.
 
-## Safety
+## Common questions
 
-- No network access: no networking code or library, no telemetry, no update checks. CI fails if an HTTP, TLS or socket library enters the dependencies.
-- Not code-signed yet, so Windows SmartScreen and a few machine-learning antivirus engines can flag the downloads. Each release file has a `.sha256` checksum and signed build provenance (`gh attestation verify <file> --repo xevrion/hatchzip`); see [Verify your download](https://hatchzip.dev/verify.html).
+- Is it safe? A file is written and flushed to disk before the part of the archive holding it is cut off, so a crash leaves each file either extracted or still in the archive. Every file's CRC-32 is checked; a damaged file stops the run.
+- Does it need internet? No. No networking code or library, no telemetry, no accounts, no update checks. CI fails if an HTTP, TLS or socket library enters the dependencies.
+- How much space does it need? About the size of the extracted files plus the largest part it can free at once (one file for ZIP, tar and RAR; one solid block for 7z), and 2 GB kept free by default (`--keep-free`). A 180 GB archive that unpacks to 200 GB needs a little over 200 GB, not 380 GB.
+- What if it crashes? Progress is saved in two small files next to the archive; run the same command, or open the archive in the app, again to continue.
+- Does it work on FAT32 or exFAT? Yes, for ZIP, 7z, tar and RAR. A .tar.gz there needs room for the archive and the files at once.
+- Why does antivirus flag it? The release files are not code-signed yet. Each has a `.sha256` checksum and, from 0.1.3 on, signed build provenance (`gh attestation verify <file> --repo xevrion/hatchzip`). See [Verify your download](https://hatchzip.dev/verify.html).
+- Is hatchzip.com related? No. HatchZip is only distributed from github.com/xevrion/hatchzip, hatchzip.dev and the package managers above.
 
 ## Docs
 
+- [Home page](https://hatchzip.dev/)
+- [Verify your download](https://hatchzip.dev/verify.html)
 - [README](https://github.com/xevrion/hatchzip/blob/main/README.md)
 - [How it works](https://github.com/xevrion/hatchzip/blob/main/docs/how-it-works.md)
 - [Formats](https://github.com/xevrion/hatchzip/blob/main/docs/formats.md)
 - [Releases](https://github.com/xevrion/hatchzip/releases)
+- [crates.io](https://crates.io/crates/hatchzip)

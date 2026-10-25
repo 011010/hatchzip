@@ -35,7 +35,9 @@ Then open http://127.0.0.1:8000. The 404 page is not served for unknown paths by
 python3 site/update-verify.py v0.1.4
 ```
 
-It needs the GitHub CLI, signed in. It downloads the release's `.sha256` files, checks each against the SHA-256 GitHub computed for the uploaded file, and rewrites only the block between the `release-files` markers. If a checksum file is malformed or disagrees with GitHub, it stops and changes nothing. The page does not quote VirusTotal results, since they change; it links to them.
+Then update the version in two places by hand: `softwareVersion` in the structured data of `index.html`, and "Current version" in `llms.txt`. Set `lastmod` in `sitemap.xml` to the date of any page that changed.
+
+`update-verify.py` needs the GitHub CLI, signed in. It downloads the release's `.sha256` files, checks each against the SHA-256 GitHub computed for the uploaded file, and rewrites only the block between the `release-files` markers. If a checksum file is malformed or disagrees with GitHub, it stops and changes nothing. The page does not quote VirusTotal results, since they change; it links to them.
 
 ## Option A: GitHub Pages
 
