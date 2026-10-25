@@ -4,16 +4,15 @@ name: release
 # GitHub release. install.sh, install.ps1 and the website link to the latest
 # one, so file names never change between versions.
 #
-# Run by hand without a tag, it's a dry run: everything is built and smoke
-# tested, but nothing is published.
+# Run by hand on a branch, it's a dry run: everything is built and smoke
+# tested, but nothing is published. Run by hand on a tag, it publishes the
+# files that release is missing, built by that tag's own copy of this
+# workflow. Files a release already has are never replaced, so a published
+# download can't change after people have checked it.
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
-    inputs:
-      tag:
-        description: Existing tag to build and publish (empty for a dry run of this branch)
-        required: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -57,7 +56,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          ref: ${{ inputs.tag || github.ref }}
       - name: musl toolchain
         run: |
           curl -fsSL --proto '=https' -o musl.tar.xz \
@@ -112,7 +110,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          ref: ${{ inputs.tag || github.ref }}
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: linux-aarch64
@@ -142,7 +139,7 @@ jobs:
       # Artifact Signing if its secret is, else none. Dry runs are signed
       # only when the variable SIGN_DRY_RUNS is true, since a signing policy
       # may wait for a person to approve each request.
-      SIGNER: ${{ (startsWith(github.ref, 'refs/tags/') || inputs.tag != '' || vars.SIGN_DRY_RUNS == 'true') && ((secrets.SIGNPATH_API_TOKEN != '' && 'signpath') || (secrets.AZURE_CLIENT_SECRET != '' && 'azure')) || '' }}
+      SIGNER: ${{ (startsWith(github.ref, 'refs/tags/') || vars.SIGN_DRY_RUNS == 'true') && ((secrets.SIGNPATH_API_TOKEN != '' && 'signpath') || (secrets.AZURE_CLIENT_SECRET != '' && 'azure')) || '' }}
     defaults:
       run:
         shell: bash
@@ -150,7 +147,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          ref: ${{ inputs.tag || github.ref }}
       # .cargo/config.toml links the C runtime in, so no redistributable is
       # needed; cc-rs sees crt-static and builds UnRAR with /MT to match.
       - name: build
@@ -307,7 +303,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          ref: ${{ inputs.tag || github.ref }}
       - name: build
         run: |
           rustup target add aarch64-apple-darwin x86_64-apple-darwin
@@ -371,7 +366,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          ref: ${{ inputs.tag || github.ref }}
       # The app links fontconfig; everything else Slint needs is loaded at
       # run time.
       - name: packages
@@ -424,7 +418,7 @@ jobs:
 
   publish:
     needs: [linux, linux-arm, windows, macos, linux-packages]
-    if: startsWith(github.ref, 'refs/tags/') || inputs.tag != ''
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -450,11 +444,18 @@ jobs:
       - name: publish
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ inputs.tag || github.ref_name }}
+          TAG: ${{ github.ref_name }}
         run: |
           ls -l dist
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-            gh release upload "$TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"
+            have=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+            for f in dist/*; do
+              if grep -qxF "$(basename "$f")" <<< "$have"; then
+                echo "kept: $(basename "$f") is already published"
+              else
+                gh release upload "$TAG" "$f" --repo "$GITHUB_REPOSITORY"
+              fi
+            done
           else
             gh release create "$TAG" dist/* --generate-notes --title "HatchZip $TAG" --repo "$GITHUB_REPOSITORY"
           fi
@@ -466,11 +467,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          ref: ${{ inputs.tag || github.ref }}
           path: src
       - name: package manager manifests
         env:
-          TAG: ${{ inputs.tag || github.ref_name }}
+          TAG: ${{ github.ref_name }}
         run: python3 src/packaging/update-manifests.py "$TAG" --sha256-dir dist
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
