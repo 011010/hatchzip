@@ -184,15 +184,27 @@ fn run(command: Command) -> Result<u8> {
         Command::Extract {
             target,
             keep,
+            replace,
             verify_first,
             space,
             yes,
-        } => extract_all(target, keep.keep_archive, verify_first, space, yes),
+        } => {
+            let opts = Options {
+                keep: keep.keep_archive,
+                replace: replace.replace,
+                verify_first,
+                keep_free: space.keep_free,
+                yes,
+                several: false,
+            };
+            extract_all(target, opts)
+        }
         Command::Check {
             target,
             keep,
+            replace,
             space,
-        } => check_all(target, keep.keep_archive, space),
+        } => check_all(target, keep.keep_archive, replace.replace, space),
         Command::List { archives, secret } => {
             let archives = distinct(&archives)?;
             Ok(each(&archives, true, |a| list(a, secret.clone())))
@@ -350,14 +362,14 @@ fn report(
     Ok(plan.fits)
 }
 
-fn check_all(target: Target, keep: bool, space: Space) -> Result<u8> {
+fn check_all(target: Target, keep: bool, replace: bool, space: Space) -> Result<u8> {
     let archives = distinct(&target.archives)?;
     let code = each(&archives, false, |a| {
         check(
             a,
             target.output.clone(),
             target.secret.clone(),
-            keep,
+            (keep, replace),
             &space,
         )
     });
@@ -376,14 +388,31 @@ fn check(
     archive: &Path,
     output: Option<PathBuf>,
     secret: Secret,
-    keep: bool,
+    (keep, replace): (bool, bool),
     space: &Space,
 ) -> Result<u8> {
     let (state, _) = open(archive, output, false, secret)?;
     let fits = match state {
         State::Fresh(job, out) => {
             in_place_possible(&job, keep)?;
-            report(&job, &out, None, space.keep_free, keep)?
+            let fits = report(&job, &out, None, space.keep_free, keep)?;
+            // Anything that would stop replacing them, extract reports.
+            if let Ok(found) = session::existing(&job, &out)
+                && !found.is_empty()
+            {
+                if replace {
+                    say!(
+                        "  {DIM}note: {} will be replaced{DIM:#}",
+                        existing_files(found.len())
+                    );
+                } else {
+                    say!(
+                        "  {DIM}note: {} in the destination; extract with --replace to replace existing files{DIM:#}",
+                        already_exist(found.len())
+                    );
+                }
+            }
+            fits
         }
         State::Resume(job, journal) => {
             let keep = session::keeps_archive(&journal, keep)?;
@@ -462,6 +491,40 @@ fn entries(n: usize) -> String {
     }
 }
 
+fn existing_files(n: usize) -> String {
+    if n == 1 {
+        "1 existing file".into()
+    } else {
+        format!("{n} existing files")
+    }
+}
+
+fn already_exist(n: usize) -> String {
+    if n == 1 {
+        "1 file already exists".into()
+    } else {
+        format!("{n} files already exist")
+    }
+}
+
+/// Refuses files in the way of a run without `--replace`. Nothing was
+/// touched yet.
+fn refuse_existing(out: &Path, found: &[PathBuf]) -> anyhow::Error {
+    let first = out.join(&found[0]);
+    let what = match found.len() {
+        1 => format!("{} already exists", first.display()),
+        n => format!(
+            "{} and {} other {} already exist",
+            first.display(),
+            n - 1,
+            if n == 2 { "file" } else { "files" }
+        ),
+    };
+    anyhow::anyhow!(
+        "{what}. Use --replace to replace existing files, or choose another destination"
+    )
+}
+
 fn restore(archive: &Path, output: Option<&Path>) -> Result<u8> {
     let r = hatchzip_core::restore::restore(archive, output)?;
     let name = r.archive.file_name().unwrap_or_default().to_string_lossy();
@@ -476,6 +539,23 @@ fn restore(archive: &Path, output: Option<&Path>) -> Result<u8> {
         );
     }
     say!("Extracted files remain in {}.", r.output.display());
+    if r.set_aside > 0 {
+        let (files, them) = if r.set_aside == 1 {
+            (
+                "1 replaced file remains",
+                "the file extracted at its path is",
+            )
+        } else {
+            (
+                &*format!("{} replaced files remain", r.set_aside),
+                "the files extracted at their paths are",
+            )
+        };
+        say!(
+            "{files} in {}, since {them} no longer in the archive.",
+            hatchzip_core::replace::folder(&r.output).display()
+        );
+    }
     Ok(0)
 }
 
@@ -491,6 +571,7 @@ enum Ended {
 
 struct Options {
     keep: bool,
+    replace: bool,
     verify_first: bool,
     keep_free: u64,
     yes: bool,
@@ -498,21 +579,9 @@ struct Options {
     several: bool,
 }
 
-fn extract_all(
-    target: Target,
-    keep: bool,
-    verify_first: bool,
-    space: Space,
-    yes: bool,
-) -> Result<u8> {
+fn extract_all(target: Target, mut opts: Options) -> Result<u8> {
     let archives = distinct(&target.archives)?;
-    let opts = Options {
-        keep,
-        verify_first,
-        keep_free: space.keep_free,
-        yes,
-        several: archives.len() > 1,
-    };
+    opts.several = archives.len() > 1;
     // A mistyped name is cheap to catch before the first archive is
     // removed, rather than halfway through.
     if opts.several {
@@ -647,8 +716,18 @@ fn extract(
         }
         State::Fresh(job, out) => {
             in_place_possible(&job, opts.keep)?;
+            let found = session::existing(&job, &out)?;
+            if !found.is_empty() && !opts.replace {
+                return Err(refuse_existing(&out, &found));
+            }
             if !report(&job, &out, None, keep_free, opts.keep)? {
                 return no_space;
+            }
+            if !found.is_empty() {
+                say!(
+                    "  {DIM}note: {} will be replaced, and deleted when the extraction completes{DIM:#}",
+                    existing_files(found.len())
+                );
             }
             if opts.verify_first
                 && let Err(e) = verify(&job)
@@ -664,7 +743,7 @@ fn extract(
             if !opts.yes && !opts.keep {
                 confirm(&display_name(&job), &out)?;
             }
-            let journal = session::begin(&job, &paths, out, opts.keep)?;
+            let journal = session::begin(&job, &paths, out, opts.keep, opts.replace)?;
             (job, journal)
         }
     };

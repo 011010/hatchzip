@@ -32,8 +32,9 @@ pub enum State {
 
 /// `writable` is false for anything that only looks, so it works on
 /// read-only media and never takes the lock. For a fresh extraction the
-/// output folder may already hold other files, but nothing in the archive may
-/// land on top of one. `password` only matters for encrypted archives; see
+/// output folder may already hold other files, but no folder where the
+/// archive has a file or the other way round; files the archive would
+/// replace are listed by [`existing`]. `password` only matters for encrypted archives; see
 /// [`open_encrypted`] for the ask-and-retry loop front ends want. What
 /// opening reads is counted in `reads`, which a front end can show from
 /// another thread: a compressed tar is read in full here.
@@ -88,6 +89,7 @@ pub fn open(
     };
     check_path_lengths(&job, &output)?;
     if writable {
+        check_no_links_on_the_way(&job, &output)?;
         check_collisions(&job, &output)?;
     }
     Ok(State::Fresh(job, output))
@@ -279,9 +281,9 @@ pub fn open_encrypted_noting(
     }
 }
 
-/// HatchZip never overwrites a file. That is also what lets a crashed run
-/// delete whatever sits at the paths of its uncommitted entries: before the
-/// run started, nothing did.
+/// Refuses what no extraction into `out` can get past: a folder where the
+/// archive has a file, which is never deleted or replaced, and a file where
+/// it needs a folder, which would only fail halfway.
 fn check_collisions(job: &Job, out: &Path) -> Result<()> {
     if !out.exists() {
         return Ok(());
@@ -289,16 +291,22 @@ fn check_collisions(job: &Job, out: &Path) -> Result<()> {
     let mut checked = std::collections::HashSet::new();
     for item in job.units.iter().flat_map(|u| &u.items) {
         let dest = out.join(&item.path);
-        if let Ok(meta) = fs::symlink_metadata(&dest)
-            && !(meta.is_dir() && item.kind == crate::archive::Kind::Dir)
-        {
-            bail!(
-                "{} already exists. HatchZip does not overwrite existing files. \
-                 Move the file or choose another destination",
-                dest.display()
-            );
+        if let Ok(meta) = fs::symlink_metadata(&dest) {
+            let dir = item.kind == crate::archive::Kind::Dir;
+            if dir && !meta.is_dir() {
+                bail!(
+                    "{} is a file, but the archive requires a folder at that location",
+                    dest.display()
+                );
+            }
+            if !dir && meta.is_dir() {
+                bail!(
+                    "{} is a folder, but the archive has a file at that location. Move the \
+                     folder or choose another destination",
+                    dest.display()
+                );
+            }
         }
-        // A file where the archive needs a folder would only fail halfway.
         for parent in item
             .path
             .ancestors()
@@ -319,6 +327,18 @@ fn check_collisions(job: &Job, out: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// The files and links already in `out` at paths the archive extracts to,
+/// relative to `out`. A fresh extraction may only replace them when asked
+/// to; see [`begin`]. When there are any, what would keep them from being
+/// replaced is refused here, before a front end asks.
+pub fn existing(job: &Job, out: &Path) -> Result<Vec<PathBuf>> {
+    let found = crate::replace::found(job, out);
+    if !found.is_empty() {
+        crate::replace::check(job, out, &found)?;
+    }
+    Ok(found)
 }
 
 /// `game.zip`, `game.7z.001`, `game.tar.gz` and `game.part1.rar` all extract
@@ -490,8 +510,36 @@ pub fn plan(
 
 /// Commits to a fresh extraction: saves the archive's tail and writes the
 /// journal. From here on the archive may be truncated, unless `keep_archive`
-/// is set, in which case nothing ever changes it.
-pub fn begin(job: &Job, paths: &Paths, output: PathBuf, keep_archive: bool) -> Result<Journal> {
+/// is set, in which case nothing ever changes it. Files in the way (see
+/// [`existing`]) are refused unless `replace` is set; then the run moves
+/// them aside before it extracts anything and deletes them once it is
+/// complete.
+pub fn begin(
+    job: &Job,
+    paths: &Paths,
+    output: PathBuf,
+    keep_archive: bool,
+    replace: bool,
+) -> Result<Journal> {
+    // Front ends ask earlier; the folder may have changed since.
+    let found = existing(job, &output)?;
+    if let Some(first) = found.first()
+        && !replace
+    {
+        let what = match found.len() {
+            1 => format!("{} already exists", output.join(first).display()),
+            n => format!(
+                "{} and {} other {} already exist",
+                output.join(first).display(),
+                n - 1,
+                if n == 2 { "file" } else { "files" }
+            ),
+        };
+        bail!(
+            "{what}. Existing files are only replaced when that is requested. Move the files or \
+             choose another destination. Nothing was modified"
+        );
+    }
     if keep_archive {
         job.storage.protect();
     } else if let Some(why) = job.in_place_refusal() {
@@ -507,6 +555,7 @@ pub fn begin(job: &Job, paths: &Paths, output: PathBuf, keep_archive: bool) -> R
         output,
         total_size: job.remaining_size(),
         keep: keep_archive,
+        replace: !found.is_empty(),
     };
     Journal::create(paths, &job.storage, plan)
 }
@@ -609,7 +658,7 @@ mod tests {
         else {
             panic!("a new archive opens fresh");
         };
-        let journal = begin(&job, &paths, out, true).unwrap();
+        let journal = begin(&job, &paths, out, true, false).unwrap();
         assert!(journal.keep);
         let len = job.storage.original_len();
         assert!(job.storage.set_len(len / 2).is_err());

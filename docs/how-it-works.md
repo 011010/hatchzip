@@ -57,8 +57,9 @@ From then on the archive is parsed through `storage::Reader`, which serves the l
 | `links` | Symlinks and hard links to create at the very end |
 | `resume` | While a large file is streamed: its unit, how many bytes of it are flushed, the bit of the archive decoding restarts at, and the CRC-32 so far. For a compressed tar, also `stream`, the decoder's and the tar parser's state. See below. |
 | `keep` | Present and true when the extraction keeps the archive; see [Keeping the archive](#keeping-the-archive) |
+| `replace` | Present when the extraction replaces existing files, with `moved` once they are all moved aside; see [Replacing existing files](#replacing-existing-files) |
 
-The journal is at version 3 since `resume` was added. Version 2 journals load as they are; older builds refuse version 3, which matters, because they would delete the half-written file whose archive bytes are already gone. `resume.stream` came later without a new version: only `tar.gz` journals have it, and builds that don't know that format refuse the journal before reading it. A journal with `keep` is version 4, and only such a journal is: builds from before `keep` refuse it, since they would resume it in place and truncate an archive the user asked to keep. Every other journal is still written as version 3, so an older build can finish it.
+The journal is at version 3 since `resume` was added. Version 2 journals load as they are; older builds refuse version 3, which matters, because they would delete the half-written file whose archive bytes are already gone. `resume.stream` came later without a new version: only `tar.gz` journals have it, and builds that don't know that format refuse the journal before reading it. A journal with `keep` is version 4, and only such a journal is: builds from before `keep` refuse it, since they would resume it in place and truncate an archive the user asked to keep. Every other journal is still written as version 3, so an older build can finish it. A journal with `replace` is version 5, kept archive or not: older builds would delete the person's files at the paths of entries left to do, and a restore would not put the replaced files back.
 
 There is no separate "done" counter: units start at distinct offsets, so `committed_len` alone says which are finished. The journal is always replaced atomically: written to a temporary file, flushed, renamed over the old one, and the directory flushed.
 
@@ -170,7 +171,7 @@ Each step can be interrupted. The order above makes every interruption recoverab
 
 | Interrupted during | State on disk | What a resume does |
 |---|---|---|
-| Choosing or extracting | Some part files or finished files exist, the journal doesn't list them, the archive is intact | Deletes those files (the output folder started empty, so they are HatchZip's) and extracts the batch again |
+| Choosing or extracting | Some part files or finished files exist, the journal doesn't list them, the archive is intact | Deletes those files (nothing was at their paths when the run started, or it was moved aside first, so they are HatchZip's) and extracts the batch again |
 | Flushing | Same as above | Same as above |
 | Committing | The atomic rename either happened or not | Either case above or below |
 | Truncating | The journal lists the batch, the archive is still longer than `committed_len` | Truncates the archive, continues with the next batch |
@@ -192,6 +193,19 @@ The test suites kill the process at steps 3 and 5 at many positions for every fo
 
 The interruption table above holds with one row fewer: a crash after the journal write leaves nothing pending. `crates/cli/tests/keep.rs` extracts ZIP, 7z (solid and not), tar, `.tar.gz` and split ZIP, 7z and `.tar.gz` sets while keeping them, checks that every volume is byte for byte unchanged, then extracts the same archive in place and compares both outputs with the source. It kills kept runs at both commit points and, for a `.tar.gz`, at each step of a resume point, resumes them without `--keep-archive`, and checks the archive is unchanged after the crash and after the resume. `HATCHZIP_FREE` (debug builds only) sets the free space so the suite can put a disk between the two plans.
 
+## Replacing existing files
+
+A resume deletes whatever it finds at the paths of uncommitted entries, which is safe only because the run put it there. So by default a file or link at the path of any entry refuses the extraction before anything is touched. With `--replace` (in the app, "Replace" when it asks), `crates/core/src/replace.rs` clears those paths before the first entry is extracted:
+
+1. When the journal is written, it records `replace` without `moved`. Until `moved` is set, the run has extracted nothing, so a resume deletes nothing at the paths of entries (`Job::uncommitted` returns nothing) and the space check counts nothing there as freed.
+2. At the start of the run, every file or link at the path of an entry left to do is renamed into `<output>/.hatchzip-replaced/`, under the same relative path. A rename on the same filesystem copies no data and needs no space, and it moves a link itself, never its target. A resume repeats this step: a file already moved is no longer at its path, so it moves once.
+3. The renames are flushed (one `syncfs` on Linux, every folder involved on macOS and Windows), then the journal is saved with `moved`. From here on the run is an ordinary one: every path of an entry was empty, so whatever a crash leaves there is HatchZip's.
+4. Once every unit is committed and the links are made, the folder is deleted, before the journal, so a crash in between finishes the deletion on resume.
+
+The replaced files keep their space until step 4, so the space check is the same as for an empty folder. Refused before anything is touched, besides the usual: an archive with an entry named `.hatchzip-replaced` at its root (ignoring case), a `.hatchzip-replaced` already in the output folder (an earlier restore can leave one), and a replaced path that would become longer than the system allows inside the folder.
+
+`restore` first saves the journal with `moved` cleared, so an interrupted restore never deletes a file it put back, then moves every replaced file back to its path if nothing holds it. After an extraction in place, a committed entry's file is the only copy of that entry, so the file it replaced stays in the folder and restore reports how many did; the folder is deleted when none do. After an extraction that keeps the archive, the archive still holds every entry, so each replaced file goes back over the extracted one. `crates/cli/tests/replace.rs` kills runs while moving files aside and at both commit points, resumes them, restores them, and checks every replaced file byte for byte.
+
 ## Restore
 
 `hatchzip restore` turns a half-extracted archive back into a normal one, for when an extraction should stop for good. What is left of the archive is the first `committed_len` bytes of the original, and those hold exactly the units not yet extracted, untouched. Only the index is missing, so restore appends a new one after them. Nothing below `committed_len` moves, so it needs only the free space the new index takes. Files already extracted stay in the output folder.
@@ -212,7 +226,8 @@ The steps, in order:
 5. Append the new index at `committed_len` and flush it.
 6. Overwrite the bytes below `committed_len` that change (only the 7z signature header) and flush them.
 7. Open the result as a fresh archive with the same parsers extraction uses and check that it lists exactly the entries left. If it doesn't, undo and stop.
-8. Delete the journal, then the saved tail.
+8. If the extraction replaced files, move them back (see [Replacing existing files](#replacing-existing-files)).
+9. Delete the journal, then the saved tail.
 
 Any run that opens an archive whose journal has `restoring` set, `restore` and `extract` alike, first cuts the archive back to `committed_len`, including a volume the new index made longer than it was, and puts back the bytes the field holds. So an interrupted restore can be run again, or the extraction continued instead. The journal goes before the tail because a journal without its tail can't be loaded; a tail left behind by a crash between the two is never read again. The test suite kills restore after steps 5 and 6 for every format and checks both ways on (`crates/cli/tests/restore.rs`).
 
@@ -240,7 +255,7 @@ These are refused while the archive is still untouched:
 - In a `.tar.gz`: damage anywhere in the stream, a gzip member whose CRC-32 or length doesn't match, data after the end of the tar or after the gzip stream other than zeros (it would be lost with the archive), and header records over 1 MiB.
 - Gzip files that don't hold a tar and compressed tar other than gzip (`.tar.zst`, `.tar.xz`, `.tar.bz2`).
 - In RAR: solid archives (unless the archive is kept), links, dictionaries over 4 GB, a volume missing or a stray one after the last, names UnRAR reads differently, a wrong password, and headers that fail their checksum (see [RAR](#rar)). Without the `rar` feature, every RAR archive.
-- A non-empty output folder, so that a resume can safely delete anything it finds for uncommitted units.
+- A file or link at the path of an entry, so that a resume can safely delete anything it finds for uncommitted units, unless the run replaces existing files (see [Replacing existing files](#replacing-existing-files)). A folder where the archive has a file, a file where it needs a folder, and a link on the way to any entry are refused either way.
 
 ## Operating systems
 

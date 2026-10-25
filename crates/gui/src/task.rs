@@ -215,6 +215,7 @@ impl Task {
                 entries,
                 output,
                 kept,
+                set_aside,
             } => {
                 v.phase = Phase::Done;
                 v.fraction = 0.0;
@@ -226,7 +227,7 @@ impl Task {
                     1 => "the 1 entry".to_string(),
                     n => format!("the {} entries", count(n)),
                 };
-                v.message = if kept {
+                let mut message = if kept {
                     format!(
                         "Extraction progress discarded. The archive was not modified. \
                          Extracted files remain in {}.",
@@ -238,8 +239,12 @@ impl Task {
                          files remain in {}.",
                         output.display()
                     )
+                };
+                if set_aside > 0 {
+                    message.push(' ');
+                    message.push_str(&crate::text::set_aside(set_aside, &output));
                 }
-                .into();
+                v.message = message.into();
             }
             Update::Failed(f) => {
                 v.phase = Phase::Failed;
@@ -459,6 +464,7 @@ mod tests {
             entries: 12,
             output: "/games/game".into(),
             kept: false,
+            set_aside: 0,
         });
         assert_eq!(t.view.phase, Phase::Done);
         assert_eq!(t.view.heading, "Restore complete");
@@ -474,11 +480,29 @@ mod tests {
             entries: 12,
             output: "/games/game".into(),
             kept: true,
+            set_aside: 0,
         });
         assert_eq!(
             t.view.message,
             "Extraction progress discarded. The archive was not modified. Extracted files \
              remain in /games/game."
+        );
+
+        let mut t = Task::restore("game.zip");
+        t.apply(Update::Restored {
+            entries: 12,
+            output: "/games/game".into(),
+            kept: false,
+            set_aside: 2,
+        });
+        assert!(
+            t.view.message.ends_with(&format!(
+                "remain in /games/game. 2 replaced files remain in {}, since the files \
+                 extracted at their paths are no longer in the archive.",
+                Path::new("/games/game/.hatchzip-replaced").display()
+            )),
+            "{}",
+            t.view.message
         );
     }
 

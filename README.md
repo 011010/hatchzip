@@ -181,8 +181,9 @@ HatchZip prints the same space plan, asks for confirmation, then extracts. When 
 
 | Option | Effect |
 |---|---|
-| `-o, --output <dir>` | Output folder. Defaults to a folder named after the archive, next to it. It may hold other files, but none where the archive's files go. |
+| `-o, --output <dir>` | Output folder. Defaults to a folder named after the archive, next to it. It may hold other files, but none where the archive's files go, unless `--replace` is given. |
 | `--keep-archive` | Keep the archive: a normal extraction that removes nothing. Space is required for all extracted files. No confirmation is asked. |
+| `--replace` | Replace files that already exist in the output folder. See [Extract over existing files](#extract-over-existing-files). |
 | `--keep-free <size>` | Free space HatchZip never uses, such as `500MB` or `10GB`. Default `2GB`, so the disk never fills to zero. |
 | `--verify-first` | Read the whole archive and check every file's checksum before deleting anything. Takes extra time, recommended for downloads you can't easily get again. |
 | `-y, --yes` | Skip the confirmation prompt. Required when not run from a terminal, unless `--keep-archive` is given. |
@@ -197,6 +198,20 @@ hatchzip extract game.zip --keep-archive
 When the disk has room for the archive and all its files, `--keep-archive` extracts like any other tool and leaves the archive byte for byte as it was, for when it is needed again. The space check, path and collision checks, checksums and password handling are the same as for an extraction in place. If keeping the archive does not fit, HatchZip says so, by how much, and what extracting in place would require instead.
 
 An interrupted run resumes like any other, and goes on keeping the archive even when resumed without `--keep-archive`. An extraction that started in place cannot switch to keeping the archive, since part of it is already removed. `hatchzip restore` on an archive being kept only discards the progress: the archive was never changed.
+
+### Extract over existing files
+
+```sh
+hatchzip extract patch.zip -o "D:\Games\Foo" --replace
+```
+
+HatchZip does not overwrite files. When a file the archive contains already exists in the output folder, extraction is refused before anything is changed, unless `--replace` is given, as for a game patch or a mod extracted over an installed game. In the desktop app, HatchZip asks instead, with the number of files.
+
+With `--replace`, before anything is extracted, every existing file or link at the path of a file in the archive is moved into a `.hatchzip-replaced` folder inside the output folder, keeping its relative path. The move is a rename on the same disk, so it needs no extra space and no data is copied; a link is moved, never followed. The replaced files are deleted when the extraction completes. The space plan is unchanged: the replaced files keep their space until the end.
+
+- An interrupted run resumes as usual, with or without `--replace`: the progress file records that files were moved aside.
+- `hatchzip restore` moves the replaced files back to where they were. An extraction in place is the exception: a file already extracted there is no longer in the archive, so the file it replaced stays in `.hatchzip-replaced`, and restore says how many did. With `--keep-archive`, every replaced file goes back.
+- A folder is never replaced: a folder where the archive has a file, or a file where it needs a folder, is refused as before. So is a link on the way to any path, and an archive that contains `.hatchzip-replaced` itself.
 
 ### Several archives
 
@@ -260,6 +275,7 @@ HatchZip destroys the archive as it extracts, so it is built around never losing
 - **Damage stops the run where it is.** Every file's CRC-32 is checked as it is extracted. A damaged file is not written, and it stays in the archive along with everything before it.
 - **Hostile archives are refused before anything is deleted:** paths that escape the output folder, entries that overlap each other, entries that appear twice, and links where other entries need a folder. Setuid and setgid bits are never restored, and symlinks are created only after every regular file is written, so nothing can be written through one. Progress files found next to an archive are checked the same way: they may only name that archive's own volumes and links inside the output folder.
 - **A kept archive stays as it was.** With `--keep-archive`, the code that shrinks, frees or deletes archive bytes refuses to run for the whole extraction, and its progress file has a format older versions refuse, so none of them can resume it in place.
+- **A replaced file is never deleted early.** With `--replace`, existing files are moved aside, and the moves flushed to disk, before the first file is extracted, and they are deleted only when the extraction completes. The progress file records the move in a format older versions refuse, since they would not put the files back.
 
 What it cannot protect against: if the download itself is damaged, the files before the damaged spot are extracted and the archive is partly gone. Use `--verify-first` when the archive can't be downloaded again. On btrfs or APFS, space held by a snapshot that includes the archive is not freed until the snapshot is deleted.
 

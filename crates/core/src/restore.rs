@@ -24,7 +24,9 @@
 //!    flush it.
 //! 7. Open the result as a fresh archive with the same parsers extraction
 //!    uses, and check it lists exactly the entries left. If not, undo.
-//! 8. Delete the journal, then the saved tail. A journal without its tail
+//! 8. If the extraction replaced files, move them back to the paths step 3
+//!    cleared, where nothing extracted holds them.
+//! 9. Delete the journal, then the saved tail. A journal without its tail
 //!    can't be loaded, so the journal goes first; a tail left behind by a
 //!    crash in between is never read again.
 
@@ -40,8 +42,8 @@ use crate::archive::storage::{Storage, Tail};
 use crate::archive::{self, Kind};
 use crate::engine::{self, Job};
 use crate::fsutil;
-use crate::journal::{Journal, Link, Paths};
-use crate::session;
+use crate::journal::{Journal, Link, Paths, Replace};
+use crate::{replace, session};
 
 pub struct Restored {
     /// The first volume of the restored archive.
@@ -54,6 +56,10 @@ pub struct Restored {
     /// The extraction kept the archive, so it was never changed and only
     /// the progress was discarded. The archive still holds every entry.
     pub kept: bool,
+    /// Files the extraction replaced that stay in the replaced files folder
+    /// (see [`crate::replace`]): the file extracted at their path is no
+    /// longer in the archive, so it was not removed to make room.
+    pub set_aside: usize,
 }
 
 /// Restores the half-extracted archive `archive` names (any volume of a
@@ -71,7 +77,7 @@ pub fn restore(archive: &Path, output: Option<&Path>) -> Result<Restored> {
     let (mut journal, tail) = Journal::load(&paths)?;
     session::check_output(&journal, &primary, output, "restore")?;
     if journal.keep {
-        return discard(&journal, tail, &paths);
+        return discard(&mut journal, tail, &paths);
     }
     if !journal.parts[0].0.exists() {
         bail!("all entries are already extracted. Run extract to complete the cleanup");
@@ -209,6 +215,9 @@ pub fn restore(archive: &Path, output: Option<&Path>) -> Result<Restored> {
     }
     let format = job.format_name;
     drop(job);
+    // Files extracted in place are the only copy of their entries now, so
+    // a replaced file whose path one of them holds stays aside.
+    let set_aside = put_back(&mut journal, &paths, false)?;
 
     remove(&paths.journal)?;
     fsutil::sync_dir(paths.journal.parent().unwrap_or(Path::new(".")))?;
@@ -219,13 +228,16 @@ pub fn restore(archive: &Path, output: Option<&Path>) -> Result<Restored> {
         entries: expected.len(),
         output: out,
         kept: false,
+        set_aside,
     })
 }
 
 /// An extraction that keeps the archive never changed it, so there is
 /// nothing to rebuild: what a crashed batch left half written is deleted, as
-/// a resume would, and the progress files go. Finished files stay.
-fn discard(journal: &Journal, tail: Arc<Tail>, paths: &Paths) -> Result<Restored> {
+/// a resume would, and the progress files go. Finished files stay, except
+/// where they replaced a file: the archive still holds them, so the
+/// replaced file goes back.
+fn discard(journal: &mut Journal, tail: Arc<Tail>, paths: &Paths) -> Result<Restored> {
     let primary = journal.parts[0].0.clone();
     let mut restored = Restored {
         archive: primary.clone(),
@@ -233,6 +245,7 @@ fn discard(journal: &Journal, tail: Arc<Tail>, paths: &Paths) -> Result<Restored
         entries: 0,
         output: journal.output.clone(),
         kept: true,
+        set_aside: 0,
     };
     // Moved away by the person: nothing says which files are half written,
     // and nothing else is left to do.
@@ -243,8 +256,24 @@ fn discard(journal: &Journal, tail: Arc<Tail>, paths: &Paths) -> Result<Restored
         restored.format = job.format_name;
         restored.entries = job.item_count();
     }
+    // Without the archive, an extracted file may be the last copy.
+    restored.set_aside = put_back(journal, paths, primary.exists())?;
     paths.remove()?;
     Ok(restored)
+}
+
+/// Moves the files the extraction replaced back where they were (see
+/// [`replace::put_back`]) and returns how many stay aside. The journal
+/// first says the move aside is undone, so if this is interrupted, no run
+/// deletes a file at the path of an entry left to do as its own: a restore
+/// carries on putting files back, and an extraction moves them aside again.
+fn put_back(journal: &mut Journal, paths: &Paths, over: bool) -> Result<usize> {
+    if journal.replace.is_none() {
+        return Ok(0);
+    }
+    journal.replace = Some(Replace { moved: false });
+    journal.save(paths)?;
+    replace::put_back(&journal.output, over)
 }
 
 /// Restore takes no password, so an archive that can't be read without one

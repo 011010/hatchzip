@@ -41,8 +41,8 @@ use crate::archive::resumable::{self, Decoder};
 use crate::archive::storage::{Reads, Storage, Tail};
 use crate::archive::targz::{Event, Profile, Walker};
 use crate::archive::{self, Codec, Format, Item, Kind, PasswordCheck, Sink, Stream, Unit};
-use crate::journal::{Journal, Link, Paths, Resume, TarAt};
-use crate::{fsutil, platform};
+use crate::journal::{self, Journal, Link, Paths, Resume, TarAt};
+use crate::{fsutil, platform, replace};
 
 /// Larger batches extract in parallel better, smaller ones redo less work
 /// after a crash and keep the archive shrinking in fine steps.
@@ -105,6 +105,10 @@ pub struct Job {
     punch: OnceLock<Option<u64>>,
     /// The streamed unit a previous run left half done, if any.
     resume: Option<Resume>,
+    /// Whether a run may have extracted anything yet. Until it has, what
+    /// sits at the paths of entries belongs to the person: a fresh archive,
+    /// or a run still moving the files it replaces aside.
+    started: bool,
 }
 
 impl Job {
@@ -189,6 +193,7 @@ impl Job {
         let point = journal.resume.as_ref();
         let opened = archive::open(&storage, Some((&journal.format, tail, point)), password)?;
         let mut job = Self::build(storage, opened, journal.committed_len)?;
+        job.started = journal.replace.is_none_or(|r| r.moved);
         if let Some(r) = &journal.resume {
             // Only the highest uncommitted unit is ever streamed, so a point
             // for any other one means the journal and archive disagree.
@@ -268,6 +273,7 @@ impl Job {
             top,
             punch: OnceLock::new(),
             resume: None,
+            started: false,
         })
     }
 
@@ -616,13 +622,17 @@ impl Job {
         self.units.first().and_then(|u| u.items.first())
     }
 
-    /// Output a crashed run wrote for units it never committed. The output
-    /// folder started empty, so anything at those paths is ours. A
+    /// Output a crashed run wrote for units it never committed. Nothing was
+    /// at those paths when it started, or it was moved aside before the
+    /// first entry was extracted, so anything there now is ours. A
     /// half-streamed file is not in the list: its archive bytes may be gone,
     /// so it is the only copy of its first part. For a compressed tar that
     /// is the entry its point is in; the files after the point are still in
     /// the archive.
     pub fn uncommitted(&self, out: &Path) -> Vec<(PathBuf, u64)> {
+        if !self.started {
+            return Vec::new();
+        }
         let open = self.open_entry().is_some();
         let mut found = Vec::new();
         for (i, u) in self.units.iter().enumerate() {
@@ -842,6 +852,12 @@ impl Run<'_> {
             !self.journal.keep && fsutil::same_filesystem(self.job.storage.primary(), &out);
         if self.journal.keep {
             self.job.storage.protect();
+        }
+        if self.journal.replace.is_some_and(|r| !r.moved) {
+            replace::set_aside(&self.job, &out)?;
+            self.journal.replace = Some(journal::Replace { moved: true });
+            self.journal.save(&self.paths)?;
+            self.job.started = true;
         }
         let mut next = 0;
         while next < self.job.units.len() {
@@ -1478,6 +1494,11 @@ impl Run<'_> {
 
     fn finish(self, out: &Path) -> Result<()> {
         make_final_links(&self.journal.links, out)?;
+        // Before the journal goes, so a crash in between deletes the rest
+        // on resume rather than leaving it.
+        if self.journal.replace.is_some() {
+            replace::remove(out)?;
+        }
         if self.journal.keep {
             // The archive stays as it was; only the progress files go.
             return self.paths.remove();
@@ -1501,6 +1522,9 @@ impl Run<'_> {
 /// has its links and side files left to deal with.
 pub fn finish_orphaned(journal: &Journal, paths: &Paths) -> Result<()> {
     make_final_links(&journal.links, &journal.output)?;
+    if journal.replace.is_some() {
+        replace::remove(&journal.output)?;
+    }
     paths.remove()
 }
 
@@ -1585,7 +1609,7 @@ fn make_link(link: &Link, out: &Path) -> Result<()> {
 }
 
 /// The first folder on the way to `rel` inside `out` that is really a link.
-fn link_on_the_way(out: &Path, rel: &Path) -> Option<PathBuf> {
+pub(crate) fn link_on_the_way(out: &Path, rel: &Path) -> Option<PathBuf> {
     let mut ancestors: Vec<&Path> = rel
         .ancestors()
         .skip(1)

@@ -214,7 +214,9 @@ fn refuses_to_overwrite_an_existing_file() {
 
     let run = extract(&archive, &out, &[]);
     assert!(!run.status.success());
-    assert!(String::from_utf8_lossy(&run.stderr).contains("does not overwrite existing files"));
+    assert!(
+        String::from_utf8_lossy(&run.stderr).contains("Use --replace to replace existing files")
+    );
     assert_eq!(
         fs::read_to_string(out.join("game/data/small.pak")).unwrap(),
         "already here"

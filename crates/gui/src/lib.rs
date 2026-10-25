@@ -8,6 +8,7 @@ mod entries;
 pub mod main_window;
 mod password;
 mod platform;
+mod replace;
 mod runner;
 pub mod settings;
 pub mod shell;

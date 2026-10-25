@@ -1,6 +1,6 @@
 import { Button, CheckBox, LineEdit, ListView, Palette } from "std-widgets.slint";
 import { Theme, Line, VLine, FolderIcon, FileIcon, DropIcon } from "theme.slint";
-import { Phase, PlanView, TaskView, SpacePanel, Progress, Outcome, Busy, TaskButtons, PasswordPrompt } from "parts.slint";
+import { Phase, PlanView, TaskView, SpacePanel, Progress, Outcome, Busy, TaskButtons, PasswordPrompt, ReplacePrompt } from "parts.slint";
 
 export enum Screen { empty, loading, opened, error }
 
@@ -106,6 +106,8 @@ export component MainWindow inherits Window {
     in property <bool> password-shown;
     in property <bool> password-wrong;
     in property <string> password-name;
+    in property <bool> replace-shown;
+    in property <string> replace-text;
     // The right-click menu setting exists where hatchzip-shell supports it.
     in property <bool> shell-menu-available;
     // Names the file manager where the platform has one name for it.
@@ -119,6 +121,8 @@ export component MainWindow inherits Window {
     callback open-archive();
     callback password-ok(string);
     callback password-cancel();
+    callback replace-ok();
+    callback replace-cancel();
     callback shell-menu-toggled();
     callback give-back();
     callback verify-first-toggled();
@@ -531,6 +535,16 @@ export component MainWindow inherits Window {
         }
         cancel => {
             root.password-cancel();
+        }
+    }
+
+    if root.replace-shown: ReplacePrompt {
+        text: root.replace-text;
+        replace => {
+            root.replace-ok();
+        }
+        cancel => {
+            root.replace-cancel();
         }
     }
 }

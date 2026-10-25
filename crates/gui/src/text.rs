@@ -2,6 +2,7 @@
 //! the UI wiring so it can be tested without a window.
 
 use std::collections::VecDeque;
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use hatchzip_core::human;
@@ -30,6 +31,38 @@ pub fn count(n: usize) -> String {
 
 pub fn plural(n: usize, one: &str, many: &str) -> String {
     format!("{} {}", count(n), if n == 1 { one } else { many })
+}
+
+/// What the replace prompt asks, given how many files are in the way.
+pub fn replace_question(n: usize, folder: &Path) -> String {
+    let (files, deleted) = if n == 1 {
+        ("1 file already exists".to_string(), "file is")
+    } else {
+        (format!("{} files already exist", count(n)), "files are")
+    };
+    format!(
+        "{files} in {}. The existing {deleted} deleted when the extraction completes.",
+        folder.display()
+    )
+}
+
+/// Why a restore left replaced files where they are, and where that is.
+pub fn set_aside(n: usize, output: &Path) -> String {
+    let (files, them) = if n == 1 {
+        (
+            "1 replaced file remains".to_string(),
+            "the file extracted at its path is",
+        )
+    } else {
+        (
+            format!("{} replaced files remain", count(n)),
+            "the files extracted at their paths are",
+        )
+    };
+    format!(
+        "{files} in {}, since {them} no longer in the archive.",
+        hatchzip_core::replace::folder(output).display()
+    )
 }
 
 /// A time remaining, rounded to the unit that matters.
@@ -209,6 +242,22 @@ mod tests {
         assert_eq!(count(3_412_001), "3,412,001");
         assert_eq!(plural(1, "file", "files"), "1 file");
         assert_eq!(plural(1200, "file", "files"), "1,200 files");
+    }
+
+    #[test]
+    fn the_replace_prompt_counts_the_files() {
+        let folder = Path::new("/games/game");
+        assert_eq!(
+            replace_question(1, folder),
+            format!(
+                "1 file already exists in {}. The existing file is deleted when the \
+                 extraction completes.",
+                folder.display()
+            )
+        );
+        let many = replace_question(1200, folder);
+        assert!(many.starts_with("1,200 files already exist in "), "{many}");
+        assert!(many.ends_with("The existing files are deleted when the extraction completes."));
     }
 
     #[test]

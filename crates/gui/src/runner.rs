@@ -10,9 +10,9 @@ use std::time::{Duration, Instant};
 
 use slint::{Timer, TimerMode};
 
-use crate::password;
 use crate::task::Task;
 use crate::work::{self, Counters, Request, Update};
+use crate::{password, replace};
 
 /// About ten refreshes a second: smooth to the eye, and cheap however fast
 /// the disk is, since the worker only bumps counters.
@@ -195,9 +195,13 @@ impl Runner {
                     }
                 });
             };
-            work::run(&request, &counters, &send, &mut |wrong| {
-                password::ask(&name, wrong)
-            });
+            work::run(
+                &request,
+                &counters,
+                &send,
+                &mut |wrong| password::ask(&name, wrong),
+                &mut replace::ask,
+            );
         });
         self.timer.start(TimerMode::Repeated, TICK, || {
             if let Some(r) = RUNNER.with(|r| r.borrow().clone()) {

@@ -24,7 +24,6 @@ use crate::work::{Request, sentence};
 use crate::{AboutWindow, MainWindow, Mode, PlanView, Screen, TaskView, platform, shell};
 
 const REPO: &str = "https://github.com/xevrion/hatchzip";
-
 /// What the Open dialog offers. `.r00` is the second volume of an old-style
 /// RAR set; any volume opens the whole set.
 const ARCHIVE_EXTENSIONS: &[&str] = if hatchzip_core::archive::RAR_SUPPORTED {
@@ -225,6 +224,7 @@ pub fn build(
 
     wire(&ui, &app);
     crate::password::host_in!(ui);
+    crate::replace::host_in!(ui);
     if platform::SHELL_MENU {
         // Reading the registry or the menu folders is disk work; the box
         // fills in a moment later.

@@ -2,7 +2,7 @@
 //! backend and its software renderer: open an archive by dropping it, watch
 //! the space plan react, test it, extract it, type a password, give a half
 //! extracted archive back, switch the right-click menu, and run a
-//! right-click task.
+//! right-click task, over existing files too.
 //!
 //! With `HATCHZIP_GUI_SHOTS=<dir>` every state is also saved as a PNG, in
 //! light and dark, for checking the look by eye.
@@ -342,7 +342,8 @@ fn queue_flow(scheme: ColorScheme, tag: &str) {
     shot(ui.window(), &format!("{tag}-20-task-queue-done"));
     ui.hide().unwrap();
 
-    // The second can't go where it should: a file is in the way.
+    // The second can't go where it should: a file is in the way, and the
+    // person declines to replace it.
     let dir = tempfile::tempdir().unwrap();
     let archives: Vec<PathBuf> = names
         .iter()
@@ -364,6 +365,9 @@ fn queue_flow(scheme: ColorScheme, tag: &str) {
     ui.global::<Palette>().set_color_scheme(scheme);
     ui.window().set_size(LogicalSize::new(480.0, 270.0));
     start();
+    let w = ui.as_weak();
+    wait_until("the second to ask", move || w.unwrap().get_replace_shown());
+    ui.invoke_replace_cancel();
     let w = ui.as_weak();
     wait_until("the second to fail", move || {
         w.unwrap().get_task().phase == Phase::Failed
@@ -429,6 +433,56 @@ fn task_window_flow(scheme: ColorScheme, tag: &str) {
     ui.hide().unwrap();
 }
 
+/// A right-click extraction over files already there asks once, with the
+/// real count, and touches nothing until the answer is yes.
+fn replace_flow(scheme: ColorScheme, tag: &str) {
+    let dir = tempfile::tempdir().unwrap();
+    let archive = make_zip(dir.path());
+    let readme = dir.path().join("northwind/Northwind/README.txt");
+    std::fs::create_dir_all(readme.parent().unwrap()).unwrap();
+    std::fs::write(&readme, "old").unwrap();
+
+    for replace in [false, true] {
+        let (ui, start) =
+            task_window::build(one(TaskKind::ExtractTo, &archive), Settings::default()).unwrap();
+        ui.global::<Palette>().set_color_scheme(scheme);
+        ui.window().set_size(LogicalSize::new(480.0, 250.0));
+        start();
+        let w = ui.as_weak();
+        wait_until("the replace prompt", move || w.unwrap().get_replace_shown());
+        assert!(
+            ui.get_replace_text()
+                .starts_with("1 file already exists in "),
+            "{}",
+            ui.get_replace_text()
+        );
+        if replace {
+            ui.invoke_replace_ok();
+            let w = ui.as_weak();
+            wait_until("the task", move || {
+                w.unwrap().get_task().phase == Phase::Done
+            });
+            assert_ne!(std::fs::read(&readme).unwrap(), b"old");
+            assert!(!archive.exists());
+            assert!(!dir.path().join("northwind/.hatchzip-replaced").exists());
+        } else {
+            shot(ui.window(), &format!("{tag}-15-task-replace"));
+            ui.invoke_replace_cancel();
+            let w = ui.as_weak();
+            wait_until("the task to give up", move || {
+                w.unwrap().get_task().phase == Phase::Failed
+            });
+            assert_eq!(
+                ui.get_task().message,
+                "Extraction cancelled. The archive was not modified."
+            );
+            assert_eq!(std::fs::read(&readme).unwrap(), b"old");
+            assert!(archive.exists());
+        }
+        ui.hide().unwrap();
+    }
+}
+
 fn password_flow(scheme: ColorScheme, tag: &str) {
     let dir = tempfile::tempdir().unwrap();
     let archive = make_zip_with(dir.path(), Some(PASSWORD));
@@ -485,7 +539,7 @@ fn give_back_flow(scheme: ColorScheme, tag: &str) {
     else {
         panic!("a new archive opens fresh");
     };
-    session::begin(&job, &paths, out, false).unwrap();
+    session::begin(&job, &paths, out, false, false).unwrap();
     drop(job);
 
     let drops = Drops::default();
@@ -631,6 +685,7 @@ fn windows_end_to_end() {
         main_window_flow(scheme, tag);
         keep_flow(scheme, tag);
         task_window_flow(scheme, tag);
+        replace_flow(scheme, tag);
         keep_task_flow(scheme, tag);
         queue_flow(scheme, tag);
         task_window_states(scheme, tag);

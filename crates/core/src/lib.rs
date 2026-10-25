@@ -18,6 +18,7 @@ pub mod engine;
 mod fsutil;
 pub mod journal;
 mod platform;
+pub mod replace;
 pub mod restore;
 pub mod session;
 

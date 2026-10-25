@@ -343,3 +343,74 @@ export component PasswordPrompt inherits Rectangle {
         input.focus();
     }
 }
+
+// Asks, before anything is touched, whether to replace files already in the
+// destination folder. Laid out like the password prompt.
+export component ReplacePrompt inherits Rectangle {
+    in property <string> text;
+    callback replace();
+    callback cancel();
+
+    background: Theme.scrim;
+    // Swallows clicks meant for what is underneath.
+    TouchArea { }
+
+    scope := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape {
+                root.cancel();
+                return accept;
+            }
+            if event.text == Key.Return {
+                root.replace();
+                return accept;
+            }
+            reject
+        }
+
+        Rectangle {
+            width: min(380px, root.width - 32px);
+            height: card.preferred-height;
+            background: Palette.background;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Theme.line;
+
+            card := VerticalLayout {
+                padding: Theme.gutter;
+                spacing: 10px;
+                Text {
+                    text: "Replace existing files?";
+                    font-size: 15px;
+                    font-weight: 600;
+                }
+                Text {
+                    text: root.text;
+                    color: Theme.muted;
+                    wrap: word-wrap;
+                }
+                HorizontalLayout {
+                    alignment: end;
+                    spacing: 8px;
+                    Button {
+                        text: "Cancel";
+                        clicked => {
+                            root.cancel();
+                        }
+                    }
+                    Button {
+                        text: "Replace";
+                        primary: true;
+                        clicked => {
+                            root.replace();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    init => {
+        scope.focus();
+    }
+}

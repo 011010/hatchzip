@@ -59,6 +59,8 @@ Examples:
   hatchzip check game.zip --keep-archive
                                        Show whether a standard extraction fits
   hatchzip x game.7z.001 -o D:\\Games   Extract a split archive from any of its parts
+  hatchzip extract patch.zip -o Game --replace
+                                       Extract over an existing folder, replacing its files
   hatchzip extract a.zip b.7z c.tar.gz Extract several archives, one after another
   hatchzip extract big.zip --verify-first --keep-free 10GB
   hatchzip test game.7z                Verify every entry without writing files
@@ -118,6 +120,11 @@ pub enum Command {
             interruption by Ctrl+C, a crash or a full disk, run the same command to resume.\n\n\
             With --keep-archive the archive is not modified and no confirmation is needed; \
             free space is required for all extracted files.\n\n\
+            Files already in the destination folder are never overwritten unless --replace \
+            is given. Then they are moved into a .hatchzip-replaced folder there before \
+            anything is extracted, and deleted when the extraction completes. restore moves \
+            them back, except where a file extracted in place, and no longer in the archive, \
+            took their path. A folder is never replaced.\n\n\
             Several archives are extracted one after another. The space for each one is \
             checked just before it starts, and the first one that does not complete stops \
             the run."
@@ -127,6 +134,8 @@ pub enum Command {
         target: Target,
         #[command(flatten)]
         keep: Keep,
+        #[command(flatten)]
+        replace: Replace,
         /// Verify every entry before modifying the archive
         #[arg(long)]
         verify_first: bool,
@@ -144,6 +153,8 @@ pub enum Command {
         target: Target,
         #[command(flatten)]
         keep: Keep,
+        #[command(flatten)]
+        replace: Replace,
         #[command(flatten)]
         space: Space,
     },
@@ -217,6 +228,15 @@ pub struct Keep {
     /// extraction. Free space is required for all extracted files
     #[arg(long)]
     pub keep_archive: bool,
+}
+
+#[derive(Args)]
+pub struct Replace {
+    /// Replace files that already exist in the destination folder. They are
+    /// moved into a .hatchzip-replaced folder there and deleted when the
+    /// extraction completes
+    #[arg(long)]
+    pub replace: bool,
 }
 
 #[derive(Args, Clone)]

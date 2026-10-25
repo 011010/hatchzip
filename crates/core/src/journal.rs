@@ -26,7 +26,12 @@ const VERSION: u32 = 3;
 /// would resume it in place and truncate the archive the user kept. Every
 /// other journal stays at version 3, so an older build can still finish it.
 const KEEP_VERSION: u32 = 4;
-const READABLE: [u32; 3] = [2, 3, 4];
+/// An extraction that replaces existing files writes version 5, kept
+/// archive or not. Builds before `replace` existed refuse it: they would
+/// delete the person's files at the paths of entries left to do, and a
+/// restore would not put the replaced ones back.
+const REPLACE_VERSION: u32 = 5;
+const READABLE: [u32; 4] = [2, 3, 4, 5];
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Link {
@@ -91,6 +96,18 @@ pub struct Journal {
     /// it too, whatever it is asked.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub keep: bool,
+    /// The extraction replaces files that were in the output folder before
+    /// it started; see [`crate::replace`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replace: Option<Replace>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Replace {
+    /// Every file at the path of an entry left to do is in the replaced
+    /// files folder. Until then nothing is extracted, so whatever sits at
+    /// those paths is still the person's.
+    pub moved: bool,
 }
 
 pub struct Paths {
@@ -138,10 +155,18 @@ pub struct Plan {
     pub output: PathBuf,
     pub total_size: u64,
     pub keep: bool,
+    /// Existing files are moved aside before the first entry is extracted.
+    pub replace: bool,
 }
 
-fn version_for(keep: bool) -> u32 {
-    if keep { KEEP_VERSION } else { VERSION }
+fn version_for(keep: bool, replace: bool) -> u32 {
+    if replace {
+        REPLACE_VERSION
+    } else if keep {
+        KEEP_VERSION
+    } else {
+        VERSION
+    }
 }
 
 impl Journal {
@@ -152,7 +177,7 @@ impl Journal {
         r.read_to_end(&mut tail)?;
         fsutil::write_atomic(&paths.tail, &tail)?;
         let journal = Self {
-            version: version_for(plan.keep),
+            version: version_for(plan.keep, plan.replace),
             format: plan.format.to_string(),
             parts: storage.record(),
             tail_start: plan.tail_start,
@@ -164,6 +189,7 @@ impl Journal {
             resume: None,
             restoring: None,
             keep: plan.keep,
+            replace: plan.replace.then_some(Replace { moved: false }),
         };
         journal.save(paths)?;
         Ok(journal)
@@ -195,10 +221,13 @@ impl Journal {
         }
         let mut journal: Self = serde_json::from_slice(&bytes)
             .with_context(|| format!("{} is damaged", paths.journal.display()))?;
-        if journal.keep != (version == KEEP_VERSION) {
+        let replaces = version == REPLACE_VERSION;
+        if journal.replace.is_some() != replaces
+            || (!replaces && journal.keep != (version == KEEP_VERSION))
+        {
             bail!("{} is damaged", paths.journal.display());
         }
-        journal.version = version_for(journal.keep);
+        journal.version = version_for(journal.keep, replaces);
         journal.check_bound(paths)?;
         let tail =
             fs::read(&paths.tail).with_context(|| format!("reading {}", paths.tail.display()))?;
@@ -330,6 +359,33 @@ mod tests {
         fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// Replacing files is version 5 whether the archive is kept or not, and
+    /// no other journal may say it replaces anything.
+    #[test]
+    fn replacing_files_is_version_5_and_only_that_is() {
+        let dir =
+            std::env::temp_dir().join(format!("hatchzip-journal-replace-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+
+        let moving = r#","replace":{"moved":false}"#;
+        let (journal, _) = Journal::load(&write_with(&dir, 5, moving)).unwrap();
+        assert_eq!(journal.replace, Some(Replace { moved: false }));
+        assert!(!journal.keep);
+        let saved = serde_json::to_string(&journal).unwrap();
+        assert!(saved.contains(r#""version":5"#), "{saved}");
+
+        let kept = r#","keep":true,"replace":{"moved":true}"#;
+        let (journal, _) = Journal::load(&write_with(&dir, 5, kept)).unwrap();
+        assert!(journal.keep && journal.replace == Some(Replace { moved: true }));
+        assert_eq!(journal.version, REPLACE_VERSION);
+
+        assert!(Journal::load(&write(&dir, 5)).is_err());
+        assert!(Journal::load(&write_with(&dir, 3, moving)).is_err());
+        assert!(Journal::load(&write_with(&dir, 4, &format!(r#","keep":true{moving}"#))).is_err());
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// A run started by the previous release resumes; one started by a
     /// release that knows more is refused before anything is touched.
     #[test]
@@ -341,7 +397,9 @@ mod tests {
         assert_eq!(journal.resume, None);
         assert_eq!(journal.version, VERSION);
 
-        let err = Journal::load(&write(&dir, KEEP_VERSION + 1)).err().unwrap();
+        let err = Journal::load(&write(&dir, REPLACE_VERSION + 1))
+            .err()
+            .unwrap();
         assert!(format!("{err:#}").contains("newer HatchZip"), "{err:#}");
         let err = Journal::load(&write(&dir, 1)).err().unwrap();
         assert!(format!("{err:#}").contains("older HatchZip"), "{err:#}");

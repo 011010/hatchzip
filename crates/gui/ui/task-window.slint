@@ -1,6 +1,6 @@
 import { Palette } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { Phase, PlanView, TaskView, Progress, Outcome, Busy, TaskButtons, PasswordPrompt } from "parts.slint";
+import { Phase, PlanView, TaskView, Progress, Outcome, Busy, TaskButtons, PasswordPrompt, ReplacePrompt } from "parts.slint";
 
 // The small window a right-click opens. It does one thing and closes.
 export component TaskWindow inherits Window {
@@ -9,6 +9,8 @@ export component TaskWindow inherits Window {
     in property <bool> password-shown;
     in property <bool> password-wrong;
     in property <string> password-name;
+    in property <bool> replace-shown;
+    in property <string> replace-text;
 
     callback pause();
     callback resume();
@@ -17,6 +19,8 @@ export component TaskWindow inherits Window {
     callback give-back();
     callback password-ok(string);
     callback password-cancel();
+    callback replace-ok();
+    callback replace-cancel();
 
     title: root.task.heading;
     preferred-width: 480px;
@@ -110,6 +114,16 @@ export component TaskWindow inherits Window {
         }
         cancel => {
             root.password-cancel();
+        }
+    }
+
+    if root.replace-shown: ReplacePrompt {
+        text: root.replace-text;
+        replace => {
+            root.replace-ok();
+        }
+        cancel => {
+            root.replace-cancel();
         }
     }
 }

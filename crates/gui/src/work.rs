@@ -88,6 +88,10 @@ impl Request {
 /// `None` means they gave up.
 pub type Ask<'a> = &'a mut dyn FnMut(bool) -> Option<String>;
 
+/// Asks the person whether to replace this many files already in this
+/// folder. Called before anything is touched.
+pub type Confirm<'a> = &'a mut dyn FnMut(usize, &Path) -> bool;
+
 pub enum Update {
     /// Opening the archive and checking the space.
     Checking,
@@ -111,11 +115,14 @@ pub enum Update {
     Tested(usize),
     /// The archive is whole again, holding this many entries; the ones
     /// already extracted stay in the folder. `kept`: it never stopped being
-    /// whole, and only the progress was discarded.
+    /// whole, and only the progress was discarded. `set_aside` replaced
+    /// files could not go back, since what was extracted at their paths is
+    /// no longer in the archive.
     Restored {
         entries: usize,
         output: PathBuf,
         kept: bool,
+        set_aside: usize,
     },
     Failed(Failure),
 }
@@ -128,7 +135,13 @@ pub struct Failure {
 
 /// Runs a request to the end, a pause or an error. Errors are reported as an
 /// update, never returned, so the UI hears about every way this ends.
-pub fn run(request: &Request, counters: &Arc<Counters>, send: &dyn Fn(Update), ask: Ask) {
+pub fn run(
+    request: &Request,
+    counters: &Arc<Counters>,
+    send: &dyn Fn(Update),
+    ask: Ask,
+    replace: Confirm,
+) {
     let result = match request {
         Request::Extract {
             archive,
@@ -149,6 +162,7 @@ pub fn run(request: &Request, counters: &Arc<Counters>, send: &dyn Fn(Update), a
                 password: password.clone(),
                 ask,
             },
+            replace,
             counters,
             send,
         ),
@@ -230,6 +244,7 @@ fn extract(
     output: Option<PathBuf>,
     choices: Choices,
     secret: Secret,
+    replace: Confirm,
     counters: &Arc<Counters>,
     send: &dyn Fn(Update),
 ) -> Result<()> {
@@ -272,6 +287,10 @@ fn extract(
                      keep the archive"
                 );
             }
+            let found = session::existing(&job, &out)?.len();
+            if found > 0 && !replace(found, &out) {
+                bail!("extraction cancelled. The archive was not modified");
+            }
             let plan = session::plan(&job, &out, false, keep_free, keep_archive)?;
             if !plan.fits {
                 send(Update::NoSpace(plan));
@@ -286,7 +305,7 @@ fn extract(
                     return Ok(());
                 }
             }
-            let journal = session::begin(&job, &paths, out, keep_archive)?;
+            let journal = session::begin(&job, &paths, out, keep_archive, found > 0)?;
             (job, journal)
         }
     };
@@ -359,6 +378,7 @@ fn restore(archive: &Path, send: &dyn Fn(Update)) -> Result<()> {
         entries: r.entries,
         output: r.output,
         kept: r.kept,
+        set_aside: r.set_aside,
     });
     Ok(())
 }
@@ -438,8 +458,15 @@ mod tests {
             Update::Restored {
                 entries,
                 kept: false,
+                set_aside: 0,
                 ..
             } => format!("restored {entries}"),
+            Update::Restored {
+                entries,
+                kept: false,
+                set_aside,
+                ..
+            } => format!("restored {entries}, {set_aside} set aside"),
             Update::Restored { kept: true, .. } => "progress discarded".to_string(),
             Update::Failed(f) => format!("failed: {}", f.message),
         }
@@ -491,6 +518,29 @@ mod tests {
             &mut |wrong| {
                 asked.push(wrong);
                 answers.next().copied().flatten().map(str::to_string)
+            },
+            &mut |n, _| panic!("asked to replace {n} files"),
+        );
+        (seen.into_inner().unwrap(), asked)
+    }
+
+    /// Runs `request`, answering the replace prompt with `yes` and recording
+    /// how many files each prompt counted.
+    fn collect_replacing(
+        request: &Request,
+        counters: &Arc<Counters>,
+        yes: bool,
+    ) -> (Vec<String>, Vec<usize>) {
+        let seen = Mutex::new(Vec::new());
+        let mut asked = Vec::new();
+        run(
+            request,
+            counters,
+            &|u| seen.lock().unwrap().push(name(u)),
+            &mut |_| None,
+            &mut |n, _| {
+                asked.push(n);
+                yes
             },
         );
         (seen.into_inner().unwrap(), asked)
@@ -623,7 +673,7 @@ mod tests {
     }
 
     #[test]
-    fn extracts_next_to_other_files_but_never_over_them() {
+    fn extracts_next_to_other_files_and_over_them_only_when_asked() {
         let dir = tempfile::tempdir().unwrap();
         let archive = make_zip(dir.path(), None);
         std::fs::write(dir.path().join("notes.txt"), b"mine").unwrap();
@@ -640,16 +690,74 @@ mod tests {
         );
         assert!(dir.path().join("data/file19.bin").exists());
 
-        // Again, now every file would land on one that is there.
+        // Again, now every file would land on one that is there: asked once,
+        // with the real count, and a no changes nothing.
+        std::fs::write(dir.path().join("data/file3.bin"), b"old").unwrap();
         let again = make_zip(dir.path(), None);
+        let request = extract(&again, Some(dir.path().to_path_buf()), false);
         counters.reset();
-        let updates = collect(
-            &extract(&again, Some(dir.path().to_path_buf()), false),
-            &counters,
+        let (updates, asked) = collect_replacing(&request, &counters, false);
+        assert_eq!(asked, [20]);
+        assert_eq!(
+            updates,
+            [
+                "checking",
+                "failed: Extraction cancelled. The archive was not modified."
+            ]
         );
-        assert_eq!(updates.len(), 2, "{updates:?}");
-        assert!(updates[1].starts_with("failed: "), "{updates:?}");
         assert!(again.exists(), "a refused run leaves the archive alone");
+        assert_eq!(
+            std::fs::read(dir.path().join("data/file3.bin")).unwrap(),
+            b"old"
+        );
+
+        counters.reset();
+        let (updates, asked) = collect_replacing(&request, &counters, true);
+        assert_eq!(asked, [20]);
+        assert_eq!(updates, ["checking", "planned", "working", "extracted"]);
+        assert!(!again.exists());
+        assert_eq!(
+            std::fs::read(dir.path().join("data/file3.bin")).unwrap(),
+            vec![3u8; 10_300]
+        );
+        assert!(!hatchzip_core::replace::folder(dir.path()).exists());
+    }
+
+    /// Paused after the files were moved aside, then stopped for good: they
+    /// go back, and the resumed run is not asked again.
+    #[test]
+    fn a_paused_replacing_run_resumes_without_asking_or_gives_the_files_back() {
+        for give_back in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let archive = make_zip(dir.path(), None);
+            let out = dir.path().join("out");
+            std::fs::create_dir_all(out.join("data")).unwrap();
+            std::fs::write(out.join("data/file7.bin"), b"old").unwrap();
+            let request = extract(&archive, Some(out.clone()), false);
+            let counters = Arc::new(Counters::default());
+
+            counters.stop.store(true, Ordering::Relaxed);
+            let (updates, asked) = collect_replacing(&request, &counters, true);
+            assert_eq!(asked, [1]);
+            assert_eq!(updates, ["checking", "planned", "working", "paused"]);
+            assert!(!out.join("data/file7.bin").exists(), "moved aside");
+
+            counters.reset();
+            if give_back {
+                let restore = Request::Restore { archive };
+                assert_eq!(collect(&restore, &counters), ["checking", "restored 21"]);
+                assert_eq!(std::fs::read(out.join("data/file7.bin")).unwrap(), b"old");
+            } else {
+                let (updates, asked) = collect_replacing(&request, &counters, false);
+                assert!(asked.is_empty(), "the journal decides");
+                assert_eq!(updates, ["checking", "planned", "working", "extracted"]);
+                assert_eq!(
+                    std::fs::read(out.join("data/file7.bin")).unwrap(),
+                    vec![7u8; 10_700]
+                );
+            }
+            assert!(!hatchzip_core::replace::folder(&out).exists());
+        }
     }
 
     #[test]
