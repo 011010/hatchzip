@@ -499,7 +499,9 @@ mod tests {
             t.view.message.ends_with(&format!(
                 "remain in /games/game. 2 replaced files remain in {}, since the files \
                  extracted at their paths are no longer in the archive.",
-                Path::new("/games/game/.hatchzip-replaced").display()
+                Path::new("/games/game")
+                    .join(".hatchzip-replaced")
+                    .display()
             )),
             "{}",
             t.view.message
