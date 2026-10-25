@@ -1,0 +1,54 @@
+name: codeql
+
+# CodeQL static analysis of the Rust code and of these workflows. Findings go
+# to Security, Code scanning, next to Scorecard's. Clippy catches mistakes;
+# this looks for data flowing from an archive to somewhere it shouldn't, such
+# as an entry name reaching a path unchecked.
+on:
+  # main only, as in ci.yml: other branches are analysed through their pull
+  # request.
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+  pull_request:
+  # Weekly, so new queries run against code that hasn't changed.
+  schedule:
+    - cron: '41 5 * * 3'
+  workflow_dispatch:
+
+# Each job asks for exactly what it needs below.
+permissions: {}
+
+# A new push to the same branch makes the running analysis for the old one moot.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: codeql (${{ matrix.language }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      # Uploads the findings to code scanning.
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        # Rust has no traced build in CodeQL, it reads the source as is, and
+        # workflows are plain YAML, so neither compiles anything.
+        language: [rust, actions]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+      - uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        with:
+          category: /language:${{ matrix.language }}
