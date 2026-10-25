@@ -1,13 +1,25 @@
 version: 2
 
+# Titles must pass .github/workflows/pr-title.yml (conventional commits), since
+# PRs are squash-merged with the title as the commit message. The prefixes
+# below give `build(deps): bump ...` and `ci(deps): bump ...`.
+#
+# Cooldowns hold back a new version for some days after it is published, so a
+# compromised or broken release is usually caught and yanked before it is
+# proposed here. Security updates skip the cooldown.
+
 updates:
-  # Grouped so a week of patch bumps arrives as one PR instead of a dozen.
+  # Grouped so a week of patch and minor bumps arrives as one PR instead of a
+  # dozen. Major versions still come one per PR, since each can break the
+  # build in its own way.
   - package-ecosystem: cargo
     directory: /
     schedule:
       interval: weekly
       day: monday
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
     commit-message:
       prefix: build
       include: scope
@@ -18,13 +30,17 @@ updates:
           - patch
 
   # Actions are pinned to commit SHAs, so this is what keeps those pins current.
+  # A new action version waits two weeks, as the workflows' pins do.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
       day: monday
+    cooldown:
+      default-days: 14
     commit-message:
       prefix: ci
+      include: scope
     groups:
       actions:
         patterns:
