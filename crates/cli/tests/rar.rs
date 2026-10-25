@@ -471,6 +471,162 @@ fn write_rar(
     })
 }
 
+/// One RAR 5 volume of stored files followed by a quick open record holding
+/// a copy of every file header, as `rar -qo+` writes it. `copy` gets each
+/// file's index and header and returns what the record keeps for it.
+fn rar5_with_quick_open(
+    dir: &Path,
+    entries: &[Entry],
+    copy: impl Fn(usize, Vec<u8>) -> Vec<u8>,
+) -> PathBuf {
+    // The main header points at the record with a locator in its extra
+    // area. The offset takes three bytes whatever its value, so the record's
+    // position doesn't change the main header's length.
+    let main = |offset: usize| {
+        let mut locator = Vec::new();
+        vint(1, &mut locator); // locator
+        vint(1, &mut locator); // quick open offset present
+        locator.extend([
+            0x80 | (offset & 0x7F) as u8,
+            0x80 | (offset >> 7 & 0x7F) as u8,
+            (offset >> 14) as u8,
+        ]);
+        let mut extra = Vec::new();
+        vint(locator.len() as u64, &mut extra);
+        extra.extend(locator);
+        let mut body = Vec::new();
+        vint(1, &mut body); // main header
+        vint(0x01, &mut body); // with an extra area
+        vint(extra.len() as u64, &mut body);
+        vint(0, &mut body); // archive flags
+        body.extend(extra);
+        block5(&body)
+    };
+    let pieces: Vec<Vec<u8>> = entries
+        .iter()
+        .map(|e| file_piece(Version::Five, e, &e.data, false, false))
+        .collect();
+    let mut at = 8 + main(0).len();
+    let mut starts = Vec::new();
+    for p in &pieces {
+        starts.push(at);
+        at += p.len();
+    }
+    let record_at = at;
+
+    let mut copies = Vec::new();
+    for (i, (piece, e)) in pieces.iter().zip(entries).enumerate() {
+        let header = copy(i, piece[..piece.len() - e.data.len()].to_vec());
+        let mut body = Vec::new();
+        vint(0, &mut body); // flags
+        vint((record_at - starts[i]) as u64, &mut body);
+        vint(header.len() as u64, &mut body);
+        body.extend(header);
+        copies.extend(block5(&body));
+    }
+    let mut service = Vec::new();
+    vint(3, &mut service); // service header
+    vint(0x02, &mut service); // with data
+    vint(copies.len() as u64, &mut service);
+    vint(0, &mut service); // no time, no CRC
+    vint(copies.len() as u64, &mut service);
+    vint(0, &mut service); // attributes
+    vint(0, &mut service); // stored
+    vint(0, &mut service); // Windows
+    vint(2, &mut service);
+    service.extend(b"QO");
+
+    let mut file = b"Rar!\x1A\x07\x01\x00".to_vec();
+    file.extend(main(record_at - 8));
+    file.extend(pieces.concat());
+    file.extend(block5(&service));
+    file.extend(copies);
+    file.extend(block5(&[5, 0, 0]));
+    let path = dir.join("set.rar");
+    fs::write(&path, file).unwrap();
+    path
+}
+
+fn two_files() -> (Files, Vec<Entry>) {
+    let mut files = Files::new();
+    files.insert("a.bin".into(), noise(3000, 1));
+    files.insert("b.bin".into(), noise(2000, 2));
+    let entries = files.iter().map(|(n, d)| entry(n, d.clone())).collect();
+    (files, entries)
+}
+
+/// Copies that match what they stand for change nothing.
+#[test]
+fn a_quick_open_record_written_here_extracts() {
+    let tmp = TempDir::new().unwrap();
+    let (files, entries) = two_files();
+    let archive = rar5_with_quick_open(tmp.path(), &entries, |_, h| h);
+    let out = tmp.path().join("out");
+    assert_ok(&extract(&archive, &out, &[]));
+    for (name, data) in &files {
+        assert_eq!(&fs::read(out.join(name)).unwrap(), data, "{name}");
+    }
+    assert_consumed(&archive);
+}
+
+/// UnRAR reads the copy, HatchZip the header itself. A copy of `a.bin`'s
+/// header with a checksum of other data would have UnRAR fail on it once
+/// `b.bin` is out and the archive cut down to `a.bin`.
+#[test]
+fn a_quick_open_copy_that_differs_is_refused_untouched() {
+    let tmp = TempDir::new().unwrap();
+    let (_, entries) = two_files();
+    let archive = rar5_with_quick_open(tmp.path(), &entries, |i, h| {
+        if i > 0 {
+            return h;
+        }
+        let other = entry("a.bin", noise(3000, 7));
+        let mut piece = file_piece(Version::Five, &other, &other.data, false, false);
+        piece.truncate(h.len());
+        assert_ne!(piece, h);
+        piece
+    });
+    let before = snapshot_dir(tmp.path());
+    let out = extract(&archive, &tmp.path().join("out"), &[]);
+    assert!(!out.status.success());
+    assert!(
+        stderr(&out).contains("does not match the headers it copies"),
+        "{}",
+        stderr(&out)
+    );
+    assert_unchanged(&before);
+    refused_untouched(tmp.path(), &out);
+}
+
+/// RAR 4 marks a size it doesn't know as 0xFFFFFFFF, which UnRAR reads as
+/// unknown and HatchZip as 4 GB. Anything but the name read differently is
+/// caught before the archive is touched, as a different name is.
+#[test]
+fn a_header_unrar_reads_differently_is_refused_untouched() {
+    let tmp = TempDir::new().unwrap();
+    let (_, entries) = two_files();
+    let archive = write_rar(tmp.path(), Version::Four, &entries, None, Naming::Old);
+    let mut bytes = fs::read(&archive).unwrap();
+    // The first file header follows the signature and the main header.
+    let at = 7 + 13;
+    let size = usize::from(u16::from_le_bytes([bytes[at + 5], bytes[at + 6]]));
+    bytes[at + 11..at + 15].copy_from_slice(&u32::MAX.to_le_bytes());
+    let crc = crc16(&bytes[at + 2..at + size]);
+    bytes[at..at + 2].copy_from_slice(&crc.to_le_bytes());
+    fs::write(&archive, &bytes).unwrap();
+
+    let before = snapshot_dir(tmp.path());
+    let out = extract(&archive, &tmp.path().join("out"), &[]);
+    assert!(!out.status.success());
+    assert!(
+        stderr(&out).contains("UnRAR reads the header of 'a.bin' differently"),
+        "{}",
+        stderr(&out)
+    );
+    assert_unchanged(&before);
+    refused_untouched(tmp.path(), &out);
+}
+
 // -- Extraction --------------------------------------------------------------
 
 #[test]

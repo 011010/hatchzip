@@ -253,6 +253,26 @@ impl File {
         let ours = safe_path(&self.path_name());
         ours.is_some() && ours == safe_path(&clean_name(&unrar, self.rar5))
     }
+
+    /// Whether UnRAR's header for this file, the first piece of it, agrees
+    /// with HatchZip's on what extraction relies on besides the name: how
+    /// big its data is in the archive and once decoded, its checksum, and
+    /// whether it is a folder, encrypted or solid.
+    fn same_header(&self, h: &native::HeaderDataEx) -> bool {
+        let wide = |low: c_uint, high: c_uint| u64::from(low) | u64::from(high) << 32;
+        let (flags, hash_type, crc) = (h.flags, h.hash_type, h.file_crc);
+        let is = |flag: c_uint| flags & flag != 0;
+        let sizes = self.dir
+            || (wide(h.unp_size, h.unp_size_high) == self.size
+                && Some(wide(h.pack_size, h.pack_size_high)) == self.pieces.first().map(|p| p.1));
+        // UnRAR's CRC field shares its room with BLAKE2 hashes.
+        let crc = hash_type != native::RAR_HASH_CRC32 || self.crc.is_none_or(|c| c == crc);
+        is(native::RHDF_DIRECTORY) == self.dir
+            && is(native::RHDF_ENCRYPTED) == self.encrypted
+            && is(native::RHDF_SOLID) == self.solid
+            && sizes
+            && crc
+    }
 }
 
 fn clean_name(name: &str, rar5: bool) -> String {
@@ -337,21 +357,7 @@ pub fn open(storage: &Arc<Storage>, resuming: bool, password: Option<&str>) -> R
     refuse_unsupported(&files)?;
     let solid = parsed.solid || files.iter().any(|f| f.solid);
 
-    // Extraction finds each file by the name UnRAR reports. A name UnRAR
-    // reads differently, such as a legacy name in a code page, would only
-    // be noticed halfway through, after volumes are gone.
-    let listed = unrar_names(&volumes[0].path, files.len(), password)?;
-    for (i, f) in files.iter().enumerate() {
-        let theirs = listed.get(i);
-        if !theirs.is_some_and(|n| f.same_name(n)) {
-            bail!(
-                "UnRAR reads the name of '{}' differently ({}), so it cannot be extracted \
-                 reliably. The archive was not modified",
-                f.name,
-                theirs.map_or("missing".to_string(), |n| format!("'{n}'"))
-            );
-        }
-    }
+    check_with_unrar(&volumes[0].path, &files, password)?;
 
     let mut units = Vec::with_capacity(files.len());
     if solid {
@@ -692,6 +698,13 @@ fn parse5(vol: &mut Volume, v: usize, password: Option<&str>, out: &mut Parsed) 
                 }
                 saw_main = true;
                 out.solid |= archive & 4 != 0;
+                // A run that resumes reads what is left of a volume it
+                // already checked whole.
+                if let Some(qo) = quick_open_offset(&body[extra_at..])
+                    && vol.live == vol.len
+                {
+                    check_quick_open(vol, pos.saturating_add(qo), key.as_ref(), password, out)?;
+                }
             }
             2 => {
                 let mut h = file5(v, flags, &body[p..extra_at], &body[extra_at..])?;
@@ -732,6 +745,210 @@ fn parse5(vol: &mut Volume, v: usize, password: Option<&str>, out: &mut Parsed) 
         }
         pos = next;
     }
+}
+
+/// UnRAR's `RawRead::GetV`: like [`vint`], but a number cut short by the end
+/// of `b` reads as 0, as do bytes past 64 bits.
+fn getv(b: &[u8], p: &mut usize) -> u64 {
+    let mut v = 0u64;
+    let mut shift = 0;
+    while *p < b.len() && shift < 64 {
+        let byte = b[*p];
+        *p += 1;
+        v = v.wrapping_add(u64::from(byte & 0x7F) << shift);
+        if byte & 0x80 == 0 {
+            return v;
+        }
+        shift += 7;
+    }
+    0
+}
+
+/// Where a RAR 5 main header's locator record puts the quick open record,
+/// counted from the main header, read from its extra area as UnRAR's
+/// `ProcessExtra50` reads it, so both find the same one.
+fn quick_open_offset(extra: &[u8]) -> Option<u64> {
+    let mut found = None;
+    let mut p = 0;
+    while extra.len() - p >= 2 {
+        let size = getv(extra, &mut p) as i64;
+        let left = extra.len() - p;
+        if size <= 0 || left == 0 || size as u64 > left as u64 {
+            break;
+        }
+        let next = p + size as usize;
+        let kind = getv(extra, &mut p);
+        if p > next {
+            break;
+        }
+        if kind == 1 {
+            let flags = getv(extra, &mut p);
+            if flags & 1 != 0 {
+                let offset = getv(extra, &mut p);
+                if offset != 0 {
+                    found = Some(offset);
+                }
+            }
+        }
+        p = next;
+    }
+    found
+}
+
+/// UnRAR reads the copies of headers RAR keeps in a quick open record in
+/// place of the headers themselves, and HatchZip reads the archive's own.
+/// If a copy differed, UnRAR would decode different bytes than the ones
+/// HatchZip frees file by file, and could need some already gone. So every
+/// copy has to match what it stands for, byte for byte.
+///
+/// `at` is where the main header says the record is, which UnRAR follows
+/// whether or not the headers lead there. The record is read as UnRAR's
+/// `QuickOpen` reads it, and anything it can't be sure of is refused.
+fn check_quick_open(
+    vol: &mut Volume,
+    at: u64,
+    key: Option<&[u8; 32]>,
+    password: Option<&str>,
+    out: &mut Parsed,
+) -> Result<()> {
+    let unreadable = || {
+        anyhow!(
+            "the quick open record of this RAR archive cannot be read, so it cannot be checked \
+             against the headers it copies. The archive was not modified"
+        )
+    };
+    // Past the end UnRAR finds nothing either.
+    if at >= vol.len {
+        return Ok(());
+    }
+    let (block, h, data_at) = read5(vol, at, key).map_err(|_| unreadable())?;
+    let body = &block[h..];
+    let mut p = 0;
+    let kind = vint(body, &mut p)?;
+    let flags = vint(body, &mut p)?;
+    let extra = if flags & 1 != 0 {
+        vint(body, &mut p)?
+    } else {
+        0
+    };
+    if flags & 2 != 0 {
+        vint(body, &mut p)?;
+    }
+    let extra_at = usize::try_from(extra)
+        .ok()
+        .and_then(|e| body.len().checked_sub(e))
+        .filter(|&e| e >= p)
+        .ok_or_else(unreadable)?;
+    if kind != 3 {
+        return Ok(());
+    }
+    let service = file5(0, flags, &body[p..extra_at], &body[extra_at..])?;
+    if service.name != "QO" {
+        return Ok(());
+    }
+
+    // UnRAR reads as much as the record's unpacked size says, from where
+    // its data begins.
+    const MAX_QUICK_OPEN: u64 = 256 << 20;
+    if service.size > MAX_QUICK_OPEN {
+        return Err(unreadable());
+    }
+    let n = service.size.min(vol.len - data_at.min(vol.len));
+    let mut data = vol.read(data_at, n)?;
+    if service.encrypted {
+        // Without the password UnRAR leaves the record alone.
+        let Some(password) = password else {
+            return Ok(());
+        };
+        let c = crypt_record5(&body[extra_at..])?.ok_or_else(unreadable)?;
+        let key = *out
+            .keys5
+            .entry((c.salt, c.count))
+            .or_insert_with(|| crypt::key5(&rar_password(password), &c.salt, c.count));
+        data.truncate(data.len() / crypt::BLOCK as usize * crypt::BLOCK as usize);
+        crypt::decrypt5(&key, &c.iv, &mut data);
+    }
+
+    // Each copy: a CRC-32, the size of the rest, then flags, its offset back
+    // from the record, its length and the bytes. UnRAR reads the first 7
+    // bytes and then the rest, so a size that doesn't end within those 7,
+    // a size of 0 (which decrypted padding reads as) or a copy running past
+    // the data ends the record. A copy that fails its CRC is skipped.
+    let mut p = 0;
+    while data.len() - p >= 7 {
+        let head = &data[p..p + 7];
+        let crc = u32le(head, 0)?;
+        let Some(size_len) = head[4..].iter().position(|b| b & 0x80 == 0).map(|i| i + 1) else {
+            break;
+        };
+        let size = getv(&head[4..], &mut 0);
+        let Some(end) = usize::try_from(size)
+            .ok()
+            .filter(|&s| s > 0 && s + size_len >= 3)
+            .map(|s| p + 4 + size_len + s)
+            .filter(|&e| e <= data.len())
+        else {
+            break;
+        };
+        let record = &data[p + 4..end];
+        p = end;
+        if crc32fast::hash(record) != crc {
+            continue;
+        }
+        let mut q = size_len;
+        let _flags = getv(record, &mut q);
+        let offset = getv(record, &mut q);
+        let len = getv(record, &mut q);
+        if len > MAX_HEADER {
+            continue;
+        }
+        // Bytes the record doesn't have read as zeros.
+        let mut copy = record.get(q..).unwrap_or_default().to_vec();
+        copy.resize(len as usize, 0);
+        let same = at
+            .checked_sub(offset)
+            .and_then(|pos| vol.read(pos, len).ok())
+            .is_some_and(|disk| disk == copy);
+        if !same {
+            bail!(
+                "the quick open record of this RAR archive does not match the headers it copies, \
+                 so UnRAR would read different files than HatchZip. The archive was not modified"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// How the data of a RAR 5 file or service header is encrypted.
+struct DataCrypt {
+    count: u8,
+    salt: [u8; 16],
+    iv: [u8; 16],
+}
+
+/// The encryption record in the extra area of a RAR 5 file or service
+/// header, if it has one.
+fn crypt_record5(extra: &[u8]) -> Result<Option<DataCrypt>> {
+    let mut e = 0;
+    while e < extra.len() {
+        let len = usize::try_from(vint(extra, &mut e)?).unwrap_or(usize::MAX);
+        let end = e
+            .checked_add(len)
+            .filter(|&end| end <= extra.len())
+            .ok_or_else(|| anyhow!("a header's extra record runs past its end"))?;
+        if vint(extra, &mut e)? == 1 {
+            let record = &extra[e..end];
+            let (_, count, salt, p) = crypt_start5(record)?;
+            let iv: [u8; 16] = record
+                .get(p..p + 16)
+                .ok_or_else(|| anyhow!("a header is cut short"))?
+                .try_into()
+                .expect("16 bytes");
+            return Ok(Some(DataCrypt { count, salt, iv }));
+        }
+        e = end;
+    }
+    Ok(None)
 }
 
 fn file5(v: usize, hflags: u64, b: &[u8], extra: &[u8]) -> Result<Header> {
@@ -1518,6 +1735,13 @@ impl Session {
                     f.name
                 );
             }
+            if !f.same_header(&self.header) {
+                bail!(
+                    "the archive changed while it was being read: the header of '{}' is not what \
+                     it was",
+                    f.name
+                );
+            }
             if self.next == index {
                 return Ok(());
             }
@@ -1659,27 +1883,40 @@ fn failure(code: c_int, encrypted: bool) -> anyhow::Error {
     }
 }
 
-/// The names of the first `want` files of the set as UnRAR reports them, in
-/// order, continuations skipped.
-fn unrar_names(first: &Path, want: usize, password: Option<&str>) -> Result<Vec<String>> {
+/// Lists the set with UnRAR, continuations skipped, and checks that it reads
+/// every file the way HatchZip does. Extraction finds each file by the name
+/// UnRAR reports, and frees the archive by HatchZip's reading of the
+/// headers. A file UnRAR reads differently, such as a legacy name in a code
+/// page, would only be noticed halfway through, after volumes are gone.
+fn check_with_unrar(first: &Path, files: &[File], password: Option<&str>) -> Result<()> {
     // Only encrypted file names need the password here.
     let mut session = Session::open(first, native::RAR_OM_LIST, password, 0)?;
-    let mut names = Vec::with_capacity(want);
-    while names.len() < want {
-        let status = session.read_header();
-        if status == native::ERAR_END_ARCHIVE {
-            break;
+    for (i, f) in files.iter().enumerate() {
+        if i > 0 {
+            session.skip().context("UnRAR could not list the set")?;
         }
-        if status != native::ERAR_SUCCESS {
-            return Err(failure(status, false)).context("UnRAR could not list the set");
+        let theirs = match session.read_header() {
+            native::ERAR_SUCCESS => Some(session.entry_name()),
+            native::ERAR_END_ARCHIVE => None,
+            status => return Err(failure(status, false)).context("UnRAR could not list the set"),
+        };
+        if !theirs.as_ref().is_some_and(|n| f.same_name(n)) {
+            bail!(
+                "UnRAR reads the name of '{}' differently ({}), so it cannot be extracted \
+                 reliably. The archive was not modified",
+                f.name,
+                theirs.map_or("missing".to_string(), |n| format!("'{n}'"))
+            );
         }
-        names.push(session.entry_name());
-        if names.len() == want {
-            break;
+        if !f.same_header(&session.header) {
+            bail!(
+                "UnRAR reads the header of '{}' differently, so it cannot be extracted reliably. \
+                 The archive was not modified",
+                f.name
+            );
         }
-        session.skip().context("UnRAR could not list the set")?;
     }
-    Ok(names)
+    Ok(())
 }
 
 #[cfg(test)]
