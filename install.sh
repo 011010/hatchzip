@@ -79,80 +79,85 @@ uninstall() {
     say "Removed. Half-finished extractions keep their .hatchzip files next to the archive."
 }
 
+install_hatchzip() {
+    case "$(uname -s)" in
+        Linux) os=linux ;;
+        Darwin) os=macos ;;
+        *) fail "this installer is for Linux and macOS; on Windows use install.ps1" ;;
+    esac
+    case "$(uname -m)" in
+        x86_64 | amd64) arch=x86_64 ;;
+        aarch64 | arm64) arch=aarch64 ;;
+        *) fail "no build for $(uname -m) yet; build from source with cargo instead" ;;
+    esac
+    # An Intel shell on an Apple Silicon Mac (Rosetta) still wants the native build.
+    if [ "$os" = macos ] && [ "$arch" = x86_64 ] && [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = 1 ]; then
+        arch=aarch64
+    fi
+
+    name="hatchzip-$arch-$os"
+    if [ -n "${HATCHZIP_BASE_URL:-}" ]; then
+        base="$HATCHZIP_BASE_URL"
+    elif [ -n "${HATCHZIP_VERSION:-}" ]; then
+        base="https://github.com/$REPO/releases/download/$HATCHZIP_VERSION"
+    else
+        base="https://github.com/$REPO/releases/latest/download"
+    fi
+
+    tmp=$(mktemp -d)
+    trap 'rm -rf "$tmp"' EXIT
+
+    step "Downloading HatchZip for $os $arch"
+    download "$base/$name.tar.gz" "$tmp/$name.tar.gz"
+    download "$base/$name.tar.gz.sha256" "$tmp/$name.tar.gz.sha256"
+    expected=$(cut -d' ' -f1 "$tmp/$name.tar.gz.sha256")
+    actual=$(sha256 "$tmp/$name.tar.gz")
+    [ "$expected" = "$actual" ] || fail "the download does not match its checksum; nothing was installed"
+
+    tar -xzf "$tmp/$name.tar.gz" -C "$tmp"
+    src="$tmp/$name"
+
+    step "Installing to $BIN_DIR"
+    mkdir -p "$BIN_DIR" "$MAN_DIR" "$BASH_DIR" "$ZSH_DIR" "$FISH_DIR"
+    # Replaced through a rename, so a copy that is running keeps working.
+    cp "$src/hatchzip" "$BIN_DIR/.hatchzip.new"
+    chmod 755 "$BIN_DIR/.hatchzip.new"
+    mv -f "$BIN_DIR/.hatchzip.new" "$BIN_DIR/hatchzip"
+    cp "$src/man/hatchzip.1" "$MAN_DIR/hatchzip.1"
+    cp "$src/completions/hatchzip.bash" "$BASH_DIR/hatchzip"
+    cp "$src/completions/_hatchzip" "$ZSH_DIR/_hatchzip"
+    cp "$src/completions/hatchzip.fish" "$FISH_DIR/hatchzip.fish"
+
+    # `hz` is the short name, unless some other program already answers to it.
+    other_hz=$(command -v hz 2>/dev/null || true)
+    if [ -n "$other_hz" ] && [ "$other_hz" != "$BIN_DIR/hz" ]; then
+        say "Skipping the short name hz: $other_hz already uses it."
+    else
+        ln -sf hatchzip "$BIN_DIR/hz"
+        ln -sf hatchzip.1 "$MAN_DIR/hz.1"
+        "$BIN_DIR/hz" completions bash > "$BASH_DIR/hz"
+        "$BIN_DIR/hz" completions zsh > "$ZSH_DIR/_hz"
+        "$BIN_DIR/hz" completions fish > "$FISH_DIR/hz.fish"
+    fi
+
+    say ""
+    say "$("$BIN_DIR/hatchzip" --version) installed. Run it as hatchzip or hz; man hatchzip has the manual."
+    case ":$PATH:" in
+        *":$BIN_DIR:"*) ;;
+        *)
+            say ""
+            say "$BIN_DIR is not on your PATH yet. Add this line to your shell's startup file:"
+            say "  export PATH=\"$BIN_DIR:\$PATH\""
+            ;;
+    esac
+    say ""
+    say "Try: hatchzip check some-archive.zip"
+}
+
+# Nothing above has done anything yet. Piped from curl, the shell runs the
+# script as it arrives, so a download cut off halfway stops before this line.
 if [ "${1:-}" = "--uninstall" ]; then
     uninstall
-    exit 0
-fi
-
-case "$(uname -s)" in
-    Linux) os=linux ;;
-    Darwin) os=macos ;;
-    *) fail "this installer is for Linux and macOS; on Windows use install.ps1" ;;
-esac
-case "$(uname -m)" in
-    x86_64 | amd64) arch=x86_64 ;;
-    aarch64 | arm64) arch=aarch64 ;;
-    *) fail "no build for $(uname -m) yet; build from source with cargo instead" ;;
-esac
-# An Intel shell on an Apple Silicon Mac (Rosetta) still wants the native build.
-if [ "$os" = macos ] && [ "$arch" = x86_64 ] && [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = 1 ]; then
-    arch=aarch64
-fi
-
-name="hatchzip-$arch-$os"
-if [ -n "${HATCHZIP_BASE_URL:-}" ]; then
-    base="$HATCHZIP_BASE_URL"
-elif [ -n "${HATCHZIP_VERSION:-}" ]; then
-    base="https://github.com/$REPO/releases/download/$HATCHZIP_VERSION"
 else
-    base="https://github.com/$REPO/releases/latest/download"
+    install_hatchzip
 fi
-
-tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
-
-step "Downloading HatchZip for $os $arch"
-download "$base/$name.tar.gz" "$tmp/$name.tar.gz"
-download "$base/$name.tar.gz.sha256" "$tmp/$name.tar.gz.sha256"
-expected=$(cut -d' ' -f1 "$tmp/$name.tar.gz.sha256")
-actual=$(sha256 "$tmp/$name.tar.gz")
-[ "$expected" = "$actual" ] || fail "the download does not match its checksum; nothing was installed"
-
-tar -xzf "$tmp/$name.tar.gz" -C "$tmp"
-src="$tmp/$name"
-
-step "Installing to $BIN_DIR"
-mkdir -p "$BIN_DIR" "$MAN_DIR" "$BASH_DIR" "$ZSH_DIR" "$FISH_DIR"
-# Replaced through a rename, so a copy that is running keeps working.
-cp "$src/hatchzip" "$BIN_DIR/.hatchzip.new"
-chmod 755 "$BIN_DIR/.hatchzip.new"
-mv -f "$BIN_DIR/.hatchzip.new" "$BIN_DIR/hatchzip"
-cp "$src/man/hatchzip.1" "$MAN_DIR/hatchzip.1"
-cp "$src/completions/hatchzip.bash" "$BASH_DIR/hatchzip"
-cp "$src/completions/_hatchzip" "$ZSH_DIR/_hatchzip"
-cp "$src/completions/hatchzip.fish" "$FISH_DIR/hatchzip.fish"
-
-# `hz` is the short name, unless some other program already answers to it.
-other_hz=$(command -v hz 2>/dev/null || true)
-if [ -n "$other_hz" ] && [ "$other_hz" != "$BIN_DIR/hz" ]; then
-    say "Skipping the short name hz: $other_hz already uses it."
-else
-    ln -sf hatchzip "$BIN_DIR/hz"
-    ln -sf hatchzip.1 "$MAN_DIR/hz.1"
-    "$BIN_DIR/hz" completions bash > "$BASH_DIR/hz"
-    "$BIN_DIR/hz" completions zsh > "$ZSH_DIR/_hz"
-    "$BIN_DIR/hz" completions fish > "$FISH_DIR/hz.fish"
-fi
-
-say ""
-say "$("$BIN_DIR/hatchzip" --version) installed. Run it as hatchzip or hz; man hatchzip has the manual."
-case ":$PATH:" in
-    *":$BIN_DIR:"*) ;;
-    *)
-        say ""
-        say "$BIN_DIR is not on your PATH yet. Add this line to your shell's startup file:"
-        say "  export PATH=\"$BIN_DIR:\$PATH\""
-        ;;
-esac
-say ""
-say "Try: hatchzip check some-archive.zip"
