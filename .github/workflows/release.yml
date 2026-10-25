@@ -202,6 +202,8 @@ jobs:
 
       - name: smoke test
         run: python .github/scripts/smoke.py target/release/hatchzip.exe
+      - name: no networking
+        run: python .github/scripts/no-network.py target/release/hatchzip.exe target/release/hatchzip-gui.exe
       - name: package
         run: |
           name="hatchzip-x86_64-windows"
@@ -312,6 +314,8 @@ jobs:
           file target/x86_64-apple-darwin/release/hatchzip-gui | grep -q x86_64
       - name: smoke test
         run: python3 .github/scripts/smoke.py target/aarch64-apple-darwin/release/hatchzip
+      - name: no networking
+        run: python3 .github/scripts/no-network.py target/*-apple-darwin/release/hatchzip target/*-apple-darwin/release/hatchzip-gui
       - name: package
         run: |
           native=target/aarch64-apple-darwin/release/hatchzip
