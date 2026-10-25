@@ -2,13 +2,13 @@
 
 > HatchZip is a free, open-source archive extractor for Windows, macOS and Linux that extracts ZIP, 7z, RAR, tar and split archives in place, so it needs free space for the extracted files only, not for the files and the archive together.
 
-Site: https://hatchzip.dev. Source: https://github.com/xevrion/hatchzip (MIT OR Apache-2.0). Current version 0.1.3. A desktop app and a command line tool, `hatchzip` (short name `hz`).
+Site: https://hatchzip.dev. Source: https://github.com/xevrion/hatchzip (MIT OR Apache-2.0). Current version 0.1.4. A desktop app and a command line tool, `hatchzip` (short name `hz`).
 
 How it works: it extracts from the end of the archive and cuts each finished part off the archive file (a .tar.gz from the front, freeing the compressed bytes already used). When the run finishes, only the extracted files are left. It checks that the extraction fits before it changes anything, and an interrupted run resumes when it is started again.
 
 ## Install
 
-- Desktop app downloads: https://hatchzip.dev/#download (Windows setup, macOS Apple Silicon and Intel, Linux AppImage, .deb and .rpm)
+- Desktop app downloads: https://hatchzip.dev/#download (Windows setup or MSI, macOS Apple Silicon and Intel, Linux AppImage, .deb and .rpm)
 - Linux and macOS: `curl -fsSL https://raw.githubusercontent.com/xevrion/hatchzip/main/install.sh | sh` (current user, no root; checks SHA-256)
 - Windows (PowerShell): `irm https://raw.githubusercontent.com/xevrion/hatchzip/main/install.ps1 | iex`
 - Homebrew: `brew install xevrion/tap/hatchzip` (CLI), `brew install --cask xevrion/tap/hatchzip` (macOS app and CLI)
