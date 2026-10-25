@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="light dark">
+<title>Not enough disk space to extract a ZIP, RAR or 7z</title>
+<meta name="description" content="Why extracting an archive needs room for the archive and the files at once, and the fixes that work: another drive, freeing space, deleting split parts, or extracting in place. With a measured test.">
+<link rel="canonical" href="https://hatchzip.dev/not-enough-space-to-extract.html">
+<meta property="og:url" content="https://hatchzip.dev/not-enough-space-to-extract.html">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Not enough disk space to extract a ZIP, RAR or 7z: how to fix it">
+<meta property="og:description" content="Why extraction needs room for the archive and the files at once, and the fixes that work, with a measured test on a nearly full disk.">
+<meta property="og:image" content="https://hatchzip.dev/img/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="HatchZip: extract huge archives without double the disk space.">
+<meta property="article:published_time" content="2026-10-25">
+<meta property="article:modified_time" content="2026-10-25">
+<meta name="twitter:card" content="summary_large_image">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@graph":[{"@type":"Article","headline":"Not enough disk space to extract a ZIP, RAR or 7z: how to fix it","description":"Why extraction needs room for the archive and the files at once, and the fixes that work, with a measured test on a nearly full disk.","image":"https://hatchzip.dev/img/og.png","datePublished":"2026-10-25","dateModified":"2026-10-25","inLanguage":"en","mainEntityOfPage":"https://hatchzip.dev/not-enough-space-to-extract.html","author":{"@type":"Person","name":"Yash Bavadiya","url":"https://x.com/xevrion_the1","sameAs":["https://github.com/xevrion"]},"publisher":{"@type":"Person","name":"Yash Bavadiya","url":"https://x.com/xevrion_the1"}},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"HatchZip","item":"https://hatchzip.dev/"},{"@type":"ListItem","position":2,"name":"Not enough disk space to extract","item":"https://hatchzip.dev/not-enough-space-to-extract.html"}]}]}
+</script>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css?v=6">
+</head>
+<body>
+<div class="page">
+<aside class="side">
+<a class="brand" href="./"><img src="favicon.svg" alt="" width="48" height="48"><span>HatchZip</span></a>
+<nav aria-label="Site">
+<ul>
+<li><a href="./">Home</a></li>
+<li><a href="./#download">Download</a></li>
+</ul>
+<p class="label">Guides</p>
+<ul>
+<li><a href="not-enough-space-to-extract.html" aria-current="page">Not enough space to extract</a></li>
+<li><a href="winrar-not-enough-space.html">WinRAR space errors</a></li>
+<li><a href="7zip-not-enough-space.html">7-Zip space errors</a></li>
+</ul>
+<p class="label">Project</p>
+<ul>
+<li><a href="verify.html">Verify a download</a></li>
+<li><a href="https://github.com/xevrion/hatchzip">Source code</a></li>
+<li><a href="https://github.com/xevrion/hatchzip/issues">Report a bug</a></li>
+</ul>
+</nav>
+</aside>
+
+<div class="content">
+<header>
+<nav class="crumbs" aria-label="Breadcrumb">
+<ol>
+<li><a href="./">HatchZip</a></li>
+<li aria-current="page">Not enough disk space to extract</li>
+</ol>
+</nav>
+<h1>Not enough disk space to extract a ZIP, RAR or 7z: how to fix it</h1>
+</header>
+<main>
+<p class="answer">WinRAR, 7-Zip and unzip leave the archive on the disk until they finish, so the drive has to hold the archive and every extracted file at the same time: a 180 GB archive that unpacks to 200 GB takes 380 GB. Extract to another drive, free up space, or extract in place, which needs room for the extracted files only.</p>
+<p class="note">By <a href="https://x.com/xevrion_the1">Yash Bavadiya</a>, maker of <a href="https://github.com/xevrion/hatchzip">HatchZip</a>. Updated <time class="nw" datetime="2026-10-25">2026-10-25</time>.</p>
+
+<section aria-labelledby="why">
+<h2 id="why">Why does extracting need room for the archive and the files at once?</h2>
+<p>Because a normal extraction only copies data out of the archive. Nothing is deleted while it runs, and the archive stays until you delete it yourself.</p>
+<p>The number to look at is the extracted size, not the size of the archive. Open the archive in WinRAR or 7-Zip and add up the Size column: that is what the extraction writes. The Packed or Packed Size column is what the archive already takes. Video, music and most game data barely compress, so the two are often close, and the drive then needs almost twice the archive's size in total.</p>
+</section>
+
+<section aria-labelledby="error">
+<h2 id="error">What does the error look like?</h2>
+<p>Each program words it differently, but they all mean that a write failed because the drive was full:</p>
+<ul>
+<li>Windows: "There is not enough space on the disk." This is the system's text for error 112, <a href="https://learn.microsoft.com/en-us/windows/win32/debug/system-error-codes--0-499-">as Microsoft lists it</a>, and programs that pass on the Windows error show it.</li>
+<li>WinRAR: "Not enough disk space for" followed by a file name, or "Write error in the file". Both are messages in WinRAR 7.13.</li>
+<li>unzip on Linux and macOS: "write error (disk full?)".</li>
+<li>7-Zip on Linux: "No space left on device".</li>
+</ul>
+<p>If the drive you are extracting to clearly has room, the full drive is a different one, or the drive refuses a large file. Those cases have their own guides: <a href="winrar-not-enough-space.html">WinRAR says not enough space on disk when there is</a> and <a href="7zip-not-enough-space.html">7-Zip says there is not enough space on the disk</a>.</p>
+</section>
+
+<section aria-labelledby="other-drive">
+<h2 id="other-drive">Can I extract to a different drive?</h2>
+<p>Yes, and it is the simplest fix when another drive, such as a second internal disk or a USB disk, has room for the extracted files. The archive stays where it is; only the destination needs the space.</p>
+<ul>
+<li>WinRAR: open the archive, choose Extract To, and pick a folder on the other drive.</li>
+<li>7-Zip: open the archive, choose Extract, and change "Extract to".</li>
+<li>Windows, for a ZIP: right-click it, choose Extract All, then Browse.</li>
+</ul>
+<p>It works the other way round too. Move the archive onto a USB disk first, then extract it from there to the internal drive, which then only needs room for the files.</p>
+<p>Before you start, check how the USB disk is formatted: in Explorer, right-click it, choose Properties, and read File system. FAT32 cannot hold any single file of 4 GiB or more, <a href="https://learn.microsoft.com/en-us/windows/win32/fileio/filesystem-functionality-comparison">according to Microsoft</a>; exFAT and NTFS have no such limit.</p>
+</section>
+
+<section aria-labelledby="free-space">
+<h2 id="free-space">How do I free up space on Windows?</h2>
+<p>Use Storage Sense (Settings, System, Storage) or the older Disk Cleanup tool. Both remove temporary files and other files Windows can do without; <a href="https://support.microsoft.com/en-us/windows/free-up-drive-space-in-windows-85529ccb-c365-490d-b548-831022bc9b32">Microsoft's guide to freeing drive space</a> explains each one.</p>
+<p>Look in your Downloads folder as well, for archives you already extracted and installers you already ran. Freeing space solves the problem only if you can free as much as the extracted size. The next two fixes need much less.</p>
+</section>
+
+<section aria-labelledby="split-parts">
+<h2 id="split-parts">Can I delete the parts of a split archive while it extracts?</h2>
+<p>Sometimes, by hand. If the archive comes in parts, such as <code>game.part1.rar</code>, <code>game.part2.rar</code> or <code>game.7z.001</code>, <code>game.7z.002</code>, the extractor reads them in order, and once it has moved on to the next part, the finished one is no longer needed. Deleting it gives its space back.</p>
+<p>This is fiddly and has two risks. You have to know which part the extractor is reading, and a part deleted too early is gone. If the extraction then fails, for example on a damaged part, you cannot start over without downloading the deleted parts again. Only do it with a download you can fetch again.</p>
+<p>HatchZip does this step itself: it deletes each volume of a split 7z, ZIP or RAR once nothing in it is still needed. In the test published in its README on 2026-10-22, a 7z split into 5 volumes of 40 MB extracted 200 MB of files with at most 210 MB of the disk in use.</p>
+</section>
+
+<section aria-labelledby="in-place">
+<h2 id="in-place">Can I extract without needing space for the archive as well?</h2>
+<p>Yes, by extracting in place. HatchZip extracts the archive from its last file to its first and, once each batch of files is safely written, cuts that part off the end of the archive file. The freed space holds the next batch, so the drive needs room for the extracted files plus a margin, and when it finishes, only the files are left.</p>
+<p>It reads ZIP, 7z, tar, <code>.tar.gz</code>, RAR and split archives, runs on Windows, macOS and Linux, and is free and open source. <a href="./#download">Download HatchZip</a>.</p>
+<p>The trade-off is that the archive is used up. If you need to keep it, a normal extraction is the right tool, and it needs the full space.</p>
+</section>
+
+<section aria-labelledby="check">
+<h2 id="check">How can I check whether it will fit before I start?</h2>
+<p>Run <code>hatchzip check</code> on the archive. It reads the archive's index and the drive's free space, changes nothing, and prints both what a normal extraction needs and what extracting in place needs. This is the archive from the test below, on a drive with 50.6 MB free:</p>
+<pre><code>$ hatchzip check game.zip --keep-free 5M
+game.zip  180.1 MB zip, 200.0 MB uncompressed in 22 entries
+  available                    50.6 MB
+  standard extraction needs    200.1 MB
+  required                     28.6 MB (+5.0 MB reserved)
+  available after              30.6 MB</code></pre>
+<ul>
+<li>"standard extraction needs" is what WinRAR, 7-Zip or unzip would need here: 200.1 MB, about four times the free space.</li>
+<li>"required" is the most free space HatchZip needs at any moment of the run, and "available after" is what is left when it finishes.</li>
+<li>When it does not fit, <code>check</code> says how much more space is needed and exits with code 3. The desktop app shows the same figures before you choose Extract.</li>
+</ul>
+<p>By default HatchZip keeps 2 GB free, so the drive never fills completely. The test disk was only 220 MiB in total, so the reserve was lowered to 5 MB with <code>--keep-free 5M</code>.</p>
+</section>
+
+<section aria-labelledby="measured">
+<h2 id="measured">Measured: unzip, 7-Zip and HatchZip on a nearly full disk</h2>
+<p>Checked 2026-10-25. Method: 200.0 MB of data in 21 files, mostly random bytes so that it barely compresses, was packed into a 180.1 MB ZIP with Info-ZIP Zip 3.0 and into two 180.0 MB 7z archives with 7-Zip 25.01, one with <code>-ms=20m</code> (several solid blocks) and one with default settings. Each archive was copied alone onto an empty 220 MiB disk, which left 50.6 MB free, and extracted onto the same disk.</p>
+<table class="stack">
+<thead>
+<tr><th scope="col">Tool</th><th scope="col">Archive</th><th scope="col">Result</th></tr>
+</thead>
+<tbody>
+<tr><th scope="row"><code>unzip</code> 6.00</th><td data-label="Archive">ZIP</td><td data-label="Result">Stopped while writing file 6 of 21: "write error (disk full?)"</td></tr>
+<tr><th scope="row"><span class="nw">7-Zip</span> 25.01</th><td data-label="Archive">Both 7z archives</td><td data-label="Result">Stopped while writing file 6 of 21: "No space left on device"</td></tr>
+<tr><th scope="row">HatchZip 0.1.3</th><td data-label="Archive">ZIP</td><td data-label="Result">Finished: 21 of 21 files, each byte-identical to the original</td></tr>
+<tr><th scope="row">HatchZip 0.1.3</th><td data-label="Archive">7z, <code>-ms=20m</code></td><td data-label="Result">Finished: 21 of 21 files, each byte-identical to the original</td></tr>
+<tr><th scope="row">HatchZip 0.1.3</th><td data-label="Archive">7z, default settings</td><td data-label="Result">Refused before changing anything: the archive is one solid block, which needs 200.1 MB free</td></tr>
+</tbody>
+</table>
+<p class="note">Fedora 43 (Linux 6.19), Intel Core i7-14700HX. The 220 MiB disk was a tmpfs, a disk held in memory, standing in for a full laptop drive. HatchZip ran with <code>--keep-free 5M</code>, as explained above. The ZIP results match those first published in the HatchZip README on 2026-10-21.</p>
+</section>
+
+<section aria-labelledby="fit">
+<h2 id="fit">Where HatchZip fits, and where it doesn't</h2>
+<p>It fits when the archive and the files are on the same drive, and the drive has room for the files but not for both. It also takes over the job of deleting split parts by hand.</p>
+<p>It does not help when:</p>
+<ul>
+<li>The drive cannot hold the extracted files themselves. Only another or a bigger drive helps then.</li>
+<li>The archive is a 7z made with 7-Zip's default settings. That can be one solid block, which HatchZip can only free once all of it is out, so it needs about as much space as a normal extraction. <code>hatchzip check</code> tells you first, as in the test above.</li>
+<li>The archive is a solid RAR. HatchZip extracts it only while keeping the archive, which needs the full space.</li>
+<li>The cause is WinRAR's or 7-Zip's temporary folder, or a FAT32 drive refusing a file of 4 GiB or more. Those are not a lack of space on your drive; see the <a href="winrar-not-enough-space.html">WinRAR</a> and <a href="7zip-not-enough-space.html">7-Zip</a> guides.</li>
+<li>You want to keep the archive afterwards.</li>
+<li>The archive is a <code>.tar.xz</code> or <code>.tar.zst</code>, which it does not read yet.</li>
+</ul>
+<p>The archive is used up as the files come out. If the download is damaged, the files before the damage come out and the archive is partly gone; <code>--verify-first</code> reads the whole archive before deleting anything, for downloads you cannot fetch again.</p>
+</section>
+
+<section aria-labelledby="related">
+<h2 id="related">Related guides</h2>
+<ul>
+<li><a href="winrar-not-enough-space.html">WinRAR says not enough space on disk when there is: the causes</a></li>
+<li><a href="7zip-not-enough-space.html">7-Zip says there is not enough space on the disk: the causes</a></li>
+<li><a href="./#download">Download HatchZip</a> for Windows, macOS or Linux</li>
+</ul>
+</section>
+</main>
+
+<footer>
+<p>HatchZip is licensed under <a href="https://github.com/xevrion/hatchzip/blob/main/LICENSE-MIT">MIT</a> OR <a href="https://github.com/xevrion/hatchzip/blob/main/LICENSE-APACHE">Apache-2.0</a>. <a href="https://github.com/xevrion/hatchzip">Source on GitHub</a>. <a href="verify.html">Verify your download</a>. <a href="https://github.com/xevrion/hatchzip/issues">Report a bug</a>.</p>
+<p>Made by Yash Bavadiya (<a href="https://x.com/xevrion_the1">@xevrion_the1</a>).</p>
+</footer>
+</div>
+</div>
+</body>
+</html>

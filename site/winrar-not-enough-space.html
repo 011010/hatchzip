@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="light dark">
+<title>WinRAR says not enough space on disk when there is</title>
+<meta name="description" content="Why WinRAR reports not enough disk space when the drive has room: its temporary folder on C:, the FAT32 4 GB file limit, disk quotas, or an archive and files that really don't fit. With the fix for each.">
+<link rel="canonical" href="https://hatchzip.dev/winrar-not-enough-space.html">
+<meta property="og:url" content="https://hatchzip.dev/winrar-not-enough-space.html">
+<meta property="og:type" content="article">
+<meta property="og:title" content="WinRAR says not enough space on disk when there is: the causes">
+<meta property="og:description" content="WinRAR's temporary folder, FAT32's 4 GB file limit, disk quotas, or an archive that really doesn't fit: how to tell which, and the fix for each.">
+<meta property="og:image" content="https://hatchzip.dev/img/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="HatchZip: extract huge archives without double the disk space.">
+<meta property="article:published_time" content="2026-10-25">
+<meta property="article:modified_time" content="2026-10-25">
+<meta name="twitter:card" content="summary_large_image">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@graph":[{"@type":"Article","headline":"WinRAR says not enough space on disk when there is: the causes","description":"WinRAR's temporary folder, FAT32's 4 GB file limit, disk quotas, or an archive that really doesn't fit: how to tell which, and the fix for each.","image":"https://hatchzip.dev/img/og.png","datePublished":"2026-10-25","dateModified":"2026-10-25","inLanguage":"en","mainEntityOfPage":"https://hatchzip.dev/winrar-not-enough-space.html","author":{"@type":"Person","name":"Yash Bavadiya","url":"https://x.com/xevrion_the1","sameAs":["https://github.com/xevrion"]},"publisher":{"@type":"Person","name":"Yash Bavadiya","url":"https://x.com/xevrion_the1"}},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"HatchZip","item":"https://hatchzip.dev/"},{"@type":"ListItem","position":2,"name":"WinRAR says not enough space on disk","item":"https://hatchzip.dev/winrar-not-enough-space.html"}]}]}
+</script>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css?v=6">
+</head>
+<body>
+<div class="page">
+<aside class="side">
+<a class="brand" href="./"><img src="favicon.svg" alt="" width="48" height="48"><span>HatchZip</span></a>
+<nav aria-label="Site">
+<ul>
+<li><a href="./">Home</a></li>
+<li><a href="./#download">Download</a></li>
+</ul>
+<p class="label">Guides</p>
+<ul>
+<li><a href="not-enough-space-to-extract.html">Not enough space to extract</a></li>
+<li><a href="winrar-not-enough-space.html" aria-current="page">WinRAR space errors</a></li>
+<li><a href="7zip-not-enough-space.html">7-Zip space errors</a></li>
+</ul>
+<p class="label">Project</p>
+<ul>
+<li><a href="verify.html">Verify a download</a></li>
+<li><a href="https://github.com/xevrion/hatchzip">Source code</a></li>
+<li><a href="https://github.com/xevrion/hatchzip/issues">Report a bug</a></li>
+</ul>
+</nav>
+</aside>
+
+<div class="content">
+<header>
+<nav class="crumbs" aria-label="Breadcrumb">
+<ol>
+<li><a href="./">HatchZip</a></li>
+<li aria-current="page">WinRAR says not enough space on disk</li>
+</ol>
+</nav>
+<h1>WinRAR says not enough space on disk when there is: the causes</h1>
+</header>
+<main>
+<p class="answer">When the drive you extract to has room, check where WinRAR actually writes. Dragging files out of the WinRAR window, or opening a file from inside an archive, unpacks it to the Windows temporary folder first, normally on C:. A FAT32 USB drive cannot hold a file of 4 GiB or more. Use Extract To, and check the drive's file system.</p>
+<p class="note">By <a href="https://x.com/xevrion_the1">Yash Bavadiya</a>, maker of <a href="https://github.com/xevrion/hatchzip">HatchZip</a>. Updated <time class="nw" datetime="2026-10-25">2026-10-25</time>.</p>
+
+<section aria-labelledby="messages">
+<h2 id="messages">What do "Not enough disk space" and "There is not enough space on the disk" mean?</h2>
+<p>Both mean that a write failed because a drive was full or would not take the file. It is not always the drive you picked.</p>
+<p>WinRAR's own messages for this include "Not enough disk space for" followed by a file name, and "Write error in the file" (both are in WinRAR 7.13). "There is not enough space on the disk." is Windows' text for system error 112, <a href="https://learn.microsoft.com/en-us/windows/win32/debug/system-error-codes--0-499-">as Microsoft lists it</a>. If the message shows a path, look at which drive it is on: that is the drive to check.</p>
+</section>
+
+<section aria-labelledby="temp">
+<h2 id="temp">Why does WinRAR fill up C: when I extract to another drive?</h2>
+<p>Because drag and drop, and opening files from inside an archive, go through the Windows temporary folder. WinRAR's help says so in its list of frequent questions, about the temporary files it leaves behind: "It happens when you use drag and drop to extract files or open archived files with an external viewer."</p>
+<p>So when you drag a large folder from the WinRAR window onto drive D:, the drive that holds the temporary folder needs room for it first. To see where that is, type <code>%TEMP%</code> into the Explorer address bar. On a standard Windows setup it is inside your user folder on C:. WinRAR's temporary folders there have names starting with <code>Rar$</code>.</p>
+<p>WinRAR does not delete them right away. Its help says that the next time WinRAR starts, it deletes temporary files more than an hour old. After a failed drag, a large <code>Rar$</code> folder can still be using space on C: until then.</p>
+<h3>The fix: Extract To</h3>
+<p>Select the files in WinRAR, click Extract To (or press Alt+E), and choose the destination folder. Or right-click the archive in Explorer and use one of WinRAR's Extract items. WinRAR's help names Extract To, in the window or in the right-click menu, as the way to keep the temporary folder out of it entirely.</p>
+<h3>The setting: folder for temporary files</h3>
+<p>WinRAR also has a setting under Options, Settings, Paths, called Folder for temporary files. Its <a href="https://documentation.help/WinRAR/HELPPathsSettings.htm">help page</a> describes it as the folder WinRAR uses to create temporary files; the folder must already exist, and typing <code>%temp%</code> sets it back to the Windows default. The help does not list which commands use it, so if C: still fills up after changing it, use Extract To.</p>
+</section>
+
+<section aria-labelledby="fat32">
+<h2 id="fat32">Can a FAT32 USB drive cause the error?</h2>
+<p>Yes. FAT32 cannot hold a single file of 4 GiB or more, however much free space the drive has. Microsoft's <a href="https://learn.microsoft.com/en-us/windows/win32/fileio/filesystem-functionality-comparison">file system comparison</a> lists 4 GiB as FAT32's maximum file size, against 2<sup>64</sup> bytes minus 1 for exFAT and NTFS.</p>
+<p>Current WinRAR has messages for this case: WinRAR 7.13 includes "FAT32 file system does not support 4 GB or larger files". Other programs may show a plain space error instead; a <a href="https://techcommunity.microsoft.com/t5/windows-11/copying-files-over-4gb-to-a-usb-drive-fails-with-not-enough/m-p/4533469">July 2026 question on Microsoft's community forum</a> reports exactly that when copying a large file to a USB drive.</p>
+<p>To check, right-click the drive in Explorer, choose Properties, and read File system. To fix it, copy anything you need off the drive, then format it as exFAT or NTFS: right-click the drive, choose Format, and pick the file system. Formatting erases the drive.</p>
+</section>
+
+<section aria-labelledby="quota">
+<h2 id="quota">Could a disk quota or a full C: drive be the cause?</h2>
+<p>Yes, in two situations.</p>
+<ul>
+<li>A disk quota. On a PC managed by an employer or a school, an administrator can limit how much of an NTFS drive each account may use. Microsoft's documentation of <a href="https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getdiskfreespaceexw">GetDiskFreeSpaceEx</a> notes that with per-user quotas, the free space available to you "may be less than the total number of free bytes on a disk". Ask whoever manages the PC.</li>
+<li>A full C: drive. If C: is nearly full, every drag out of WinRAR can fail, wherever you drop the files, because of the temporary folder above. Use Extract To, or <a href="not-enough-space-to-extract.html#free-space">free up space on C:</a>.</li>
+</ul>
+</section>
+
+<section aria-labelledby="real">
+<h2 id="real">What if the archive and the files really don't fit?</h2>
+<p>Then WinRAR is right: the drive has to hold the archive and every extracted file until the extraction ends. Add up the Size column in WinRAR's file list to see how much it will write; the Packed column is what the archive already takes.</p>
+<p>The fixes are to extract to another drive, to free up space, or to extract in place. The <a href="not-enough-space-to-extract.html">guide to extracting without enough disk space</a> covers each one, with a test on a nearly full disk.</p>
+</section>
+
+<section aria-labelledby="fit">
+<h2 id="fit">Where HatchZip fits, and where it doesn't</h2>
+<p>HatchZip helps with the last cause only. It extracts RAR 5 and RAR 4 archives, single files and volume sets such as <code>.part1.rar</code>, in place: it frees the archive file by file and deletes each volume once it is empty, so the drive needs room for the extracted files rather than for the files and the archive together. <a href="./#download">Download HatchZip</a>; RAR support is included in the downloads from this site.</p>
+<p>It does not help with:</p>
+<ul>
+<li>The temporary folder. That is how WinRAR hands files to Explorer, not a lack of space on your target drive. Use Extract To.</li>
+<li>FAT32. HatchZip cannot write a file of 4 GiB or more to a FAT32 drive either. Format the drive as exFAT or NTFS.</li>
+<li>A disk quota that leaves your account less space than the files need.</li>
+<li>A solid RAR. It decodes from front to back in one pass, so HatchZip extracts it only while keeping the archive, which needs as much space as WinRAR does.</li>
+<li>RAR archives with encrypted file names or links. HatchZip refuses them before changing anything.</li>
+<li>Keeping the archive. In-place extraction uses it up.</li>
+</ul>
+</section>
+
+<section aria-labelledby="sources">
+<h2 id="sources">Sources</h2>
+<p class="note">Checked 2026-10-25.</p>
+<ul>
+<li>WinRAR 7.13 help file (<code>WinRAR.chm</code>, from the installer on rarlab.com): the frequently asked question "Why WinRAR does not delete its temporary files in the Windows temporary folder?" and the Paths settings topic. An online copy of an older version is at <a href="https://documentation.help/WinRAR/HELPFAQ.htm">documentation.help</a>; it is not run by the makers of WinRAR.</li>
+<li>WinRAR 7.13 program file (<code>WinRAR.exe</code>): the message texts quoted above.</li>
+<li>win-rar.com: <a href="https://www.win-rar.com/leave-artifacts-temp-folder.html">Does WinRAR leave artifacts in temp folders</a>, on unpacking files to the temp folder when they are opened in other apps.</li>
+<li>Microsoft: <a href="https://learn.microsoft.com/en-us/windows/win32/fileio/filesystem-functionality-comparison">File system functionality comparison</a>, <a href="https://learn.microsoft.com/en-us/windows/win32/debug/system-error-codes--0-499-">System error codes 0 to 499</a>, <a href="https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getdiskfreespaceexw">GetDiskFreeSpaceEx</a>.</li>
+</ul>
+</section>
+
+<section aria-labelledby="related">
+<h2 id="related">Related guides</h2>
+<ul>
+<li><a href="not-enough-space-to-extract.html">Not enough disk space to extract a ZIP, RAR or 7z: how to fix it</a></li>
+<li><a href="7zip-not-enough-space.html">7-Zip says there is not enough space on the disk: the causes</a></li>
+<li><a href="./#download">Download HatchZip</a> for Windows, macOS or Linux</li>
+</ul>
+</section>
+</main>
+
+<footer>
+<p>HatchZip is licensed under <a href="https://github.com/xevrion/hatchzip/blob/main/LICENSE-MIT">MIT</a> OR <a href="https://github.com/xevrion/hatchzip/blob/main/LICENSE-APACHE">Apache-2.0</a>. The downloads decode RAR with UnRAR, under its own <a href="https://github.com/xevrion/hatchzip/blob/main/LICENSE-UNRAR">license</a>. <a href="https://github.com/xevrion/hatchzip">Source on GitHub</a>. <a href="verify.html">Verify your download</a>. <a href="https://github.com/xevrion/hatchzip/issues">Report a bug</a>.</p>
+<p>Made by Yash Bavadiya (<a href="https://x.com/xevrion_the1">@xevrion_the1</a>).</p>
+<p>HatchZip is not affiliated with WinRAR or its makers.</p>
+</footer>
+</div>
+</div>
+</body>
+</html>

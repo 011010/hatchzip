@@ -89,6 +89,15 @@ body {
 }
 
 .side nav a:hover { background: var(--head); text-decoration: underline; }
+.side nav a[aria-current="page"] { color: var(--fg); font-weight: 600; }
+
+/* A small heading between groups of menu links. */
+.side .label {
+  margin: 16px 8px 4px;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
 
 .content {
   padding: 32px clamp(16px, 4vw, 64px) 48px;
@@ -151,6 +160,21 @@ a.get {
 a.get:hover { text-decoration: underline; }
 
 .lead { font-size: 1.125rem; margin: 0 0 16px; }
+
+/* Guides: the path above the title, the short answer under it, and the
+   author line. */
+.crumbs { margin: 0 0 8px; font-size: 0.875rem; color: var(--muted); }
+.crumbs ol { display: flex; flex-wrap: wrap; gap: 4px; list-style: none; margin: 0; padding: 0; }
+.crumbs li { margin: 0; }
+.crumbs li + li::before { content: "/"; margin-right: 4px; }
+
+.content p.answer {
+  max-width: 80ch;
+  margin: 16px 0;
+  padding: 2px 0 2px 14px;
+  border-left: 3px solid var(--link);
+  font-size: 1.0625rem;
+}
 .note, small, footer { color: var(--muted); }
 .note { font-size: 0.875rem; }
 
@@ -249,6 +273,8 @@ footer p { margin: 4px 0; }
   }
 
   .side nav a { padding: 2px 6px; }
+
+  .side .label { margin: 8px 6px 2px; }
 
   .content { padding: 16px 16px 32px; }
 
