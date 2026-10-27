@@ -222,6 +222,9 @@ pub fn restore(archive: &Path, output: Option<&Path>) -> Result<Restored> {
     remove(&paths.journal)?;
     fsutil::sync_dir(paths.journal.parent().unwrap_or(Path::new(".")))?;
     remove(&paths.tail)?;
+    // Left behind, the record would vouch for whatever journal next turns up
+    // next to an archive at this path.
+    crate::chosen::forget(&paths.archive);
     Ok(Restored {
         archive: primary,
         format,

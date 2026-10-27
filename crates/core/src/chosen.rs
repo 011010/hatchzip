@@ -1,8 +1,9 @@
-//! The output folders a person chose for the extractions they started, kept
-//! in their own profile rather than next to the archive. A journal next to
-//! the archive may have been put there by whoever supplied the archive; this
-//! record can't have been, so a folder found in it is the person's own
-//! choice, and a resume may follow it without being told again.
+//! The output folders of the extractions started on this computer, the
+//! default one included, kept in the person's own profile rather than next
+//! to the archive. A journal next to the archive may have been put there by
+//! whoever supplied the archive; this record can't have been, so a journal
+//! whose folder is found in it belongs to an extraction the person started,
+//! and a resume may follow it without being told again.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -20,7 +21,10 @@ struct Record {
 /// `%LOCALAPPDATA%\HatchZip`, `~/Library/Application Support/HatchZip`, or
 /// `$XDG_STATE_HOME/hatchzip`, which defaults to `~/.local/state/hatchzip`.
 fn dir() -> Option<PathBuf> {
-    // The test suite keeps its records away from the person running it.
+    // The test suites keep their records away from the person running them.
+    if cfg!(test) {
+        return Some(std::env::temp_dir().join("hatchzip-test-outputs"));
+    }
     if cfg!(debug_assertions)
         && let Some(d) = std::env::var_os("HATCHZIP_STATE_DIR")
     {

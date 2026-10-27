@@ -96,10 +96,12 @@ pub fn open(
 }
 
 /// The journal lies next to the archive, where anyone who supplied the
-/// archive could have put one, so the folder it names is used only if it is
-/// the archive's default folder, one this person chose for it (see
-/// [`crate::chosen`]), or the one they give again (`given`). Otherwise a
-/// planted journal could have a resume delete and write files anywhere.
+/// archive could have put one, so it is used only for an extraction this
+/// computer recorded starting into that folder (see [`crate::chosen`]), or
+/// when the person names the folder again (`given`). A resume deletes what
+/// it finds at the paths of the entries left, so a planted journal could
+/// otherwise have it delete and write files anywhere, and even in the
+/// default folder it would replace the person's own files there.
 /// `command` is the one to run again, with `-o`.
 pub fn check_output(
     journal: &Journal,
@@ -107,6 +109,8 @@ pub fn check_output(
     given: Option<&Path>,
     command: &str,
 ) -> Result<()> {
+    let default = default_output(primary);
+    let in_default = fsutil::same_path(&default, &journal.output);
     match given {
         Some(o) => {
             if !fsutil::same_path(&std::path::absolute(o)?, &journal.output) {
@@ -117,22 +121,30 @@ pub fn check_output(
                 );
             }
         }
-        None => {
-            let default = default_output(primary);
-            if fsutil::same_path(&default, &journal.output) {
+        None if crate::chosen::chose(primary, &journal.output) => {
+            if in_default {
                 refuse_linked_default(&default)?;
-            } else if !crate::chosen::chose(primary, &journal.output) {
-                bail!(
-                    "{} was partially extracted to {}, a folder not chosen on this computer. If \
-                     you started that extraction, continue it by naming the folder again: \
-                     hatchzip {command} \"{}\" -o \"{}\". Nothing was modified",
-                    primary.display(),
-                    journal.output.display(),
-                    primary.display(),
-                    journal.output.display()
-                );
             }
         }
+        // Releases before 0.1.6 did not record the default folder.
+        None if in_default => bail!(
+            "{} was partially extracted to {}, but this computer has no record of starting that \
+             extraction. If you started it, continue it by naming the folder again: hatchzip \
+             {command} \"{}\" -o \"{}\". Nothing was modified",
+            primary.display(),
+            journal.output.display(),
+            primary.display(),
+            journal.output.display()
+        ),
+        None => bail!(
+            "{} was partially extracted to {}, a folder not chosen on this computer. If you \
+             started that extraction, continue it by naming the folder again: hatchzip {command} \
+             \"{}\" -o \"{}\". Nothing was modified",
+            primary.display(),
+            journal.output.display(),
+            primary.display(),
+            journal.output.display()
+        ),
     }
     Ok(())
 }
@@ -558,9 +570,9 @@ pub fn begin(
         // Front ends say this earlier; this is the last line.
         bail!("{why}. It can be extracted while keeping the archive");
     }
-    if !fsutil::same_path(&output, &default_output(&paths.archive)) {
-        crate::chosen::remember(&paths.archive, &output);
-    }
+    // The default folder too: a resume trusts the journal only when this
+    // computer recorded starting the extraction (see [`check_output`]).
+    crate::chosen::remember(&paths.archive, &output);
     let plan = Plan {
         format: job.format_name,
         tail_start: job.tail_start,
