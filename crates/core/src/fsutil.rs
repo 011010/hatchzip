@@ -1,4 +1,4 @@
-use std::fs::{self, File};
+use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -52,9 +52,22 @@ fn existing_ancestor(path: &Path) -> PathBuf {
 /// Write `bytes` to `path` so that after a crash the file holds either the
 /// old contents or the new ones, never a mix.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
-    let tmp = path.with_extension("tmp");
+    // `game.zip.hatchzip.tmp`: every file its own temporary name, under its
+    // own. Swapping the extension gave the journal and the saved tail the
+    // same one, `game.zip.tmp`, a name that may well be someone else's.
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = PathBuf::from(tmp);
+    // Left by a crash, or put there by someone else. Removing a link
+    // removes only the link.
+    if let Err(e) = fs::remove_file(&tmp)
+        && e.kind() != std::io::ErrorKind::NotFound
     {
-        let mut f = File::create(&tmp).with_context(|| format!("creating {}", tmp.display()))?;
+        return Err(e).with_context(|| format!("removing {}", tmp.display()));
+    }
+    {
+        let mut f = platform::create_new_no_follow(&tmp)
+            .with_context(|| format!("creating {}", tmp.display()))?;
         f.write_all(bytes)?;
         f.sync_all()?;
     }
@@ -205,6 +218,26 @@ pub fn zip_time(dt: zip::DateTime) -> Option<SystemTime> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Each file has its own temporary file, so writing the journal leaves
+    /// a file named like the old shared one alone, and one a crash left
+    /// behind doesn't get in the way.
+    #[test]
+    fn writing_atomically_changes_only_the_file_written() {
+        let dir = std::env::temp_dir().join(format!("hatchzip-atomic-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let journal = dir.join("game.zip.hatchzip");
+        let other = dir.join("game.zip.tmp");
+        fs::write(&other, b"someone else's").unwrap();
+        let stale = dir.join("game.zip.hatchzip.tmp");
+        fs::write(&stale, b"stale").unwrap();
+
+        write_atomic(&journal, b"new").unwrap();
+        assert_eq!(fs::read(&journal).unwrap(), b"new");
+        assert_eq!(fs::read(&other).unwrap(), b"someone else's");
+        assert!(!stale.exists());
+        fs::remove_dir_all(&dir).unwrap();
+    }
 
     /// Where the probe says punching works, a punched range must read as
     /// zeros, give its space back, and leave the length and every other byte
