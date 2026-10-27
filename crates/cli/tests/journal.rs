@@ -122,6 +122,64 @@ fn a_journal_output_elsewhere_needs_the_folder_named() {
     );
 }
 
+/// Where a run notes the folder of the extraction it starts.
+fn record(archive: &Path) -> PathBuf {
+    let hash = crc32fast::hash(archive.as_os_str().as_encoded_bytes());
+    state_dir().join(format!("{hash:08x}.json"))
+}
+
+/// A journal this computer has no record of, such as one that came with
+/// the archive, is not used even for the default folder. A resume deletes
+/// what it finds at the paths of the entries left, and there those may be
+/// the person's own files.
+#[test]
+fn a_journal_for_the_default_folder_without_its_record_needs_the_folder_named() {
+    let tmp = TempDir::new().unwrap();
+    let archive = tar_of(tmp.path(), "game.tar", &files());
+    // Crashed under another profile, as on another computer or by a
+    // release that did not record the default folder.
+    let elsewhere = tmp.path().join("state");
+    let env = [
+        crash().as_slice(),
+        &[("HATCHZIP_STATE_DIR", elsewhere.to_str().unwrap())],
+    ]
+    .concat();
+    assert!(!extract_here(&archive, &env).status.success());
+    assert!(!record(&archive).exists());
+    // Extraction runs from the end, so `one.txt` is not extracted yet.
+    let out = tmp.path().join("game");
+    assert!(!out.join("one.txt").exists());
+    fs::write(out.join("one.txt"), b"a file of the person's").unwrap();
+    let before = fs::read(&archive).unwrap();
+
+    let run = extract_here(&archive, &[]);
+    assert_refused(&run, "no record of starting that extraction");
+    assert_refused(&run, "Nothing was modified");
+    assert_refused(&restore(&archive, None), "hatchzip restore");
+    assert_eq!(
+        fs::read(out.join("one.txt")).unwrap(),
+        b"a file of the person's"
+    );
+    assert_eq!(fs::read(&archive).unwrap(), before);
+
+    // Named again, it is the person's own extraction and resumes.
+    fs::remove_file(out.join("one.txt")).unwrap();
+    assert_ok(&extract(&archive, &out, &[]));
+    assert_tree_without_dir(&out);
+    assert_consumed(&archive);
+}
+
+/// Restore removes the record with the progress files, so it can't vouch
+/// for a journal that turns up next to an archive at that path later.
+#[test]
+fn restore_removes_the_record() {
+    let tmp = TempDir::new().unwrap();
+    let archive = half_extracted(tmp.path());
+    assert!(record(&archive).exists());
+    assert_ok(&restore(&archive, None));
+    assert!(!record(&archive).exists());
+}
+
 /// A run the person started with `-o` resumes without it on the same
 /// computer, as the app resumes one, and the record goes when the run ends.
 #[test]
@@ -130,8 +188,7 @@ fn a_chosen_output_resumes_without_naming_it() {
     let archive = tar_of(tmp.path(), "game.tar", &files());
     let out = tmp.path().join("chosen");
     assert!(!extract(&archive, &out, &crash()).status.success());
-    let hash = crc32fast::hash(archive.as_os_str().as_encoded_bytes());
-    let record = state_dir().join(format!("{hash:08x}.json"));
+    let record = record(&archive);
     assert!(record.exists());
 
     assert_ok(&extract_here(&archive, &[]));

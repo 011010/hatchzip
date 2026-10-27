@@ -492,6 +492,35 @@ fn a_path_longer_than_the_system_allows_is_refused_up_front() {
     }
 }
 
+/// Every file is first written under its name plus `.hatchzip-part`. An
+/// entry named that way would share the name with another entry's file, or
+/// stay in the folder as a link for a later extraction to write through.
+#[test]
+fn an_entry_named_like_a_part_file_is_refused() {
+    let tmp = TempDir::new().unwrap();
+    let mut z = ZipWriter::new(Cursor::new(Vec::new()));
+    z.start_file("x", stored()).unwrap();
+    z.write_all(b"first\n").unwrap();
+    z.start_file("x.hatchzip-part", stored()).unwrap();
+    z.write_all(b"second\n").unwrap();
+    let archive = write(tmp.path(), "collide.zip", z.finish().unwrap().into_inner());
+    assert_refused(
+        &archive,
+        "'x.hatchzip-part' uses a name ending in .hatchzip-part",
+    );
+
+    let mut z = ZipWriter::new(Cursor::new(Vec::new()));
+    z.add_symlink("report.pdf.hatchzip-part", "../outside.txt", stored())
+        .unwrap();
+    let archive = write(tmp.path(), "link.zip", z.finish().unwrap().into_inner());
+    assert_refused(&archive, "'report.pdf.hatchzip-part' uses a name ending");
+
+    // In a folder name too, and in any case.
+    let bytes = tar_bytes(&[Tar::File("docs.HATCHZIP-PART/a.txt", b"a\n")]);
+    let archive = write(tmp.path(), "folder.tar", bytes);
+    assert_refused(&archive, "'docs.HATCHZIP-PART/a.txt' uses a name ending");
+}
+
 /// One name past 255 bytes, counting the `.hatchzip-part` it is written
 /// under first, can't be created anywhere.
 #[test]
