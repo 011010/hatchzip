@@ -18,8 +18,9 @@ pub const DEFAULT_KEEP_FREE: u64 = 2_000_000_000;
 pub struct Settings {
     pub keep_free: u64,
     pub verify_first: bool,
-    /// Extract without removing the archive, in the main window. The
-    /// right-click menu has an entry of its own for it instead.
+    /// Extract without removing the archive, in the main window and from
+    /// every right-click entry. Off, the right-click menu still has an entry
+    /// that keeps it.
     pub keep_archive: bool,
     /// Close the right-click window once everything in it is extracted, as
     /// other extractors do. A test, a pause or a failure keeps it open.

@@ -294,6 +294,31 @@ fn close_flow() {
     assert!(dir.path().join("northwind/Northwind/README.txt").exists());
 }
 
+/// With "Remove the archive during extraction" cleared in the app, a plain
+/// "Extract here" keeps the archive too, as other extractors always do.
+fn keep_setting_flow() {
+    let dir = tempfile::tempdir().unwrap();
+    let archive = make_zip(dir.path());
+    let before = std::fs::read(&archive).unwrap();
+    let settings = Settings {
+        keep_archive: true,
+        ..stay_open()
+    };
+    let (ui, start) = task_window::build(one(TaskKind::ExtractHere, &archive), settings).unwrap();
+    start();
+    let w = ui.as_weak();
+    wait_until("the extraction", move || {
+        w.unwrap().get_task().phase == Phase::Done
+    });
+    assert_eq!(
+        ui.get_task().message,
+        "All entries were extracted. The archive was kept."
+    );
+    assert_eq!(std::fs::read(&archive).unwrap(), before);
+    assert!(dir.path().join("Northwind/README.txt").exists());
+    ui.hide().unwrap();
+}
+
 /// Unticking "Remove the archive during extraction" plans for every file,
 /// remembers the choice, and extracts without touching the archive.
 fn keep_flow(scheme: ColorScheme, tag: &str) {
@@ -818,4 +843,5 @@ fn windows_end_to_end() {
     }
     close_flow();
     here_flow();
+    keep_setting_flow();
 }

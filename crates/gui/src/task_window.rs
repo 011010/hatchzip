@@ -52,8 +52,9 @@ pub fn run(mut args: TaskArgs) -> Result<()> {
 }
 
 /// The task and request for one archive. The main window's reserved space
-/// and verification settings apply; whether the archive is kept is the
-/// menu entry's choice.
+/// and verification settings apply. The archive is kept when the menu entry
+/// says so or when the main window's setting does, so someone who never
+/// wants archives removed gets that from every entry.
 fn job_for(
     kind: &TaskKind,
     archive: &Path,
@@ -101,7 +102,10 @@ pub fn build(args: TaskArgs, settings: Settings) -> Result<(TaskWindow, impl FnO
     let jobs: Vec<(Task, Request)> = args
         .archives
         .iter()
-        .map(|a| job_for(&args.kind, a, args.keep_archive, &settings))
+        .map(|a| {
+            let keep = args.keep_archive || settings.keep_archive;
+            job_for(&args.kind, a, keep, &settings)
+        })
         .collect();
     let Some((task, _)) = jobs.first() else {
         anyhow::bail!("no archive given");
