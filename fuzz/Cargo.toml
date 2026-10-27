@@ -1,0 +1,69 @@
+[package]
+name = "hatchzip-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+hatchzip-core = { path = "../crates/core" }
+libfuzzer-sys = "0.4.13"
+
+[features]
+# Only the rar target needs it: UnRAR's C++ source, under its own license,
+# as in hatchzip-core.
+rar = ["hatchzip-core/rar"]
+
+# Its own workspace, kept out of the main one: it only builds with nightly
+# and cargo-fuzz.
+[workspace]
+
+# Line tables, so the stack trace of a finding names the line.
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "zip"
+path = "fuzz_targets/zip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sevenz"
+path = "fuzz_targets/sevenz.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tar"
+path = "fuzz_targets/tar.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "targz"
+path = "fuzz_targets/targz.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sniff"
+path = "fuzz_targets/sniff.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "rar"
+path = "fuzz_targets/rar.rs"
+test = false
+doc = false
+bench = false
+required-features = ["rar"]

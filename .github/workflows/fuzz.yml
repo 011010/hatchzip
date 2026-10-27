@@ -1,0 +1,74 @@
+name: fuzz
+
+# Feeds mutated archives to the parsers and decoders in crates/core through
+# the read-only path `hatchzip test` takes, two minutes per target; see
+# fuzz/README.md. Pull requests that change the engine or the targets run it,
+# and the weekly run keeps exploring while nothing changes. A finding fails
+# the job and uploads the input that caused it.
+on:
+  pull_request:
+    paths:
+      - 'crates/core/**'
+      - 'fuzz/**'
+      - '.github/workflows/fuzz.yml'
+  schedule:
+    - cron: '37 3 * * 6'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+# Each job asks for exactly what it needs below.
+permissions: {}
+
+# A new push to the same branch makes the running fuzzing for the old one moot.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz:
+    name: fuzz (${{ matrix.target }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      # A finding in one format says nothing about the others.
+      fail-fast: false
+      matrix:
+        # The rar target needs UnRAR's C++ build (`--features rar`) and is
+        # run locally for now.
+        target: [zip, sevenz, tar, targz, sniff]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Before the installs, so a cached cargo-fuzz is found and kept.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: fuzz
+      # The sanitizer and coverage flags cargo-fuzz passes need nightly.
+      # cargo-fuzz itself builds with the pinned stable toolchain.
+      - run: rustup toolchain install nightly --profile minimal
+      - run: cargo install cargo-fuzz --version 0.13.2 --locked
+      # -max_len matches MAX_INPUT in fuzz/src/lib.rs. An input that takes
+      # over a minute is a hang. Decoders allocate the dictionary an archive
+      # declares in one piece, just under 4 GiB at most for LZMA, so memory
+      # and any single allocation are limited just above that; anything more
+      # is a finding.
+      - run: >-
+          cargo +nightly fuzz run "$TARGET" --
+          -max_total_time=120
+          -max_len=262144
+          -timeout=60
+          -rss_limit_mb=4096
+        env:
+          TARGET: ${{ matrix.target }}
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}
+          if-no-files-found: ignore
+          retention-days: 30
