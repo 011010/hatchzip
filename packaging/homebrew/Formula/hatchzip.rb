@@ -12,23 +12,23 @@ class Hatchzip < Formula
 
   on_macos do
     on_arm do
-      url "https://github.com/xevrion/hatchzip/releases/download/v0.1.6/hatchzip-aarch64-macos.tar.gz"
-      sha256 "e3efd5e9812e23cde232dad4a762f313cfa5a369e1ab9ebaf0c46faf51af0454"
+      url "https://github.com/xevrion/hatchzip/releases/download/v0.1.7/hatchzip-aarch64-macos.tar.gz"
+      sha256 "b23b888c7f5608e99f75680b8918789f9f9e015b50087933a8fec5c5d9f87a8c"
     end
     on_intel do
-      url "https://github.com/xevrion/hatchzip/releases/download/v0.1.6/hatchzip-x86_64-macos.tar.gz"
-      sha256 "bf2e0d183e7e8e3daa3a28e2717ecf97fd31b814c82cef74c5c9eb75d5e124e6"
+      url "https://github.com/xevrion/hatchzip/releases/download/v0.1.7/hatchzip-x86_64-macos.tar.gz"
+      sha256 "63483dd17a38759d1cdbff5f52f4f38c6566f44396596415376eecbbf6b29be1"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/xevrion/hatchzip/releases/download/v0.1.6/hatchzip-aarch64-linux.tar.gz"
-      sha256 "2fa2ac2fce84c22bd73018e719fd9b9b114caca25fb993961c2463ce8cd264af"
+      url "https://github.com/xevrion/hatchzip/releases/download/v0.1.7/hatchzip-aarch64-linux.tar.gz"
+      sha256 "15e6fc9c685931b09caa9b5e8da36f4d609652399f151d533624f8e60e033853"
     end
     on_intel do
-      url "https://github.com/xevrion/hatchzip/releases/download/v0.1.6/hatchzip-x86_64-linux.tar.gz"
-      sha256 "47a2d2f5665ec0af220f4d4fb47ff3f3cbf699a91e206ecab45cf234247c3513"
+      url "https://github.com/xevrion/hatchzip/releases/download/v0.1.7/hatchzip-x86_64-linux.tar.gz"
+      sha256 "ded237934470a93f380eddb05b70d0d060a009ef9491aa915376b3bd121bc18e"
     end
   end
 
