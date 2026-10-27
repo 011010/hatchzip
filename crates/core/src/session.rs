@@ -282,8 +282,10 @@ pub fn open_encrypted_noting(
 }
 
 /// Refuses what no extraction into `out` can get past: a folder where the
-/// archive has a file, which is never deleted or replaced, and a file where
-/// it needs a folder, which would only fail halfway.
+/// archive has a file, which is never deleted or replaced, a file where it
+/// needs a folder, which would only fail halfway, and anything at the name a
+/// file is first written under. That last one would be in the way of the
+/// file, or would be deleted as the run's own by a resume.
 fn check_collisions(job: &Job, out: &Path) -> Result<()> {
     if !out.exists() {
         return Ok(());
@@ -291,6 +293,16 @@ fn check_collisions(job: &Job, out: &Path) -> Result<()> {
     let mut checked = std::collections::HashSet::new();
     for item in job.units.iter().flat_map(|u| &u.items) {
         let dest = out.join(&item.path);
+        let part = crate::engine::part_path(&dest);
+        if item.kind == crate::archive::Kind::File && fs::symlink_metadata(&part).is_ok() {
+            bail!(
+                "{} already exists. HatchZip first writes '{}' under that name and does not \
+                 replace a file it did not create. Move it or choose another destination. Nothing \
+                 was modified",
+                part.display(),
+                item.path.display()
+            );
+        }
         if let Ok(meta) = fs::symlink_metadata(&dest) {
             let dir = item.kind == crate::archive::Kind::Dir;
             if dir && !meta.is_dir() {

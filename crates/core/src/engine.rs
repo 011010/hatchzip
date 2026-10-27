@@ -283,7 +283,7 @@ impl Job {
     /// but a file in the archive. Links are only made at the very end, once
     /// the archive is gone, so without this such an archive fails after it
     /// has been consumed. Paths are compared ignoring case, as for
-    /// duplicates.
+    /// duplicates. So are names ending in [`PART_SUFFIX`].
     ///
     /// Only a fresh archive is checked: a resumed run no longer lists the
     /// entries it has extracted, and one an older release started on has to
@@ -291,6 +291,21 @@ impl Job {
     fn check_layout(&self) -> Result<()> {
         let key = |p: &Path| p.to_string_lossy().to_lowercase();
         let items = || self.units.iter().flat_map(|u| &u.items);
+        // Every file is first written under its name plus the suffix. An
+        // entry named so would share that name with another entry's file,
+        // and which of the two is lost would depend on timing.
+        if let Some(item) = items().find(|i| {
+            i.path
+                .iter()
+                .any(|c| c.to_string_lossy().to_lowercase().ends_with(PART_SUFFIX))
+        }) {
+            bail!(
+                "'{}' uses a name ending in {PART_SUFFIX}, which HatchZip gives a file while it \
+                 writes it, so extraction is refused. Extract this archive with another program. \
+                 Nothing was modified",
+                item.path.display()
+            );
+        }
         // Every folder the extraction creates, with the entry that needs it:
         // the folder's own entry if it has one, else the first entry inside.
         let mut folders: HashMap<String, (&Path, bool)> = HashMap::new();
@@ -735,9 +750,12 @@ fn threads_per_unit(units: usize) -> u32 {
     (cores / units.max(1)).max(1) as u32
 }
 
-fn part_path(dest: &Path) -> PathBuf {
+/// Added to a file's name while it is written.
+const PART_SUFFIX: &str = ".hatchzip-part";
+
+pub(crate) fn part_path(dest: &Path) -> PathBuf {
     let mut part = dest.as_os_str().to_owned();
-    part.push(".hatchzip-part");
+    part.push(PART_SUFFIX);
     PathBuf::from(part)
 }
 
