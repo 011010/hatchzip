@@ -23,6 +23,37 @@ pub fn open_exclusive(path: &Path) -> io::Result<File> {
     }
 }
 
+/// Creates `path` for reading and writing, failing if anything is already
+/// there. `O_EXCL` alone refuses a link at `path`; `O_NOFOLLOW` says so
+/// twice, so no change elsewhere can make this write through one.
+pub fn create_new_no_follow(path: &Path) -> io::Result<File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+}
+
+/// Opens an existing regular file for reading and writing, failing if
+/// `path` is a link or anything but a file.
+pub fn open_existing_no_follow(path: &Path) -> io::Result<File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "it is not a regular file",
+        ));
+    }
+    Ok(file)
+}
+
 /// Bytes the file really occupies on disk. Punching a hole lowers it while
 /// the length stays the same.
 pub fn allocated_bytes(path: &Path) -> io::Result<u64> {
@@ -64,4 +95,35 @@ pub fn create_symlink(link: &Path, target: &Path) -> io::Result<()> {
         Err(e) => return Err(e),
     }
     std::os::unix::fs::symlink(target, link)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Neither helper reaches a file through a link, and creating never
+    /// replaces what is already there.
+    #[test]
+    fn links_and_existing_files_are_never_followed_or_replaced() {
+        let dir = std::env::temp_dir().join(format!("hatchzip-nofollow-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("file");
+        fs::write(&file, b"kept").unwrap();
+        let link = dir.join("link");
+        std::os::unix::fs::symlink(&file, &link).unwrap();
+        let dangling = dir.join("dangling");
+        std::os::unix::fs::symlink(dir.join("nowhere"), &dangling).unwrap();
+
+        for p in [&file, &link, &dangling] {
+            let e = create_new_no_follow(p).unwrap_err();
+            assert_eq!(e.kind(), io::ErrorKind::AlreadyExists, "{}", p.display());
+        }
+        assert!(!dir.join("nowhere").exists());
+        assert!(open_existing_no_follow(&link).is_err());
+        assert!(open_existing_no_follow(&dir).is_err());
+        assert!(open_existing_no_follow(&file).is_ok());
+        assert_eq!(fs::read(&file).unwrap(), b"kept");
+        assert!(create_new_no_follow(&dir.join("new")).is_ok());
+        fs::remove_dir_all(&dir).unwrap();
+    }
 }

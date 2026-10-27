@@ -22,6 +22,40 @@ pub fn open_exclusive(path: &Path) -> io::Result<File> {
         })
 }
 
+/// Creates `path` for reading and writing, failing if anything is already
+/// there. With `FILE_FLAG_OPEN_REPARSE_POINT` a symbolic link or junction at
+/// `path` counts as something there, never as the way to its target.
+pub fn create_new_no_follow(path: &Path) -> io::Result<File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT;
+    fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+}
+
+/// Opens an existing regular file for reading and writing, failing if
+/// `path` is a link, a junction or anything but a file.
+pub fn open_existing_no_follow(path: &Path) -> io::Result<File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT;
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)?;
+    // Opened this way, a link is the link itself, which is not a file.
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "it is not a regular file",
+        ));
+    }
+    Ok(file)
+}
+
 /// Why Windows can't create a file or folder with this name, if it can't.
 /// Checked for every entry before the archive is touched, so a name made on
 /// another system fails up front instead of halfway through a run.

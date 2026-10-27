@@ -28,7 +28,7 @@
 //! frees nothing, exactly like an output on another disk.
 
 use std::collections::{HashMap, HashSet};
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -759,34 +759,44 @@ pub(crate) fn part_path(dest: &Path) -> PathBuf {
     PathBuf::from(part)
 }
 
+/// Creates the part file a new file is first written to. Whatever is
+/// already at that name was not made by this run: a file there is someone
+/// else's to keep, and a link there would send the data wherever it points.
+/// Fresh runs refuse both before the archive is touched.
+fn create_part(part: &Path) -> Result<File> {
+    platform::create_new_no_follow(part).map_err(|e| {
+        if e.kind() == io::ErrorKind::AlreadyExists {
+            anyhow!(
+                "{} already exists, and HatchZip does not replace a file it did not create. \
+                 Move it, then run the extraction again",
+                part.display()
+            )
+        } else {
+            anyhow::Error::new(e).context(format!("creating {}", part.display()))
+        }
+    })
+}
+
 /// Opens a streamed file's part file positioned at `written`, cutting off
 /// anything written after that point.
 fn open_part(dest: &Path, part: &Path, written: u64) -> Result<File> {
     if written == 0 {
-        return OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(part)
-            .with_context(|| format!("creating {}", part.display()));
+        return create_part(part);
     }
-    if !part.exists() && dest.exists() {
+    if fs::symlink_metadata(part).is_err() && fs::symlink_metadata(dest).is_ok() {
         // The previous run finished the file and renamed it, then stopped
         // before committing. The point it journaled still holds.
         fs::rename(dest, part).with_context(|| format!("reopening {}", dest.display()))?;
     }
-    let mut file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(part)
-        .with_context(|| {
-            format!(
-                "{} is missing, and the archive data it was extracted from is already \
-                 released, so this file cannot be completed",
-                part.display()
-            )
-        })?;
+    let mut file = match platform::open_existing_no_follow(part) {
+        Ok(f) => f,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => bail!(
+            "{} is missing, and the archive data it was extracted from is already released, so \
+             this file cannot be completed",
+            part.display()
+        ),
+        Err(e) => return Err(e).with_context(|| format!("reopening {}", part.display())),
+    };
     if file.metadata()?.len() < written {
         bail!(
             "{} is shorter than when its progress was saved; the extraction cannot continue",
@@ -1002,9 +1012,16 @@ impl Run<'_> {
             stream: None,
         });
         let started_here = at.written == 0;
+        let what = || format!("extracting '{}'", item.path.display());
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent).with_context(what)?;
+        }
+        // Opened before anything below may delete it: if something is in the
+        // way of a new part file, it is not ours to remove.
+        let file = open_part(&dest, &part, at.written).with_context(what)?;
         let result = self
-            .stream_file(&item, stream, at, &dest, &part, out)
-            .with_context(|| format!("extracting '{}'", item.path.display()));
+            .stream_file(&item, stream, at, file, &dest, &part, out)
+            .with_context(what);
         if result.is_err() && started_here && self.journal.resume.is_none() {
             // Nothing was punched yet, so the next run starts this file over.
             let _ = fs::remove_file(&part);
@@ -1012,19 +1029,17 @@ impl Run<'_> {
         result
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn stream_file(
         &mut self,
         item: &Item,
         stream: &Stream,
         at: Resume,
+        mut file: File,
         dest: &Path,
         part: &Path,
         out: &Path,
     ) -> Result<bool> {
-        if let Some(parent) = dest.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let mut file = open_part(dest, part, at.written)?;
         let window = match stream.codec {
             Codec::Stored => Vec::new(),
             Codec::Deflate => read_window(&mut file, at.written)?,
@@ -1689,7 +1704,9 @@ impl DiskSink<'_> {
             fs::create_dir_all(parent)?;
         }
         let part = part_path(&dest);
-        let result = self.copy(item, data, &part);
+        // Only a part file this call created is removed on failure.
+        let dst = create_part(&part)?;
+        let result = self.copy(item, data, dst);
         if result.is_err() {
             let _ = fs::remove_file(&part);
             return result;
@@ -1698,8 +1715,7 @@ impl DiskSink<'_> {
         Ok(())
     }
 
-    fn copy(&mut self, item: &Item, data: &mut dyn Read, part: &Path) -> Result<()> {
-        let mut dst = File::create(part)?;
+    fn copy(&mut self, item: &Item, data: &mut dyn Read, mut dst: File) -> Result<()> {
         let mut written = 0u64;
         loop {
             if self.stop.load(Ordering::Relaxed) {
