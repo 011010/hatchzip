@@ -49,22 +49,24 @@ HatchZip opens archives downloaded from anywhere and writes their contents to di
 | Archive parsing and decompression | The `zip`, `sevenz-rust2` and `tar` crates, zlib-rs and UnRAR process untrusted input. |
 | Output paths | Entry names decide where files are written. |
 | Symlinks and permissions | Entries can carry symlinks and Unix mode bits. |
-| Journal and saved tail | Plain files next to the archive, so they can arrive with a download. A resume acts only on the archive's own volumes, links inside the output folder, and the default folder or one chosen on this computer. |
+| Journal and saved tail | Plain files next to the archive, so they can arrive with a download. A resume uses them only for an extraction started on this computer, which records its output folder in the user's profile, or when the output folder is named again. It acts only on the archive's own volumes and the output folder. |
+| Files HatchZip creates | Each extracted file is first written as `<name>.hatchzip-part`, and the journal and saved tail through `<name>.tmp`. These are created only where nothing exists, never through a link. |
 | Network | None. No telemetry, accounts or update checks. |
 
 ### In scope
 
 - Writing any file outside the output folder, through `..` paths, absolute paths, symlinks or anything else.
+- Writing through a link, or over an existing file, at a name HatchZip creates: a file's `.hatchzip-part` name, or the temporary file of the journal or the saved tail.
 - Restoring setuid, setgid or sticky bits.
 - An archive that makes HatchZip delete or truncate data it has not extracted and verified, including overlapping-entry tricks.
 - An archive whose declared sizes let it write far more than the space check accounted for.
 - Memory safety issues or code execution triggered by a crafted archive.
-- A journal or saved tail delivered next to an archive that makes a resume touch anything outside the archive's own volumes and the output folder.
+- A journal or saved tail delivered next to an archive that makes a resume touch anything outside the archive's own volumes and the output folder, or delete or replace a file in the output folder that the extraction did not write.
 - A release file whose checksum or attestation does not match, or a dependency that opens network connections.
 
 ### Out of scope
 
-- Attacks that require running code as the same user, including editing the journal, the saved tail or the record of chosen folders while HatchZip runs.
+- Attacks that require running code as the same user, including editing the journal, the saved tail or the record of output folders in the user's profile while HatchZip runs.
 - Disk exhaustion that the space check reports correctly before starting.
 - Bugs in third-party decoders that do not affect HatchZip's own behavior; report those upstream.
 - Antivirus detections of the unsigned release files on their own; see [Verify your download](https://hatchzip.dev/verify.html).

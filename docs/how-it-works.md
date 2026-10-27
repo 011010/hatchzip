@@ -61,14 +61,20 @@ From then on the archive is parsed through `storage::Reader`, which serves the l
 
 The journal is at version 3 since `resume` was added. Version 2 journals load as they are; older builds refuse version 3, which matters, because they would delete the half-written file whose archive bytes are already gone. `resume.stream` came later without a new version: only `tar.gz` journals have it, and builds that don't know that format refuse the journal before reading it. A journal with `keep` is version 4, and only such a journal is: builds from before `keep` refuse it, since they would resume it in place and truncate an archive the user asked to keep. Every other journal is still written as version 3, so an older build can finish it. A journal with `replace` is version 5, kept archive or not: older builds would delete the person's files at the paths of entries left to do, and a restore would not put the replaced files back.
 
-There is no separate "done" counter: units start at distinct offsets, so `committed_len` alone says which are finished. The journal is always replaced atomically: written to a temporary file, flushed, renamed over the old one, and the directory flushed.
+There is no separate "done" counter: units start at distinct offsets, so `committed_len` alone says which are finished. The journal is always replaced atomically: written to `<archive>.hatchzip.tmp`, flushed, renamed over the old one, and the directory flushed. The saved tail is written the same way through `<archive>.hatchzip-tail.tmp`. Whatever is at either temporary name first is removed, which removes a link and never what it points to, and the file is then created only where nothing exists, without following a link.
+
+### Whose journal it is
+
+The journal and the saved tail are plain files next to the archive, so whoever supplied the archive could have supplied them too. A resume deletes what it finds at the paths of the entries left, so a journal it trusted wrongly could make it delete the person's own files there, even in the default folder. So every extraction also records its archive and output folder in the person's profile, outside the archive's folder (`crates/core/src/chosen.rs`): `%LOCALAPPDATA%\HatchZip`, `~/Library/Application Support/HatchZip` or `$XDG_STATE_HOME/hatchzip`. A resume or restore uses a journal only when that record names the same archive and folder, or when the person names the folder again with `-o`, for example on another computer. Anything else is refused before a file is changed. The record goes when the extraction completes or is restored. Releases before 0.1.6 recorded only folders chosen with `-o` or in the app, so an extraction they started in the default folder resumes with `-o`.
+
+Whatever a journal says, it can only name the archive's own volumes, none of them a link, and links inside the output folder.
 
 ## One batch
 
 Units are processed in batches. Each batch goes through these steps, in this order:
 
 1. **Choose the batch.** Starting from the next uncommitted unit, take units while their extracted size fits in the free space that exists right now, minus `--keep-free`. A batch holds at most 512 units and 2 GB.
-2. **Extract in parallel.** Each unit is decoded by a worker thread, and every file in it is written to `<name>.hatchzip-part`. The decoders verify CRCs as each stream ends, and HatchZip checks the written size against the size the archive declares. Each finished part file is renamed to its real name. Links are not created yet, only recorded.
+2. **Extract in parallel.** Each unit is decoded by a worker thread, and every file in it is written to `<name>.hatchzip-part`, which is created only where nothing exists and never through a link; anything at that name stops the run instead (see [Rejected before starting](#rejected-before-starting)). The decoders verify CRCs as each stream ends, and HatchZip checks the written size against the size the archive declares. Each finished part file is renamed to its real name. Links are not created yet, only recorded.
 3. **Flush.** The batch is forced to the physical disk: one `syncfs` on Linux, an fsync of every file and directory elsewhere (`F_FULLFSYNC` on macOS).
 4. **Commit.** The journal is updated with the new `committed_len` and the batch's links.
 5. **Truncate.** The archive is shortened to `committed_len`, the start of the batch's lowest unit. The freed space becomes available for the next batch.
@@ -256,6 +262,7 @@ These are refused while the archive is still untouched:
 - Gzip files that don't hold a tar and compressed tar other than gzip (`.tar.zst`, `.tar.xz`, `.tar.bz2`).
 - In RAR: solid archives (unless the archive is kept), links, dictionaries over 4 GB, a volume missing or a stray one after the last, names UnRAR reads differently, a wrong password, and headers that fail their checksum (see [RAR](#rar)). Without the `rar` feature, every RAR archive.
 - A file or link at the path of an entry, so that a resume can safely delete anything it finds for uncommitted units, unless the run replaces existing files (see [Replacing existing files](#replacing-existing-files)). A folder where the archive has a file, a file where it needs a folder, and a link on the way to any entry are refused either way.
+- Anything at the name an entry's file is first written under, `<name>.hatchzip-part`, replacing files or not: it would be in the way, and a resume would delete it as its own. An entry whose name, or the name of a folder on its path, ends in `.hatchzip-part`, ignoring case, since it would share that name with another entry's file.
 
 ## Operating systems
 
