@@ -31,7 +31,11 @@ const KEEP_VERSION: u32 = 4;
 /// delete the person's files at the paths of entries left to do, and a
 /// restore would not put the replaced ones back.
 const REPLACE_VERSION: u32 = 5;
-const READABLE: [u32; 4] = [2, 3, 4, 5];
+/// One that keeps some existing files, or both copies of them, writes
+/// version 6. A build before that would finish it by deleting the files the
+/// person chose to keep.
+const CHOOSE_VERSION: u32 = 6;
+const READABLE: [u32; 5] = [2, 3, 4, 5, 6];
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Link {
@@ -102,12 +106,26 @@ pub struct Journal {
     pub replace: Option<Replace>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct Replace {
     /// Every file at the path of an entry left to do is in the replaced
     /// files folder. Until then nothing is extracted, so whatever sits at
     /// those paths is still the person's.
     pub moved: bool,
+    /// Existing files, relative to the output, that go back over what was
+    /// extracted at their paths once the extraction completes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub keep: Vec<PathBuf>,
+    /// Existing files that go back to their paths once the extraction
+    /// completes, with the extracted copy renamed beside them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub both: Vec<PathBuf>,
+}
+
+impl Replace {
+    fn chose(&self) -> bool {
+        !self.keep.is_empty() || !self.both.is_empty()
+    }
 }
 
 pub struct Paths {
@@ -155,12 +173,15 @@ pub struct Plan {
     pub output: PathBuf,
     pub total_size: u64,
     pub keep: bool,
-    /// Existing files are moved aside before the first entry is extracted.
-    pub replace: bool,
+    /// Existing files are moved aside before the first entry is extracted,
+    /// and what to do with each once it completes.
+    pub replace: Option<Replace>,
 }
 
-fn version_for(keep: bool, replace: bool) -> u32 {
-    if replace {
+fn version_for(keep: bool, replace: Option<&Replace>) -> u32 {
+    if replace.is_some_and(Replace::chose) {
+        CHOOSE_VERSION
+    } else if replace.is_some() {
         REPLACE_VERSION
     } else if keep {
         KEEP_VERSION
@@ -177,7 +198,7 @@ impl Journal {
         r.read_to_end(&mut tail)?;
         fsutil::write_atomic(&paths.tail, &tail)?;
         let journal = Self {
-            version: version_for(plan.keep, plan.replace),
+            version: version_for(plan.keep, plan.replace.as_ref()),
             format: plan.format.to_string(),
             parts: storage.record(),
             tail_start: plan.tail_start,
@@ -189,7 +210,7 @@ impl Journal {
             resume: None,
             restoring: None,
             keep: plan.keep,
-            replace: plan.replace.then_some(Replace { moved: false }),
+            replace: plan.replace,
         };
         journal.save(paths)?;
         Ok(journal)
@@ -221,13 +242,25 @@ impl Journal {
         }
         let mut journal: Self = serde_json::from_slice(&bytes)
             .with_context(|| format!("{} is damaged", paths.journal.display()))?;
-        let replaces = version == REPLACE_VERSION;
+        let replaces = version == REPLACE_VERSION || version == CHOOSE_VERSION;
         if journal.replace.is_some() != replaces
+            || journal.replace.as_ref().is_some_and(Replace::chose) != (version == CHOOSE_VERSION)
             || (!replaces && journal.keep != (version == KEEP_VERSION))
         {
             bail!("{} is damaged", paths.journal.display());
         }
-        journal.version = version_for(journal.keep, replaces);
+        // Each is joined to the output folder and renamed, so each must stay
+        // inside it.
+        let inside = |p: &PathBuf| {
+            p.components().next().is_some()
+                && p.components().all(|c| matches!(c, Component::Normal(_)))
+        };
+        if let Some(r) = &journal.replace
+            && !r.keep.iter().chain(&r.both).all(inside)
+        {
+            bail!("{} is damaged", paths.journal.display());
+        }
+        journal.version = version_for(journal.keep, journal.replace.as_ref());
         journal.check_bound(paths)?;
         let tail =
             fs::read(&paths.tail).with_context(|| format!("reading {}", paths.tail.display()))?;
@@ -369,19 +402,49 @@ mod tests {
 
         let moving = r#","replace":{"moved":false}"#;
         let (journal, _) = Journal::load(&write_with(&dir, 5, moving)).unwrap();
-        assert_eq!(journal.replace, Some(Replace { moved: false }));
+        assert_eq!(journal.replace, Some(replace(false)));
         assert!(!journal.keep);
         let saved = serde_json::to_string(&journal).unwrap();
         assert!(saved.contains(r#""version":5"#), "{saved}");
+        assert!(!saved.contains("both"), "{saved}");
 
         let kept = r#","keep":true,"replace":{"moved":true}"#;
         let (journal, _) = Journal::load(&write_with(&dir, 5, kept)).unwrap();
-        assert!(journal.keep && journal.replace == Some(Replace { moved: true }));
+        assert!(journal.keep && journal.replace == Some(replace(true)));
         assert_eq!(journal.version, REPLACE_VERSION);
 
         assert!(Journal::load(&write(&dir, 5)).is_err());
         assert!(Journal::load(&write_with(&dir, 3, moving)).is_err());
         assert!(Journal::load(&write_with(&dir, 4, &format!(r#","keep":true{moving}"#))).is_err());
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn replace(moved: bool) -> Replace {
+        Replace {
+            moved,
+            keep: Vec::new(),
+            both: Vec::new(),
+        }
+    }
+
+    /// Keeping some existing files is version 6, which an older build
+    /// refuses rather than deleting the files kept.
+    #[test]
+    fn choosing_per_file_is_version_6_and_only_that_is() {
+        let dir =
+            std::env::temp_dir().join(format!("hatchzip-journal-choose-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+
+        let chose = r#","replace":{"moved":false,"keep":["a.txt"],"both":["b/c.txt"]}"#;
+        let (journal, _) = Journal::load(&write_with(&dir, 6, chose)).unwrap();
+        let r = journal.replace.as_ref().unwrap();
+        assert_eq!(r.keep, [PathBuf::from("a.txt")]);
+        assert_eq!(r.both, [PathBuf::from("b/c.txt")]);
+        assert_eq!(journal.version, CHOOSE_VERSION);
+
+        assert!(Journal::load(&write_with(&dir, 5, chose)).is_err());
+        assert!(Journal::load(&write_with(&dir, 6, r#","replace":{"moved":false}"#)).is_err());
 
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -397,7 +460,7 @@ mod tests {
         assert_eq!(journal.resume, None);
         assert_eq!(journal.version, VERSION);
 
-        let err = Journal::load(&write(&dir, REPLACE_VERSION + 1))
+        let err = Journal::load(&write(&dir, CHOOSE_VERSION + 1))
             .err()
             .unwrap();
         assert!(format!("{err:#}").contains("newer HatchZip"), "{err:#}");

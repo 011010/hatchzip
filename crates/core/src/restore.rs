@@ -42,7 +42,7 @@ use crate::archive::storage::{Storage, Tail};
 use crate::archive::{self, Kind};
 use crate::engine::{self, Job};
 use crate::fsutil;
-use crate::journal::{Journal, Link, Paths, Replace};
+use crate::journal::{Journal, Link, Paths};
 use crate::{replace, session};
 
 pub struct Restored {
@@ -271,10 +271,10 @@ fn discard(journal: &mut Journal, tail: Arc<Tail>, paths: &Paths) -> Result<Rest
 /// deletes a file at the path of an entry left to do as its own: a restore
 /// carries on putting files back, and an extraction moves them aside again.
 fn put_back(journal: &mut Journal, paths: &Paths, over: bool) -> Result<usize> {
-    if journal.replace.is_none() {
+    let Some(r) = journal.replace.as_mut() else {
         return Ok(0);
-    }
-    journal.replace = Some(Replace { moved: false });
+    };
+    r.moved = false;
     journal.save(paths)?;
     replace::put_back(&journal.output, over)
 }

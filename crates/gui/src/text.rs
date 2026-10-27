@@ -33,17 +33,36 @@ pub fn plural(n: usize, one: &str, many: &str) -> String {
     format!("{} {}", count(n), if n == 1 { one } else { many })
 }
 
-/// What the replace prompt asks, given how many files are in the way.
-pub fn replace_question(n: usize, folder: &Path) -> String {
-    let (files, deleted) = if n == 1 {
-        ("1 file already exists".to_string(), "file is")
-    } else {
-        (format!("{} files already exist", count(n)), "files are")
-    };
+/// What the replace prompt asks about one file in the way, given relative
+/// to the folder.
+pub fn replace_question(file: &Path, folder: &Path) -> String {
     format!(
-        "{files} in {}. The existing {deleted} deleted when the extraction completes.",
+        "'{}' already exists in {}.",
+        file.display(),
         folder.display()
     )
+}
+
+/// What each answer to the replace prompt does. `removing`: the archive
+/// goes as it is extracted, so a skipped file's copy in it is not kept.
+pub fn replace_note(removing: bool) -> &'static str {
+    if removing {
+        "Replace deletes the existing file when the extraction completes. Skip keeps it, and the \
+         archive's copy is not kept. Keep both keeps it and adds the archive's copy with a \
+         number after its name."
+    } else {
+        "Replace deletes the existing file when the extraction completes. Skip keeps it. Keep \
+         both keeps it and adds the archive's copy with a number after its name."
+    }
+}
+
+/// The offer to answer for the `left` files after this one.
+pub fn replace_rest(left: usize) -> String {
+    match left {
+        0 => String::new(),
+        1 => "Do the same for the next file".to_string(),
+        n => format!("Do the same for the next {} files", count(n)),
+    }
 }
 
 /// Why a restore left replaced files where they are, and where that is.
@@ -245,19 +264,21 @@ mod tests {
     }
 
     #[test]
-    fn the_replace_prompt_counts_the_files() {
+    fn the_replace_prompt_names_the_file_and_counts_the_rest() {
         let folder = Path::new("/games/game");
         assert_eq!(
-            replace_question(1, folder),
+            replace_question(Path::new("data/level.pak"), folder),
             format!(
-                "1 file already exists in {}. The existing file is deleted when the \
-                 extraction completes.",
+                "'{}' already exists in {}.",
+                Path::new("data/level.pak").display(),
                 folder.display()
             )
         );
-        let many = replace_question(1200, folder);
-        assert!(many.starts_with("1,200 files already exist in "), "{many}");
-        assert!(many.ends_with("The existing files are deleted when the extraction completes."));
+        assert_eq!(replace_rest(0), "");
+        assert_eq!(replace_rest(1), "Do the same for the next file");
+        assert_eq!(replace_rest(1200), "Do the same for the next 1,200 files");
+        assert!(replace_note(true).contains("the archive's copy is not kept"));
+        assert!(!replace_note(false).contains("not kept"));
     }
 
     #[test]

@@ -192,6 +192,7 @@ fn run(command: Command) -> Result<u8> {
             let opts = Options {
                 keep: keep.keep_archive,
                 replace: replace.replace,
+                skip_existing: replace.skip_existing,
                 verify_first,
                 keep_free: space.keep_free,
                 yes,
@@ -572,6 +573,7 @@ enum Ended {
 struct Options {
     keep: bool,
     replace: bool,
+    skip_existing: bool,
     verify_first: bool,
     keep_free: u64,
     yes: bool,
@@ -717,13 +719,18 @@ fn extract(
         State::Fresh(job, out) => {
             in_place_possible(&job, opts.keep)?;
             let found = session::existing(&job, &out)?;
-            if !found.is_empty() && !opts.replace {
+            if !found.is_empty() && !opts.replace && !opts.skip_existing {
                 return Err(refuse_existing(&out, &found));
             }
             if !report(&job, &out, None, keep_free, opts.keep)? {
                 return no_space;
             }
-            if !found.is_empty() {
+            if !found.is_empty() && opts.skip_existing {
+                say!(
+                    "  {DIM}note: {} will be kept instead of the archive's copies{DIM:#}",
+                    existing_files(found.len())
+                );
+            } else if !found.is_empty() {
                 say!(
                     "  {DIM}note: {} will be replaced, and deleted when the extraction completes{DIM:#}",
                     existing_files(found.len())
@@ -743,7 +750,16 @@ fn extract(
             if !opts.yes && !opts.keep {
                 confirm(&display_name(&job), &out)?;
             }
-            let journal = session::begin(&job, &paths, out, opts.keep, opts.replace)?;
+            let choices = hatchzip_core::replace::Choices {
+                keep: if opts.skip_existing {
+                    found
+                } else {
+                    Vec::new()
+                },
+                both: Vec::new(),
+            };
+            let replace = (opts.replace || opts.skip_existing).then_some(&choices);
+            let journal = session::begin(&job, &paths, out, opts.keep, replace)?;
             (job, journal)
         }
     };

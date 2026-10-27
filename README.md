@@ -187,6 +187,7 @@ HatchZip prints the same space plan, asks for confirmation, then extracts. When 
 | `-o, --output <dir>` | Output folder. Defaults to a folder named after the archive, next to it. It may hold other files, but none where the archive's files go, unless `--replace` is given. |
 | `--keep-archive` | Keep the archive: a normal extraction that removes nothing. Space is required for all extracted files. No confirmation is asked. |
 | `--replace` | Replace files that already exist in the output folder. See [Extract over existing files](#extract-over-existing-files). |
+| `--skip-existing` | Keep files that already exist in the output folder instead of the archive's copies. |
 | `--keep-free <size>` | Free space HatchZip never uses, such as `500MB` or `10GB`. Default `2GB`, so the disk never fills to zero. |
 | `--verify-first` | Read the whole archive and check every file's checksum before deleting anything. Takes extra time, recommended for downloads you can't easily get again. |
 | `-y, --yes` | Skip the confirmation prompt. Required when not run from a terminal, unless `--keep-archive` is given. |
@@ -208,9 +209,11 @@ An interrupted run resumes like any other, and goes on keeping the archive even 
 hatchzip extract patch.zip -o "D:\Games\Foo" --replace
 ```
 
-HatchZip does not overwrite files. When a file the archive contains already exists in the output folder, extraction is refused before anything is changed, unless `--replace` is given, as for a game patch or a mod extracted over an installed game. In the desktop app, HatchZip asks instead, with the number of files.
+HatchZip does not overwrite files. When a file the archive contains already exists in the output folder, extraction is refused before anything is changed, unless `--replace` or `--skip-existing` is given, as for a game patch or a mod extracted over an installed game. In the desktop app, HatchZip asks about each file instead: **Replace**, **Skip**, which keeps the existing file, or **Keep both**, which adds the archive's copy beside it as `name (2).ext`, with an option to do the same for the rest.
 
-With `--replace`, before anything is extracted, every existing file or link at the path of a file in the archive is moved into a `.hatchzip-replaced` folder inside the output folder, keeping its relative path. The move is a rename on the same disk, so it needs no extra space and no data is copied; a link is moved, never followed. The replaced files are deleted when the extraction completes. The space plan is unchanged: the replaced files keep their space until the end.
+When the archive is removed during extraction, a skipped file's copy in the archive is not kept: it is extracted, then discarded, and the existing file stays.
+
+With `--replace`, before anything is extracted, every existing file or link at the path of a file in the archive is moved into a `.hatchzip-replaced` folder inside the output folder, keeping its relative path. The move is a rename on the same disk, so it needs no extra space and no data is copied; a link is moved, never followed. The replaced files are deleted when the extraction completes, and the ones to keep are moved back. The space plan is unchanged: the replaced files keep their space until the end.
 
 - An interrupted run resumes as usual, with or without `--replace`: the progress file records that files were moved aside.
 - `hatchzip restore` moves the replaced files back to where they were. An extraction in place is the exception: a file already extracted there is no longer in the archive, so the file it replaced stays in `.hatchzip-replaced`, and restore says how many did. With `--keep-archive`, every replaced file goes back.

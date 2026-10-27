@@ -41,7 +41,7 @@ use crate::archive::resumable::{self, Decoder};
 use crate::archive::storage::{Reads, Storage, Tail};
 use crate::archive::targz::{Event, Profile, Walker};
 use crate::archive::{self, Codec, Format, Item, Kind, PasswordCheck, Sink, Stream, Unit};
-use crate::journal::{self, Journal, Link, Paths, Resume, TarAt};
+use crate::journal::{Journal, Link, Paths, Resume, TarAt};
 use crate::{fsutil, platform, replace};
 
 /// Larger batches extract in parallel better, smaller ones redo less work
@@ -193,7 +193,7 @@ impl Job {
         let point = journal.resume.as_ref();
         let opened = archive::open(&storage, Some((&journal.format, tail, point)), password)?;
         let mut job = Self::build(storage, opened, journal.committed_len)?;
-        job.started = journal.replace.is_none_or(|r| r.moved);
+        job.started = journal.replace.as_ref().is_none_or(|r| r.moved);
         if let Some(r) = &journal.resume {
             // Only the highest uncommitted unit is ever streamed, so a point
             // for any other one means the journal and archive disagree.
@@ -881,9 +881,11 @@ impl Run<'_> {
         if self.journal.keep {
             self.job.storage.protect();
         }
-        if self.journal.replace.is_some_and(|r| !r.moved) {
+        if let Some(r) = self.journal.replace.as_mut()
+            && !r.moved
+        {
             replace::set_aside(&self.job, &out)?;
-            self.journal.replace = Some(journal::Replace { moved: true });
+            r.moved = true;
             self.journal.save(&self.paths)?;
             self.job.started = true;
         }
@@ -1529,7 +1531,8 @@ impl Run<'_> {
         make_final_links(&self.journal.links, out)?;
         // Before the journal goes, so a crash in between deletes the rest
         // on resume rather than leaving it.
-        if self.journal.replace.is_some() {
+        if let Some(r) = &self.journal.replace {
+            replace::settle(out, r)?;
             replace::remove(out)?;
         }
         if self.journal.keep {
@@ -1555,7 +1558,8 @@ impl Run<'_> {
 /// has its links and side files left to deal with.
 pub fn finish_orphaned(journal: &Journal, paths: &Paths) -> Result<()> {
     make_final_links(&journal.links, &journal.output)?;
-    if journal.replace.is_some() {
+    if let Some(r) = &journal.replace {
+        replace::settle(&journal.output, r)?;
         replace::remove(&journal.output)?;
     }
     paths.remove()

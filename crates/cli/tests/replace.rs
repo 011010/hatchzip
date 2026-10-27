@@ -133,6 +133,70 @@ fn without_replace_nothing_is_modified() {
     assert_eq!(fs::read(&archive).unwrap(), before);
 }
 
+fn skip(archive: &Path, out: &Path, env: &[(&str, &str)]) -> Output {
+    run(
+        &["extract", "--skip-existing", "--keep-free", "0", "--yes"],
+        archive,
+        out,
+        env,
+    )
+}
+
+/// The archive's files where nothing was in the way, and the person's own
+/// files everywhere else.
+fn expected_skipping() -> Files {
+    let mut all = files();
+    all.extend(old());
+    all
+}
+
+#[test]
+fn skipping_keeps_existing_files_and_extracts_the_rest() {
+    let (_tmp, archive, out) = setup();
+    let run = skip(&archive, &out, &[]);
+    assert_ok(&run);
+    assert!(
+        String::from_utf8_lossy(&run.stdout)
+            .contains("3 existing files will be kept instead of the archive's copies"),
+        "{}",
+        String::from_utf8_lossy(&run.stdout)
+    );
+    assert_tree(&out, &expected_skipping());
+    assert!(!out.join(ASIDE).exists());
+    assert_consumed(&archive);
+}
+
+/// A crash anywhere, including while the kept files go back, never loses
+/// one: a resume finishes putting them back.
+#[test]
+fn a_crashed_skipping_run_resumes() {
+    let points = [
+        ("set-aside", 1),
+        ("after-journal", 2),
+        ("settle", 0),
+        ("settle", 1),
+    ];
+    for (point, after) in points {
+        let (_tmp, archive, out) = setup();
+        let after_s = after.to_string();
+        let crashed = skip(
+            &archive,
+            &out,
+            &[
+                ("HATCHZIP_BATCH_ENTRIES", "1"),
+                ("HATCHZIP_CRASH_AT", point),
+                ("HATCHZIP_CRASH_AFTER", &after_s),
+            ],
+        );
+        assert!(!crashed.status.success(), "{point}#{after} should crash");
+        // The journal remembers the choice; the option is not needed again.
+        assert_ok(&extract(&archive, &out, &[]));
+        assert_tree(&out, &expected_skipping());
+        assert!(!out.join(ASIDE).exists(), "{point}#{after}");
+        assert_no_side_files(&archive);
+    }
+}
+
 #[test]
 fn a_crashed_run_resumes() {
     let points = [

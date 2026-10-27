@@ -1,4 +1,4 @@
-import { Button, LineEdit, ProgressIndicator, Spinner, Palette } from "std-widgets.slint";
+import { Button, CheckBox, LineEdit, ProgressIndicator, Spinner, Palette } from "std-widgets.slint";
 import { Theme, Meter } from "theme.slint";
 
 export enum Phase {
@@ -344,11 +344,18 @@ export component PasswordPrompt inherits Rectangle {
     }
 }
 
-// Asks, before anything is touched, whether to replace files already in the
-// destination folder. Laid out like the password prompt.
+// Asks, before anything is touched, what to do with a file already in the
+// destination folder, one file at a time until the person answers for the
+// rest. Laid out like the password prompt.
 export component ReplacePrompt inherits Rectangle {
     in property <string> text;
-    callback replace();
+    // What each answer does.
+    in property <string> note;
+    // The offer to answer for the files after this one; empty for the last.
+    in property <string> rest;
+    in-out property <bool> for-rest;
+    // 0 replace, 1 skip, 2 keep both, and whether it is for the rest too.
+    callback answer(int, bool);
     callback cancel();
 
     background: Theme.scrim;
@@ -362,14 +369,14 @@ export component ReplacePrompt inherits Rectangle {
                 return accept;
             }
             if event.text == Key.Return {
-                root.replace();
+                root.answer(0, root.for-rest);
                 return accept;
             }
             reject
         }
 
         Rectangle {
-            width: min(380px, root.width - 32px);
+            width: min(440px, root.width - 32px);
             height: card.preferred-height;
             background: Palette.background;
             border-radius: 8px;
@@ -378,16 +385,25 @@ export component ReplacePrompt inherits Rectangle {
 
             card := VerticalLayout {
                 padding: Theme.gutter;
-                spacing: 10px;
+                spacing: 8px;
                 Text {
-                    text: "Replace existing files?";
+                    text: "Replace or skip files";
                     font-size: 15px;
                     font-weight: 600;
                 }
                 Text {
                     text: root.text;
-                    color: Theme.muted;
                     wrap: word-wrap;
+                }
+                Text {
+                    text: root.note;
+                    color: Theme.muted;
+                    font-size: Theme.small-size;
+                    wrap: word-wrap;
+                }
+                if root.rest != "": CheckBox {
+                    text: root.rest;
+                    checked <=> root.for-rest;
                 }
                 HorizontalLayout {
                     alignment: end;
@@ -399,10 +415,22 @@ export component ReplacePrompt inherits Rectangle {
                         }
                     }
                     Button {
+                        text: "Keep both";
+                        clicked => {
+                            root.answer(2, root.for-rest);
+                        }
+                    }
+                    Button {
+                        text: "Skip";
+                        clicked => {
+                            root.answer(1, root.for-rest);
+                        }
+                    }
+                    Button {
                         text: "Replace";
                         primary: true;
                         clicked => {
-                            root.replace();
+                            root.answer(0, root.for-rest);
                         }
                     }
                 }

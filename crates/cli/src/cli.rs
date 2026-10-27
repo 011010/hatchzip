@@ -237,6 +237,11 @@ pub struct Replace {
     /// extraction completes
     #[arg(long)]
     pub replace: bool,
+    /// Keep files that already exist in the destination folder. The
+    /// archive's copies of them are extracted and then discarded, so when
+    /// the archive is removed, they are not kept anywhere
+    #[arg(long, conflicts_with = "replace")]
+    pub skip_existing: bool,
 }
 
 #[derive(Args, Clone)]

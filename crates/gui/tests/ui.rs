@@ -516,38 +516,74 @@ fn task_window_flow(scheme: ColorScheme, tag: &str) {
     ui.hide().unwrap();
 }
 
-/// A right-click extraction over files already there asks once, with the
-/// real count, and touches nothing until the answer is yes.
+/// A right-click extraction over files already there asks about each one
+/// until told to do the same for the rest, and touches nothing until every
+/// answer is in. Skip keeps the existing file, and keep both adds the
+/// archive's copy beside it.
 fn replace_flow(scheme: ColorScheme, tag: &str) {
     let dir = tempfile::tempdir().unwrap();
     let archive = make_zip(dir.path());
-    let readme = dir.path().join("northwind/Northwind/README.txt");
-    std::fs::create_dir_all(readme.parent().unwrap()).unwrap();
-    std::fs::write(&readme, "old").unwrap();
+    let out = dir.path().join("northwind");
+    let names = [
+        "Northwind/README.txt",
+        "Northwind/bin/northwind",
+        "Northwind/data/level00.pak",
+    ];
+    for name in names {
+        let path = out.join(name);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "old").unwrap();
+    }
 
     for replace in [false, true] {
         let (ui, start) =
             task_window::build(one(TaskKind::ExtractTo, &archive), stay_open()).unwrap();
         ui.global::<Palette>().set_color_scheme(scheme);
-        ui.window().set_size(LogicalSize::new(480.0, 250.0));
+        ui.window().set_size(LogicalSize::new(480.0, 270.0));
         start();
         let w = ui.as_weak();
         wait_until("the replace prompt", move || w.unwrap().get_replace_shown());
+        let first = ui.get_replace_text().to_string();
         assert!(
-            ui.get_replace_text()
-                .starts_with("1 file already exists in "),
-            "{}",
-            ui.get_replace_text()
+            first.ends_with(&format!("' already exists in {}.", out.display())),
+            "{first}"
+        );
+        assert_eq!(ui.get_replace_rest(), "Do the same for the next 2 files");
+        assert!(
+            ui.get_replace_note()
+                .contains("the archive's copy is not kept")
         );
         if replace {
-            ui.invoke_replace_ok();
+            // Skip the first, then keep both of the other two at once.
+            ui.invoke_replace_answer(1, false);
+            let w = ui.as_weak();
+            let asked = first.clone();
+            wait_until("the second question", move || {
+                let ui = w.unwrap();
+                ui.get_replace_shown() && ui.get_replace_text() != asked.as_str()
+            });
+            assert_eq!(ui.get_replace_rest(), "Do the same for the next file");
+            ui.invoke_replace_answer(2, true);
             let w = ui.as_weak();
             wait_until("the task", move || {
                 w.unwrap().get_task().phase == Phase::Done
             });
-            assert_ne!(std::fs::read(&readme).unwrap(), b"old");
+            for name in names {
+                let path = out.join(name);
+                assert_eq!(std::fs::read(&path).unwrap(), b"old", "{name}");
+                let mut beside = path.file_stem().unwrap().to_os_string();
+                beside.push(" (2)");
+                if let Some(ext) = path.extension() {
+                    beside.push(".");
+                    beside.push(ext);
+                }
+                let beside = path.with_file_name(beside);
+                // Windows shows the path with its own separator.
+                let skipped = first.replace('\\', "/").contains(&format!("'{name}'"));
+                assert_eq!(beside.exists(), !skipped, "{name}");
+            }
             assert!(!archive.exists());
-            assert!(!dir.path().join("northwind/.hatchzip-replaced").exists());
+            assert!(!out.join(".hatchzip-replaced").exists());
         } else {
             shot(ui.window(), &format!("{tag}-15-task-replace"));
             ui.invoke_replace_cancel();
@@ -559,7 +595,9 @@ fn replace_flow(scheme: ColorScheme, tag: &str) {
                 ui.get_task().message,
                 "Extraction cancelled. The archive was not modified."
             );
-            assert_eq!(std::fs::read(&readme).unwrap(), b"old");
+            for name in names {
+                assert_eq!(std::fs::read(out.join(name)).unwrap(), b"old");
+            }
             assert!(archive.exists());
         }
         ui.hide().unwrap();
@@ -622,7 +660,7 @@ fn give_back_flow(scheme: ColorScheme, tag: &str) {
     else {
         panic!("a new archive opens fresh");
     };
-    session::begin(&job, &paths, out, false, false).unwrap();
+    session::begin(&job, &paths, out, false, None).unwrap();
     drop(job);
 
     let drops = Drops::default();

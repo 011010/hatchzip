@@ -92,9 +92,11 @@ impl Request {
 /// `None` means they gave up.
 pub type Ask<'a> = &'a mut dyn FnMut(bool) -> Option<String>;
 
-/// Asks the person whether to replace this many files already in this
-/// folder. Called before anything is touched.
-pub type Confirm<'a> = &'a mut dyn FnMut(usize, &Path) -> bool;
+/// Asks the person what to do with these files already in this folder;
+/// `None` means they gave up. The flag says the archive is removed as it is
+/// extracted. Called before anything is touched.
+pub type Confirm<'a> =
+    &'a mut dyn FnMut(&[PathBuf], &Path, bool) -> Option<hatchzip_core::replace::Choices>;
 
 pub enum Update {
     /// Opening the archive and checking the space.
@@ -304,10 +306,15 @@ fn extract(
                      keep the archive"
                 );
             }
-            let found = session::existing(&job, &out)?.len();
-            if found > 0 && !replace(found, &out) {
-                bail!("extraction cancelled. The archive was not modified");
-            }
+            let found = session::existing(&job, &out)?;
+            let choices = if found.is_empty() {
+                None
+            } else {
+                let Some(c) = replace(&found, &out, !keep_archive) else {
+                    bail!("extraction cancelled. The archive was not modified");
+                };
+                Some(c)
+            };
             let plan = session::plan(&job, &out, false, keep_free, keep_archive)?;
             if !plan.fits {
                 send(Update::NoSpace(plan));
@@ -322,7 +329,7 @@ fn extract(
                     return Ok(());
                 }
             }
-            let journal = session::begin(&job, &paths, out, keep_archive, found > 0)?;
+            let journal = session::begin(&job, &paths, out, keep_archive, choices.as_ref())?;
             (job, journal)
         }
     };
@@ -536,7 +543,7 @@ mod tests {
                 asked.push(wrong);
                 answers.next().copied().flatten().map(str::to_string)
             },
-            &mut |n, _| panic!("asked to replace {n} files"),
+            &mut |found, _, _| panic!("asked to replace {} files", found.len()),
         );
         (seen.into_inner().unwrap(), asked)
     }
@@ -555,9 +562,9 @@ mod tests {
             counters,
             &|u| seen.lock().unwrap().push(name(u)),
             &mut |_| None,
-            &mut |n, _| {
-                asked.push(n);
-                yes
+            &mut |found, _, _| {
+                asked.push(found.len());
+                yes.then(Default::default)
             },
         );
         (seen.into_inner().unwrap(), asked)

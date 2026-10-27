@@ -560,20 +560,20 @@ pub fn plan(
 /// Commits to a fresh extraction: saves the archive's tail and writes the
 /// journal. From here on the archive may be truncated, unless `keep_archive`
 /// is set, in which case nothing ever changes it. Files in the way (see
-/// [`existing`]) are refused unless `replace` is set; then the run moves
-/// them aside before it extracts anything and deletes them once it is
-/// complete.
+/// [`existing`]) are refused unless `replace` is given; then the run moves
+/// them aside before it extracts anything, and once it is complete deletes
+/// them or puts back the ones the choices keep.
 pub fn begin(
     job: &Job,
     paths: &Paths,
     output: PathBuf,
     keep_archive: bool,
-    replace: bool,
+    replace: Option<&crate::replace::Choices>,
 ) -> Result<Journal> {
     // Front ends ask earlier; the folder may have changed since.
     let found = existing(job, &output)?;
     if let Some(first) = found.first()
-        && !replace
+        && replace.is_none()
     {
         let what = match found.len() {
             1 => format!("{} already exists", output.join(first).display()),
@@ -598,13 +598,29 @@ pub fn begin(
     // The default folder too: a resume trusts the journal only when this
     // computer recorded starting the extraction (see [`check_output`]).
     crate::chosen::remember(&paths.archive, &output);
+    // A choice for a file that has gone since it was made has nothing to
+    // keep.
+    let only_found = |paths: &[PathBuf]| -> Vec<PathBuf> {
+        paths
+            .iter()
+            .filter(|p| found.contains(p))
+            .cloned()
+            .collect()
+    };
+    let replace = replace
+        .filter(|_| !found.is_empty())
+        .map(|c| crate::journal::Replace {
+            moved: false,
+            keep: only_found(&c.keep),
+            both: only_found(&c.both),
+        });
     let plan = Plan {
         format: job.format_name,
         tail_start: job.tail_start,
         output,
         total_size: job.remaining_size(),
         keep: keep_archive,
-        replace: !found.is_empty(),
+        replace,
     };
     Journal::create(paths, &job.storage, plan)
 }
@@ -707,7 +723,7 @@ mod tests {
         else {
             panic!("a new archive opens fresh");
         };
-        let journal = begin(&job, &paths, out, true, false).unwrap();
+        let journal = begin(&job, &paths, out, true, None).unwrap();
         assert!(journal.keep);
         let len = job.storage.original_len();
         assert!(job.storage.set_len(len / 2).is_err());

@@ -20,12 +20,24 @@ use anyhow::{Context, Result, bail};
 
 use crate::archive::Kind;
 use crate::engine::{self, Job};
+use crate::journal::Replace;
 use crate::{fsutil, platform};
 
 /// Where replaced files wait inside the output folder until the extraction
 /// completes. An archive with an entry of this name at its root can't
 /// replace files, or that entry would be extracted among them.
 pub const FOLDER: &str = ".hatchzip-replaced";
+
+/// What happens to each existing file an extraction finds at the path of
+/// an entry. Every one not listed is replaced.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Choices {
+    /// Stay as they are. The archive's copy is extracted, then dropped.
+    pub keep: Vec<PathBuf>,
+    /// Stay as they are, with the archive's copy beside them under a new
+    /// name, such as `report (2).pdf`.
+    pub both: Vec<PathBuf>,
+}
 
 pub fn folder(out: &Path) -> PathBuf {
     out.join(FOLDER)
@@ -180,6 +192,66 @@ pub(crate) fn put_back(out: &Path, over: bool) -> Result<usize> {
         remove(out)?;
     }
     Ok(stay)
+}
+
+/// Once every entry is extracted, puts back the existing files the person
+/// chose to keep: over what was extracted at their paths, or beside it with
+/// the extracted copy renamed. Each step is a rename a rerun finds done or
+/// not, so after a crash this runs again until it completes. Nothing is
+/// deleted here; whatever can't go back stays in the folder with an error,
+/// before [`remove`] could take it.
+pub(crate) fn settle(out: &Path, r: &Replace) -> Result<()> {
+    let aside = folder(out);
+    let chosen = r.keep.iter().map(|p| (p, false));
+    let mut done: Vec<&Path> = Vec::new();
+    for (rel, both) in chosen.chain(r.both.iter().map(|p| (p, true))) {
+        let from = aside.join(rel);
+        if fs::symlink_metadata(&from).is_err() {
+            // Put back by an earlier run that stopped before finishing.
+            continue;
+        }
+        let to = out.join(rel);
+        if let Some(via) = engine::link_on_the_way(out, rel) {
+            bail!(
+                "{} could not be put back: {} is a link. It is kept in {}. Remove the link, then \
+                 resume the extraction to finish",
+                to.display(),
+                out.join(via).display(),
+                aside.display()
+            );
+        }
+        if let Some(parent) = to.parent() {
+            fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+        }
+        if both && fs::symlink_metadata(&to).is_ok() {
+            let beside = free_name(&to);
+            fs::rename(&to, &beside)
+                .with_context(|| format!("moving {} to {}", to.display(), beside.display()))?;
+        }
+        // A rename over the extracted file replaces it in one step.
+        fs::rename(&from, &to)
+            .with_context(|| format!("moving {} back to {}", from.display(), to.display()))?;
+        engine::crash_point("settle");
+        done.push(rel);
+    }
+    flush(out, &done)
+}
+
+/// `report (2).pdf`, or the first such name not taken, beside `path`.
+fn free_name(path: &Path) -> PathBuf {
+    let stem = path.file_stem().unwrap_or_default();
+    (2u32..)
+        .map(|n| {
+            let mut name = stem.to_os_string();
+            name.push(format!(" ({n})"));
+            if let Some(ext) = path.extension() {
+                name.push(".");
+                name.push(ext);
+            }
+            path.with_file_name(name)
+        })
+        .find(|p| fs::symlink_metadata(p).is_err())
+        .unwrap_or_else(|| path.to_path_buf())
 }
 
 /// Deletes the files set aside, once the extraction is complete.

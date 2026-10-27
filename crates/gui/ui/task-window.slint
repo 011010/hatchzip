@@ -11,6 +11,8 @@ export component TaskWindow inherits Window {
     in property <string> password-name;
     in property <bool> replace-shown;
     in property <string> replace-text;
+    in property <string> replace-note;
+    in property <string> replace-rest;
 
     callback pause();
     callback resume();
@@ -19,7 +21,7 @@ export component TaskWindow inherits Window {
     callback give-back();
     callback password-ok(string);
     callback password-cancel();
-    callback replace-ok();
+    callback replace-answer(int, bool);
     callback replace-cancel();
 
     title: root.task.heading;
@@ -119,8 +121,10 @@ export component TaskWindow inherits Window {
 
     if root.replace-shown: ReplacePrompt {
         text: root.replace-text;
-        replace => {
-            root.replace-ok();
+        note: root.replace-note;
+        rest: root.replace-rest;
+        answer(choice, rest) => {
+            root.replace-answer(choice, rest);
         }
         cancel => {
             root.replace-cancel();
