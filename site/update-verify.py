@@ -57,7 +57,8 @@ def read_checksums(tag, repo):
 def os_order(name):
     """Windows, then macOS, then Linux, the order the home page uses."""
     lower = name.lower()
-    if "windows" in lower or lower.endswith((".exe", ".msi")):
+    # Only Windows downloads say x64; Linux ones say x86_64 or amd64.
+    if "windows" in lower or "-x64" in lower or lower.endswith((".exe", ".msi")):
         return 0
     if "macos" in lower or lower.endswith(".dmg"):
         return 1
