@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="light dark">
+<title>HatchZip code signing policy</title>
+<meta name="description" content="How HatchZip's Windows programs are code-signed through the SignPath Foundation, who approves each signing, and what the programs do with your data.">
+<link rel="canonical" href="https://hatchzip.dev/code-signing.html">
+<meta property="og:url" content="https://hatchzip.dev/code-signing.html">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="HatchZip">
+<meta property="og:title" content="HatchZip code signing policy">
+<meta property="og:description" content="How HatchZip's Windows programs are code-signed, who approves each signing, and the privacy policy.">
+<meta property="og:image" content="https://hatchzip.dev/img/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="HatchZip: extract huge archives without double the disk space.">
+<meta name="twitter:card" content="summary_large_image">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"HatchZip","item":"https://hatchzip.dev/"},{"@type":"ListItem","position":2,"name":"Code signing policy","item":"https://hatchzip.dev/code-signing.html"}]}
+</script>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css?v=6">
+</head>
+<body>
+<div class="page">
+<aside class="side">
+<a class="brand" href="./"><img src="favicon.svg" alt="" width="48" height="48"><span>HatchZip</span></a>
+<nav aria-label="On this page">
+<ul>
+<li><a href="./">Home</a></li>
+<li><a href="./#download">Download</a></li>
+<li><a href="#signing">Code signing</a></li>
+<li><a href="#roles">Team roles</a></li>
+<li><a href="#privacy">Privacy policy</a></li>
+<li><a href="verify.html">Verify your download</a></li>
+</ul>
+</nav>
+</aside>
+<div class="content">
+<header class="top">
+<div>
+<h1>Code signing policy</h1>
+<p class="lead">How HatchZip's Windows programs are signed, who approves each signing, and what the programs do with your data.</p>
+</div>
+</header>
+<main>
+
+<h2 id="signing">Code signing</h2>
+<p>Free code signing provided by <a href="https://about.signpath.io">SignPath.io</a>, certificate by <a href="https://signpath.org">SignPath Foundation</a>.</p>
+<p>HatchZip has applied to the SignPath Foundation. Until the application is approved, the Windows downloads are not code-signed. Every download can still be checked with its SHA-256 checksum and its signed build provenance: <a href="verify.html">Verify your download</a>.</p>
+<p>What is signed: the Windows programs <code>hatchzip.exe</code> and <code>hatchzip-gui.exe</code>, the setup <code>HatchZip-x64-setup.exe</code> and the installer <code>HatchZip-x64.msi</code> of each release. They are built from the tagged source in the public repository by the <a href="https://github.com/xevrion/hatchzip/blob/main/.github/workflows/release.yml">release workflow</a> on GitHub Actions. Nothing built anywhere else, and nothing from another project, is signed.</p>
+
+<h2 id="roles">Team roles</h2>
+<ul>
+<li>Committers and reviewers: <a href="https://github.com/xevrion">Yash Bavadiya</a></li>
+<li>Approvers: <a href="https://github.com/xevrion">Yash Bavadiya</a></li>
+</ul>
+<p>Every signing request is approved by hand. Changes to the source come only through the public repository, where CI tests every change on Linux, macOS and Windows.</p>
+
+<h2 id="privacy">Privacy policy</h2>
+<p>This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it.</p>
+<p>HatchZip has no networking code and no networking library, no telemetry and no accounts. It reads the archive on your disk and writes the files next to it. The desktop app's two links, to the source code and to the latest release under Help, Check for updates, open in your web browser when you click them.</p>
+</main>
+
+<footer>
+<p>HatchZip is licensed under <a href="https://github.com/xevrion/hatchzip/blob/main/LICENSE-MIT">MIT</a> OR <a href="https://github.com/xevrion/hatchzip/blob/main/LICENSE-APACHE">Apache-2.0</a>. The downloads decode RAR with UnRAR, under its own <a href="https://github.com/xevrion/hatchzip/blob/main/LICENSE-UNRAR">license</a>. <a href="https://github.com/xevrion/hatchzip">Source on GitHub</a>. <a href="https://github.com/xevrion/hatchzip/issues">Report a bug</a>.</p>
+<p>Made by Yash Bavadiya (<a href="https://x.com/xevrion_the1">@xevrion_the1</a>).</p>
+</footer>
+</div>
+</div>
+</body>
+</html>
