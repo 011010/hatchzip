@@ -22,8 +22,8 @@ Findings from automated scanners are accepted only when they have been confirmed
 ## What HatchZip does and does not do
 
 - It works only with local files: it reads the archive it is given, writes the extracted files, and shrinks or deletes the archive as it goes.
-- It makes no network connections. It has no networking code and no networking library; CI runs `cargo deny` against a ban list of HTTP, TLS and socket crates ([deny.toml](deny.toml)), so one entering the dependency tree fails the build. The one link in the desktop app, to the GitHub repository in the About window, is handed to your web browser when you click it.
-- It has no telemetry, no accounts and no update checks. It collects nothing and sends nothing.
+- It makes no network connections. It has no networking code and no networking library; CI runs `cargo deny` against a ban list of HTTP, TLS and socket crates ([deny.toml](deny.toml)), so one entering the dependency tree fails the build. The desktop app's two links, to the GitHub repository in the About window and to the latest release page under Help, Check for updates, are handed to your web browser when you click them.
+- It has no telemetry and no accounts, and it never checks for updates itself. It collects nothing and sends nothing.
 - It never saves archive passwords.
 - The Windows setup installs per user, without administrator rights, and its changes (program files, right-click menu, "Open with" entries, `PATH`) are removed by the uninstaller.
 
