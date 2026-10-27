@@ -21,6 +21,9 @@ pub struct Settings {
     /// Extract without removing the archive, in the main window. The
     /// right-click menu has an entry of its own for it instead.
     pub keep_archive: bool,
+    /// Close the right-click window once everything in it is extracted, as
+    /// other extractors do. A test, a pause or a failure keeps it open.
+    pub close_when_done: bool,
 }
 
 impl Default for Settings {
@@ -29,6 +32,7 @@ impl Default for Settings {
             keep_free: DEFAULT_KEEP_FREE,
             verify_first: false,
             keep_archive: false,
+            close_when_done: true,
         }
     }
 }
@@ -100,6 +104,7 @@ mod tests {
             keep_free: 500_000_000,
             verify_first: true,
             keep_archive: true,
+            close_when_done: false,
         };
         s.save_to(&path).unwrap();
         assert_eq!(Settings::load_from(&path), s);
@@ -121,11 +126,13 @@ mod tests {
                 keep_free: DEFAULT_KEEP_FREE,
                 verify_first: true,
                 keep_archive: false,
+                close_when_done: true,
             }
         );
         // Files saved before keeping the archive was a choice remove it, as
-        // that version always did.
+        // that version always did. Closing when done is new, so it is on.
         std::fs::write(&path, br#"{"keep_free": 0, "verify_first": false}"#).unwrap();
         assert!(!Settings::load_from(&path).keep_archive);
+        assert!(Settings::load_from(&path).close_when_done);
     }
 }

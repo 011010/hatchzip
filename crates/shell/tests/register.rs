@@ -32,7 +32,7 @@ fn linux_menus_point_at_the_gui_and_go_away_cleanly() {
             a.id
         );
     }
-    assert!(text.contains("Actions=extract-here;extract-here-keep;extract-to;test;"));
+    assert!(text.contains("Actions=extract-files;extract-here;extract-here-keep;extract-to;test;"));
     assert!(text.contains(
         "Name=Extract here (keep archive)\nIcon=archive-extract\n\
          Exec=\"/opt/Hatch Zip/it's/hatchzip-gui\" --keep-archive --extract-here %F"

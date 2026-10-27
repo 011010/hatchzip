@@ -36,6 +36,8 @@ pub struct Runner {
     queue: RefCell<VecDeque<(Task, Request)>>,
     /// Which of how many the current one is, counting from 1.
     place: Cell<(usize, usize)>,
+    /// Called once every queued archive is extracted.
+    when_extracted: RefCell<Option<Box<dyn Fn()>>>,
 }
 
 impl Runner {
@@ -49,9 +51,16 @@ impl Runner {
             show: Box::new(show),
             queue: RefCell::default(),
             place: Cell::new((1, 1)),
+            when_extracted: RefCell::new(None),
         });
         RUNNER.with(|r| *r.borrow_mut() = Some(runner.clone()));
         runner
+    }
+
+    /// Runs `f` when the last queued archive is extracted. Not after a test,
+    /// a restore, a pause or a failure, whose outcome is still on screen.
+    pub fn when_extracted(&self, f: impl Fn() + 'static) {
+        *self.when_extracted.borrow_mut() = Some(Box::new(f));
     }
 
     /// The password the last request opened its archive with, if any.
@@ -259,6 +268,10 @@ impl Runner {
             self.timer.stop();
             if self.quit_when_stopped.get() {
                 let _ = slint::quit_event_loop();
+            } else if self.task.borrow().as_ref().is_some_and(Task::extracted)
+                && let Some(f) = self.when_extracted.borrow().as_ref()
+            {
+                f();
             }
         }
     }

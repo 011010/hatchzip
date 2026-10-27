@@ -15,11 +15,12 @@ use clap::{ArgGroup, Parser};
         "archive",
         "extract_here",
         "extract_to",
+        "extract_files",
         "test",
         "register_shell",
         "unregister_shell",
     ])),
-    group(ArgGroup::new("extracting").args(["extract_here", "extract_to"]))
+    group(ArgGroup::new("extracting").args(["extract_here", "extract_to", "extract_files"]))
 )]
 pub struct Args {
     /// The archive to open, or any part of a split archive
@@ -30,10 +31,13 @@ pub struct Args {
     /// Extract into a new folder named after each archive
     #[arg(long, value_name = "ARCHIVE", num_args = 1..)]
     pub extract_to: Option<Vec<PathBuf>>,
+    /// Ask for a folder, then extract every archive into it
+    #[arg(long, value_name = "ARCHIVE", num_args = 1..)]
+    pub extract_files: Option<Vec<PathBuf>>,
     /// Check every file for damage, without writing anything
     #[arg(long, value_name = "ARCHIVE", num_args = 1..)]
     pub test: Option<Vec<PathBuf>>,
-    /// With --extract-here or --extract-to: keep the archive, removing nothing
+    /// With an extract option: keep the archive, removing nothing
     #[arg(long, requires = "extracting")]
     pub keep_archive: bool,
     /// Add HatchZip to the file manager's right-click menu, then exit
@@ -44,10 +48,13 @@ pub struct Args {
     pub unregister_shell: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TaskKind {
     ExtractHere,
     ExtractTo,
+    /// Into a folder the person picks, which is asked for first when it is
+    /// `None`.
+    ExtractFiles(Option<PathBuf>),
     Test,
 }
 
@@ -89,6 +96,8 @@ impl Args {
             task(TaskKind::ExtractHere, a)
         } else if let Some(a) = self.extract_to {
             task(TaskKind::ExtractTo, a)
+        } else if let Some(a) = self.extract_files {
+            task(TaskKind::ExtractFiles(None), a)
         } else if let Some(a) = self.test {
             task(TaskKind::Test, a)
         } else {
@@ -136,6 +145,10 @@ mod tests {
         assert_eq!(
             parse(&["--extract-to", "game.zip"]).unwrap(),
             task(TaskKind::ExtractTo, &["game.zip"], false)
+        );
+        assert_eq!(
+            parse(&["--extract-files", "game.zip"]).unwrap(),
+            task(TaskKind::ExtractFiles(None), &["game.zip"], false)
         );
         assert_eq!(
             parse(&["--test", "game.tar"]).unwrap(),

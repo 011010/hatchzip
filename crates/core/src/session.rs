@@ -365,6 +365,31 @@ pub fn existing(job: &Job, out: &Path) -> Result<Vec<PathBuf>> {
     Ok(found)
 }
 
+/// Whether everything in the archive sits under one name at its top, one
+/// folder or a single file. "Extract here" puts such an archive next to
+/// itself; anything else would scatter loose files, so it gets a folder.
+pub fn single_root(job: &Job) -> bool {
+    let mut roots = job
+        .units
+        .iter()
+        .flat_map(|u| &u.items)
+        .filter_map(|i| i.path.components().next());
+    let Some(first) = roots.next() else {
+        return false;
+    };
+    roots.all(|r| r == first)
+}
+
+/// Moves a fresh extraction opened writable by [`open`] to another folder,
+/// checking it as [`open`] checks the one it was given.
+pub fn retarget(job: &Job, out: &Path) -> Result<PathBuf> {
+    let out = std::path::absolute(out)?;
+    check_path_lengths(job, &out)?;
+    check_no_links_on_the_way(job, &out)?;
+    check_collisions(job, &out)?;
+    Ok(out)
+}
+
 /// `game.zip`, `game.7z.001`, `game.tar.gz` and `game.part1.rar` all extract
 /// into `game`, next
 /// to them.

@@ -1,8 +1,8 @@
-//! The small window behind "Extract here", "Extract to a folder" and "Test".
-//! The right-click was the confirmation, so it starts as soon as it shows,
-//! unless the space check says no. Several archives run one after another,
-//! each checked just before it starts; one that doesn't finish stops the
-//! rest until it is resumed.
+//! The small window behind "Extract here", "Extract to a folder", "Extract
+//! files" and "Test". The right-click was the confirmation, so it starts as
+//! soon as it shows, unless the space check says no. Several archives run one
+//! after another, each checked just before it starts; one that doesn't
+//! finish stops the rest until it is resumed.
 
 use std::path::{Path, PathBuf};
 
@@ -17,16 +17,34 @@ use crate::settings::Settings;
 use crate::task::Task;
 use crate::work::Request;
 
-/// Where each kind of task puts the files. `None` for a test.
-pub fn output_for(kind: TaskKind, primary: &Path) -> Option<PathBuf> {
+/// Where each kind of task puts the files. `None` for a test, and for files
+/// whose folder is not chosen yet.
+pub fn output_for(kind: &TaskKind, primary: &Path) -> Option<PathBuf> {
     match kind {
         TaskKind::ExtractHere => Some(primary.parent().unwrap_or(Path::new(".")).to_path_buf()),
         TaskKind::ExtractTo => Some(session::default_output(primary)),
+        TaskKind::ExtractFiles(folder) => folder.clone(),
         TaskKind::Test => None,
     }
 }
 
-pub fn run(args: TaskArgs) -> Result<()> {
+pub fn run(mut args: TaskArgs) -> Result<()> {
+    if args.kind == TaskKind::ExtractFiles(None) {
+        let mut dialog = rfd::FileDialog::new().set_title("Select destination folder");
+        if let Some(dir) = args
+            .archives
+            .first()
+            .and_then(|a| std::path::absolute(a).ok())
+            .and_then(|a| a.parent().map(Path::to_path_buf))
+        {
+            dialog = dialog.set_directory(dir);
+        }
+        // Closing the picker is how to change one's mind; nothing was read.
+        let Some(folder) = dialog.pick_folder() else {
+            return Ok(());
+        };
+        args.kind = TaskKind::ExtractFiles(Some(folder));
+    }
     let (ui, start) = build(args, Settings::saved())?;
     crate::backend::when_drawn(ui.window(), start);
     ui.run()?;
@@ -37,7 +55,7 @@ pub fn run(args: TaskArgs) -> Result<()> {
 /// and verification settings apply; whether the archive is kept is the
 /// menu entry's choice.
 fn job_for(
-    kind: TaskKind,
+    kind: &TaskKind,
     archive: &Path,
     keep_archive: bool,
     settings: &Settings,
@@ -60,6 +78,7 @@ fn job_for(
                 verify_first: settings.verify_first,
                 keep_archive,
                 password: None,
+                here: *kind == TaskKind::ExtractHere,
             },
         ),
         None => (
@@ -75,11 +94,14 @@ fn job_for(
 /// The window, shown, and the function that starts the task. Nothing
 /// touches an archive until that is called.
 pub fn build(args: TaskArgs, settings: Settings) -> Result<(TaskWindow, impl FnOnce() + 'static)> {
+    if args.kind == TaskKind::ExtractFiles(None) {
+        anyhow::bail!("no destination folder was chosen");
+    }
     let ui = TaskWindow::new()?;
     let jobs: Vec<(Task, Request)> = args
         .archives
         .iter()
-        .map(|a| job_for(args.kind, a, args.keep_archive, &settings))
+        .map(|a| job_for(&args.kind, a, args.keep_archive, &settings))
         .collect();
     let Some((task, _)) = jobs.first() else {
         anyhow::bail!("no archive given");
@@ -93,6 +115,15 @@ pub fn build(args: TaskArgs, settings: Settings) -> Result<(TaskWindow, impl FnO
         }
     });
     ui.set_task(task.view.clone());
+    if settings.close_when_done {
+        // Hiding the only window ends the app, as the close button does.
+        let weak = ui.as_weak();
+        runner.when_extracted(move || {
+            if let Some(ui) = weak.upgrade() {
+                let _ = ui.hide();
+            }
+        });
+    }
 
     let r = runner.clone();
     ui.on_pause(move || r.pause());
@@ -136,13 +167,18 @@ mod tests {
     fn each_task_writes_where_its_menu_entry_says() {
         let primary = Path::new("/home/me/Downloads/game.7z.001");
         assert_eq!(
-            output_for(TaskKind::ExtractHere, primary),
+            output_for(&TaskKind::ExtractHere, primary),
             Some(PathBuf::from("/home/me/Downloads"))
         );
         assert_eq!(
-            output_for(TaskKind::ExtractTo, primary),
+            output_for(&TaskKind::ExtractTo, primary),
             Some(PathBuf::from("/home/me/Downloads/game"))
         );
-        assert_eq!(output_for(TaskKind::Test, primary), None);
+        let chosen = PathBuf::from("/media/usb");
+        assert_eq!(
+            output_for(&TaskKind::ExtractFiles(Some(chosen.clone())), primary),
+            Some(chosen)
+        );
+        assert_eq!(output_for(&TaskKind::Test, primary), None);
     }
 }

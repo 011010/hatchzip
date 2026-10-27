@@ -98,6 +98,8 @@ export component MainWindow inherits Window {
     in-out property <bool> verify-first;
     // Off keeps the archive: a standard extraction that removes nothing.
     in-out property <bool> remove-archive: true;
+    // For the small window a right-click opens, not this one.
+    in-out property <bool> close-when-done: true;
     // The formats line under the Open button; RAR only in builds with it.
     in property <string> formats: "Or drag an archive onto this window. Supported formats: ZIP, 7z, tar, tar.gz, and split archives.";
     // The half-extracted run being resumed keeps its archive.
@@ -127,6 +129,7 @@ export component MainWindow inherits Window {
     callback give-back();
     callback verify-first-toggled();
     callback remove-archive-toggled();
+    callback close-when-done-toggled();
     callback change-output();
     callback keep-free-edited(string);
     callback extract();
@@ -190,6 +193,14 @@ export component MainWindow inherits Window {
                 checked <=> root.remove-archive;
                 activated => {
                     root.remove-archive-toggled();
+                }
+            }
+            MenuItem {
+                title: "Close the progress window when extraction completes";
+                checkable: true;
+                checked <=> root.close-when-done;
+                activated => {
+                    root.close-when-done-toggled();
                 }
             }
         }

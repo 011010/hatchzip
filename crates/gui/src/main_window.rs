@@ -192,6 +192,7 @@ pub fn build(
     ui.set_keep_free(gb_text(settings.keep_free).into());
     ui.set_verify_first(settings.verify_first);
     ui.set_remove_archive(!settings.keep_archive);
+    ui.set_close_when_done(settings.close_when_done);
     ui.set_formats(FORMATS.into());
     ui.set_shell_menu_available(platform::SHELL_MENU);
     ui.set_shell_menu_label(platform::SHELL_MENU_LABEL.into());
@@ -303,6 +304,11 @@ fn wire(ui: &MainWindow, app: &Rc<App>) {
         let keep = !a.ui().get_remove_archive();
         a.change_settings(|s| s.keep_archive = keep);
         a.refresh_plan();
+    });
+    let a = app.clone();
+    ui.on_close_when_done_toggled(move || {
+        let on = a.ui().get_close_when_done();
+        a.change_settings(|s| s.close_when_done = on);
     });
     let a = app.clone();
     ui.on_shell_menu_toggled(move || a.shell_menu_toggled());
@@ -594,6 +600,7 @@ impl App {
             verify_first: ui.get_verify_first(),
             keep_archive: keep,
             password: self.password.borrow().clone(),
+            here: false,
         };
         // On Windows our read handle would block the exclusive one the
         // extraction takes, so the worker closes it first, waiting out any

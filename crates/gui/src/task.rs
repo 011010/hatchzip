@@ -125,6 +125,12 @@ impl Task {
         )
     }
 
+    /// An extraction that finished. A test's or a restore's result is what
+    /// the person is waiting to read, so neither counts.
+    pub fn extracted(&self) -> bool {
+        !self.is_test && !self.restoring && self.view.phase == Phase::Done
+    }
+
     /// Only a run that is writing can pause; checking and testing only read,
     /// so closing the window is how to stop those.
     pub fn request_pause(&mut self) -> bool {

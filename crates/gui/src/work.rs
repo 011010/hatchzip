@@ -49,6 +49,10 @@ pub enum Request {
         /// goes on the way its journal says, whatever this is.
         keep_archive: bool,
         password: Option<String>,
+        /// "Extract here": next to the archive when it has one folder or file
+        /// at its top, in a folder named after it otherwise. `output` is
+        /// then unused.
+        here: bool,
     },
     Test {
         archive: PathBuf,
@@ -150,6 +154,7 @@ pub fn run(
             verify_first,
             keep_archive,
             password,
+            here,
         } => extract(
             archive,
             output.clone(),
@@ -157,6 +162,7 @@ pub fn run(
                 keep_free: *keep_free,
                 verify_first: *verify_first,
                 keep_archive: *keep_archive,
+                here: *here,
             },
             Secret {
                 password: password.clone(),
@@ -237,6 +243,7 @@ struct Choices {
     keep_free: u64,
     verify_first: bool,
     keep_archive: bool,
+    here: bool,
 }
 
 fn extract(
@@ -252,6 +259,7 @@ fn extract(
         keep_free,
         verify_first,
         keep_archive,
+        here,
     } = choices;
     send(Update::Checking);
     let (primary, paths) = session::locate(archive)?;
@@ -260,6 +268,9 @@ fn extract(
     if keep_archive && paths.exists() {
         session::keeps_archive(&Journal::load(&paths)?.0, true)?;
     }
+    // "Extract here" opens for the folder named after the archive, the safe
+    // choice, and moves next to the archive once its contents allow.
+    let output = if here { None } else { output };
     let (job, journal) = match open(&primary, &paths, output, true, secret, counters, send)? {
         State::Orphan(journal) => {
             engine::finish_orphaned(&journal, &paths)?;
@@ -281,6 +292,12 @@ fn extract(
             (job, journal)
         }
         State::Fresh(job, out) => {
+            let out = match out.parent() {
+                Some(next_to) if here && session::single_root(&job) => {
+                    session::retarget(&job, next_to)?
+                }
+                _ => out,
+            };
             if !keep_archive && let Some(why) = job.in_place_refusal() {
                 anyhow::bail!(
                     "{why}. Turn off \"Remove the archive during extraction\" to extract it and \
@@ -560,6 +577,7 @@ mod tests {
             verify_first,
             keep_archive: false,
             password: None,
+            here: false,
         }
     }
 
@@ -571,6 +589,7 @@ mod tests {
             verify_first: false,
             keep_archive: true,
             password: None,
+            here: false,
         }
     }
 
@@ -799,6 +818,7 @@ mod tests {
             verify_first: false,
             keep_archive: false,
             password: None,
+            here: false,
         };
         assert_eq!(collect(&request, &counters), ["checking", "no space"]);
         assert!(!session::locate(&archive).unwrap().1.exists());

@@ -20,6 +20,12 @@ pub struct Action {
 }
 
 pub const ACTIONS: &[Action] = &[
+    // First, where 7-Zip and WinRAR put theirs.
+    Action {
+        id: "extract-files",
+        label: "Extract files…",
+        flag: "--extract-files",
+    },
     Action {
         id: "extract-here",
         label: "Extract here",

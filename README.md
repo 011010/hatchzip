@@ -39,10 +39,12 @@ It checks that the extraction will fit before it changes anything, keeps a safet
 No coding needed. **[Download for Windows](https://github.com/xevrion/hatchzip/releases/latest/download/HatchZip-x64-setup.exe)** (Windows 10 and 11), or for [macOS (Apple Silicon)](https://github.com/xevrion/hatchzip/releases/latest/download/HatchZip-aarch64.dmg), [macOS (Intel)](https://github.com/xevrion/hatchzip/releases/latest/download/HatchZip-x86_64.dmg) and [Linux](#installation).
 
 1. Run the installer. Windows may show "Windows protected your PC" because HatchZip is not code-signed yet: choose **More info**, then **Run anyway**.
-2. Right-click the archive, choose **HatchZip**, then **Extract here**. On Windows 11 the menu is under **Show more options**.
+2. Right-click the archive, choose **HatchZip**, then **Extract here**. On Windows 11 the menu is under **Show more options**. To pick the destination folder first, choose **Extract files…** instead.
 3. Or open HatchZip from the Start menu, open the archive, and choose **Extract**.
 
 HatchZip shows whether the files will fit before it changes anything. The archive is used up as the files come out, so when it finishes, only the extracted files are left.
+
+**Extract here** puts an archive with one folder or one file at its top next to the archive. An archive with several files or folders at its top goes into a new folder named after it, so its files never mix with what is already there. The progress window closes when the extraction completes; to keep it open, clear **Close the progress window when extraction completes** in the app's Settings menu.
 
 To keep the archive when there is room for both, choose **Extract here (keep archive)** in the right-click menu, or clear **Remove the archive during extraction** in the app. That is a normal extraction: the archive is not changed, and space is required for all extracted files.
 
