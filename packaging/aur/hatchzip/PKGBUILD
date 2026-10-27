@@ -1,7 +1,7 @@
 # Maintainer: Yash Bavadiya <krbavadiya11 at gmail dot com>
 
 pkgname=hatchzip
-pkgver=0.1.5
+pkgver=0.1.6
 pkgrel=1
 pkgdesc='Extract huge archives in place, without needing room for both the archive and its contents'
 arch=('x86_64' 'aarch64')
@@ -26,7 +26,7 @@ conflicts=('hatchzip-bin')
 # symbols. The release profile already does its own thin LTO.
 options=('!lto')
 source=("$pkgname-$pkgver.tar.gz::https://github.com/xevrion/hatchzip/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('54d4630bcdc7d2c1177814d17f2de7b1f545a1e06de116e3fa2b8f3899f0003e')
+sha256sums=('86d68232fac4ccdc575506d0875c8ee393432b2d5af9d7e5673092ecc2ebb29f')
 
 # rust-toolchain.toml pins the compiler upstream builds releases with; the
 # packaged one is used instead, which only has to be 1.93 or newer.

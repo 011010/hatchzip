@@ -7,7 +7,7 @@
 # .sha256 published next to them on the release page.
 
 pkgname=hatchzip-bin
-pkgver=0.1.5
+pkgver=0.1.6
 pkgrel=1
 pkgdesc='Extract huge archives in place, without needing room for both the archive and its contents'
 arch=('x86_64')
@@ -35,8 +35,8 @@ _release="https://github.com/xevrion/hatchzip/releases/download/v$pkgver"
 # the download cache from mixing versions up.
 source_x86_64=("$pkgname-$pkgver-x86_64-linux.tar.gz::$_release/hatchzip-x86_64-linux.tar.gz"
                "$pkgname-$pkgver-amd64.deb::$_release/hatchzip_amd64.deb")
-sha256sums_x86_64=('fe7de6c5c859779b056dd816aaa1bd1791fa672f51c3db95ad5e9f4b33fd49d7'
-                   '20a96393b873364b2d0ba03cd25849a9109570d84929bcfb7d6c834657ee1009')
+sha256sums_x86_64=('47a2d2f5665ec0af220f4d4fb47ff3f3cbf699a91e206ecab45cf234247c3513'
+                   'e76281cb0603d123a8548d225b4d3986e7c43fd543426109d6a3c7cc07ec8912')
 
 prepare() {
   # makepkg unpacks the .deb itself; this unpacks the files inside it.
