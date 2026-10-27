@@ -78,6 +78,7 @@ Download from the [latest release](https://github.com/xevrion/hatchzip/releases/
 |---|---|
 | Windows 10 and 11 (x64) | [`HatchZip-x64-setup.exe`](https://github.com/xevrion/hatchzip/releases/latest/download/HatchZip-x64-setup.exe): installs per user, no admin rights, adds the right-click menu |
 | Windows 10 and 11 (x64), MSI | [`HatchZip-x64.msi`](https://github.com/xevrion/hatchzip/releases/latest/download/HatchZip-x64.msi): the same app and install as the setup, as a Windows Installer package for deployment tools and `msiexec /i HatchZip-x64.msi /qn`. Install one or the other |
+| Windows 10 and 11 (x64), portable | [`HatchZip-x64-portable.zip`](https://github.com/xevrion/hatchzip/releases/latest/download/HatchZip-x64-portable.zip): the same app and command line tool with nothing to install. Unzip it anywhere and run `hatchzip-gui.exe`; Settings, "Show in the Explorer context menu" adds the right-click entries for that location |
 | macOS, Apple Silicon | [`HatchZip-aarch64.dmg`](https://github.com/xevrion/hatchzip/releases/latest/download/HatchZip-aarch64.dmg) |
 | macOS, Intel | [`HatchZip-x86_64.dmg`](https://github.com/xevrion/hatchzip/releases/latest/download/HatchZip-x86_64.dmg) |
 | Debian, Ubuntu | [`hatchzip_amd64.deb`](https://github.com/xevrion/hatchzip/releases/latest/download/hatchzip_amd64.deb) |

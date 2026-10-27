@@ -8,7 +8,7 @@ How it works: it extracts from the end of the archive and cuts each finished par
 
 ## Install
 
-- Desktop app downloads: https://hatchzip.dev/#download (Windows setup or MSI, macOS Apple Silicon and Intel, Linux AppImage, .deb and .rpm)
+- Desktop app downloads: https://hatchzip.dev/#download (Windows setup, MSI or portable zip, macOS Apple Silicon and Intel, Linux AppImage, .deb and .rpm)
 - Linux and macOS: `curl -fsSL https://raw.githubusercontent.com/xevrion/hatchzip/main/install.sh | sh` (current user, no root; checks SHA-256)
 - Windows (PowerShell): `irm https://raw.githubusercontent.com/xevrion/hatchzip/main/install.ps1 | iex`
 - Homebrew: `brew install xevrion/tap/hatchzip` (CLI), `brew install --cask xevrion/tap/hatchzip` (macOS app and CLI)
