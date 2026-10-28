@@ -256,6 +256,30 @@ fn refuses_paths_that_escape_the_output_folder() {
     assert_eq!(fs::read(&archive).unwrap(), before);
 }
 
+/// `dir/..` names the output folder itself. Extracted last, it failed only
+/// after the rest of the archive had been consumed.
+#[test]
+fn refuses_a_name_that_resolves_to_the_output_folder() {
+    let tmp = TempDir::new().unwrap();
+    let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+    zip.start_file("dir/..", SimpleFileOptions::default())
+        .unwrap();
+    zip.write_all(b"nope").unwrap();
+    zip.start_file("keep.txt", SimpleFileOptions::default())
+        .unwrap();
+    zip.write_all(b"keep").unwrap();
+    let archive = tmp.path().join("evil.zip");
+    fs::write(&archive, zip.finish().unwrap().into_inner()).unwrap();
+    let before = fs::read(&archive).unwrap();
+
+    let out = tmp.path().join("out");
+    let run = extract(&archive, &out, &[("HATCHZIP_BATCH_ENTRIES", "1")]);
+    assert!(!run.status.success());
+    assert!(String::from_utf8_lossy(&run.stderr).contains("'dir/..'"));
+    assert_eq!(fs::read(&archive).unwrap(), before);
+    assert!(!side_files(&archive)[0].exists());
+}
+
 #[test]
 fn refuses_encrypted_archives_before_touching_them() {
     let tmp = TempDir::new().unwrap();

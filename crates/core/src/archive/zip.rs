@@ -74,9 +74,16 @@ pub fn open(
     for index in 0..meta.len() {
         let e = meta.entry(index)?;
         let name = e.name().map(|n| n.into_owned()).unwrap_or_default();
-        let path = e.enclosed_name().ok_or_else(|| {
-            anyhow!("'{name}' would be written outside the destination folder; extraction refused")
-        })?;
+        // A name such as `dir/..` resolves to the destination folder itself,
+        // where no file or link can be made.
+        let path = e
+            .enclosed_name()
+            .filter(|p| e.is_dir() || !p.as_os_str().is_empty())
+            .ok_or_else(|| {
+                anyhow!(
+                    "'{name}' would be written outside the destination folder; extraction refused"
+                )
+            })?;
         let kind = if e.is_dir() {
             Kind::Dir
         } else if e.is_symlink() {
