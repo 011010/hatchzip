@@ -9,6 +9,7 @@ mod sevenz;
 pub mod storage;
 mod tar;
 pub mod targz;
+mod xz;
 mod zip;
 
 use std::io::Read;
