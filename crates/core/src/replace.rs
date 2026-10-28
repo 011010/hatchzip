@@ -46,6 +46,11 @@ pub fn folder(out: &Path) -> PathBuf {
 /// Files and links at the paths entries of `job` are extracted to, relative
 /// to `out`. A folder at one of them is refused when the archive is opened.
 pub(crate) fn found(job: &Job, out: &Path) -> Vec<PathBuf> {
+    // Nothing can be under a folder that isn't there, and looking for every
+    // entry below it costs a failing stat each on Windows.
+    if !out.exists() {
+        return Vec::new();
+    }
     job.units
         .iter()
         .flat_map(|u| &u.items)
