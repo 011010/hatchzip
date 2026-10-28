@@ -12,9 +12,11 @@
 //! must be. Sizes the header does store are checked against the index, so
 //! a lying header fails the parse.
 //!
-//! TODO(#5): drop the allow when the tar.xz format module lands in this
-//! branch and reaches into everything below.
-#![allow(dead_code)]
+//! The index sits past every block, so it is also what keeps a half-freed
+//! archive parseable: [`Xz::parse_resumed`] trusts the index's arithmetic
+//! for the blocks an earlier run freed (whose headers are zeros now) and
+//! validates the headers from its resume point's block on. Whether a block
+//! was proveable is on it, as [`Block::validated`].
 
 use std::io::{self, Read, Seek, SeekFrom};
 
@@ -112,16 +114,12 @@ impl Filter {
     pub(crate) fn is_lzma2(self) -> bool {
         matches!(self, Filter::Lzma2 { .. })
     }
-
-    pub(crate) fn bcj_start(self) -> Option<u32> {
-        match self {
-            Filter::Bcj { start, .. } => Some(start),
-            _ => None,
-        }
-    }
 }
 
 /// One block: where its parts lie in the file and how to decode them.
+/// `header_len`, `data_off` and `unpadded` beyond the extents below exist
+/// for the tiles the tests measure, and the format module reads the rest.
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct Block {
     pub header_off: u64,
@@ -134,9 +132,15 @@ pub(crate) struct Block {
     /// Header plus data plus check, what the index records (spec 4.3.1).
     pub unpadded: u64,
     pub filters: Vec<Filter>,
+    /// Whether the header at `header_off` was read whole and proven by its
+    /// CRC32. Only false for the blocks a resumed run freed earlier: their
+    /// extents still come from the index, but their header bytes, written
+    /// over by the punches, are zeros without a check behind them.
+    pub validated: bool,
 }
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub(crate) struct Stream {
     /// One past the stream header's start: where this stream begins.
     pub start: u64,
@@ -150,6 +154,7 @@ pub(crate) struct Stream {
 
 /// A parsed `.xz` file: one or more streams, as `xz -l` would report.
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub(crate) struct Xz {
     pub streams: Vec<Stream>,
     pub uncompressed: u64,
@@ -159,16 +164,43 @@ impl Xz {
     /// Parses a file of `len` bytes, from its last stream backwards. Every
     /// size is bounded by `len` and by checked arithmetic, so a corrupt
     /// varint can neither send the reader past the end nor make the index
-    /// parse allocate for blocks that cannot exist.
+    /// parse allocate for blocks that cannot exist. Tests call this; the
+    /// format reads [`parse_resumed`](Self::parse_resumed).
+    #[cfg(test)]
     pub(crate) fn parse<R: Read + Seek>(reader: &mut R, len: u64) -> io::Result<Self> {
+        Self::parse_from(reader, len, 0)
+    }
+
+    /// Parses what a resumed run reads: the file's last stream and only
+    /// that one, keeping the index's sizes for the `skip` first bytes that
+    /// an earlier run freed without holding a whole archive over it. The
+    /// blocks whose extents lie below `skip` come out unvalidated; the
+    /// first block at or after `skip` is where a resume point means, and
+    /// everything from there on is validated as usual. Every stream the
+    /// file still holds comes with it; what a resumed run may do with them
+    /// is the format's policy, not this parser's.
+    pub(crate) fn parse_resumed<R: Read + Seek>(
+        reader: &mut R,
+        len: u64,
+        skip: u64,
+    ) -> io::Result<Self> {
+        Self::parse_from(reader, len, skip)
+    }
+
+    fn parse_from<R: Read + Seek>(reader: &mut R, len: u64, skip: u64) -> io::Result<Self> {
         let mut streams = Vec::new();
         let mut end = skip_padding_tail(reader, len)?;
         loop {
-            let (stream, before) = parse_stream_end(reader, len, end)?;
-            let first = stream.start == 0;
+            let (stream, before) = parse_stream_end(reader, len, end, skip)?;
             streams.push(stream);
-            if first {
+            let start = streams.last().unwrap().start;
+            if start == 0 {
                 break;
+            }
+            if skip > 0 {
+                return Err(invalid(
+                    "a resume point names a stream that is not the file's only one",
+                ));
             }
             end = skip_padding_tail(reader, before)?;
             if end == 0 {
@@ -207,11 +239,16 @@ fn skip_padding_tail<R: Read + Seek>(reader: &mut R, end: u64) -> io::Result<u64
 
 /// Parses the stream whose last byte sits at `end`, and returns it together
 /// with the first byte of whatever precedes it (its header, minus the
-/// 12-byte stream header this function verifies).
+/// 12-byte stream header this function verifies). With `skip` set, a
+/// resumed run's read of a half-freed file: the stream header and the
+/// blocks whose extents lie below `skip` were punched over, so only their
+/// index-record sizes stand, unvalidated, while everything past `skip` is
+/// validated as usual.
 fn parse_stream_end<R: Read + Seek>(
     reader: &mut R,
     len: u64,
     end: u64,
+    skip: u64,
 ) -> io::Result<(Stream, u64)> {
     if end < 32 || end > len {
         return Err(invalid("the file ends before a whole stream"));
@@ -287,27 +324,53 @@ fn parse_stream_end<R: Read + Seek>(
         .checked_sub(12)
         .ok_or_else(|| invalid("the index records reach past the start of the stream"))?;
 
-    // The stream header, including the flags copy the footer must match.
-    let head = read_at(reader, start, 12)?;
-    if head[0..6] != HEADER_MAGIC {
-        return Err(invalid("missing the stream magic bytes"));
-    }
-    if head[6] != 0 || head[7] & 0xF0 != 0 {
-        return Err(invalid("bad stream flags"));
-    }
-    if crc32(&head[6..8]) != le_u32(&head[8..12]) {
-        return Err(invalid("the stream header CRC32 does not match"));
-    }
-    if head[6..8] != foot[8..10] {
-        return Err(invalid("the footer flags differ from the header"));
+    // The stream header, including the flags copy the footer must match. A
+    // resumed run cannot have it: the punches start at the file's first
+    // byte and reach past it, so only the footer's copy stands.
+    let readable_head = skip <= start;
+    let head = if readable_head {
+        read_at(reader, start, 12)?
+    } else {
+        vec![0; 12]
+    };
+    if readable_head {
+        if head[0..6] != HEADER_MAGIC {
+            return Err(invalid("missing the stream magic bytes"));
+        }
+        if head[6] != 0 || head[7] & 0xF0 != 0 {
+            return Err(invalid("bad stream flags"));
+        }
+        if crc32(&head[6..8]) != le_u32(&head[8..12]) {
+            return Err(invalid("the stream header CRC32 does not match"));
+        }
+        if head[6..8] != foot[8..10] {
+            return Err(invalid("the footer flags differ from the header"));
+        }
     }
 
     // Validate each block header where the records claim it lies, and read
     // its filter chain. Sizes the header stores must agree with the record.
+    // A resumed run's first resumeable block is the first whole one: the
+    // punches never reach into it (they are rounded down short of the
+    // point), so everything past `skip` is there to read.
     let mut blocks = Vec::with_capacity(records.len());
     for (i, (unpadded, uncomp)) in records.iter().enumerate() {
         let off = starts[i];
-        let block = validate_block(reader, off, *unpadded, *uncomp, cs)?;
+        let block = if off >= skip {
+            validate_block(reader, off, *unpadded, *uncomp, cs)?
+        } else {
+            Block {
+                header_off: off,
+                header_len: 0,
+                data_off: off,
+                comp_len: 0,
+                uncomp_len: *uncomp,
+                check_off: off,
+                unpadded: *unpadded,
+                filters: Vec::new(),
+                validated: false,
+            }
+        };
         blocks.push(block);
     }
     let total_uncomp = records
@@ -408,6 +471,7 @@ fn validate_block<R: Read + Seek>(
         check_off: data_off + comp_len + block_pad,
         unpadded,
         filters,
+        validated: true,
     })
 }
 
@@ -640,6 +704,33 @@ mod tests {
             let (pair, window) = (&w[0], &w[1]);
             let a_total = (pair.unpadded - s.check.size()).div_ceil(4) * 4 + s.check.size();
             assert_eq!(window.header_off, pair.header_off + a_total);
+        }
+    }
+
+    #[test]
+    fn resume_skip_trusts_only_what_the_index_says_of_a_freed_block() {
+        let full = parse("multi").unwrap();
+        let skip = full.streams[0].blocks[1].header_off;
+        let bytes = fixture("multi");
+        let resumed = Xz::parse_resumed(&mut Cursor::new(bytes), bytes.len() as u64, skip).unwrap();
+        assert_eq!(resumed.streams.len(), 1, "a resume is a single-stream read");
+        let (full, s) = (&full.streams[0], &resumed.streams[0]);
+        assert_eq!(s.blocks.len(), full.blocks.len());
+        for (i, b) in s.blocks.iter().enumerate() {
+            let whole = &full.blocks[i];
+            assert_eq!(b.header_off, whole.header_off, "block {}", i + 1);
+            assert_eq!(b.uncomp_len, whole.uncomp_len, "block {}", i + 1);
+            assert_eq!(
+                b.validated,
+                b.header_off >= skip,
+                "block {} is {} the resume point",
+                i + 1,
+                if b.header_off >= skip {
+                    "past"
+                } else {
+                    "before"
+                }
+            );
         }
     }
 
