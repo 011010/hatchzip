@@ -321,6 +321,12 @@ fn extract(
                 return Ok(());
             }
             send(Update::Planned(plan));
+            let sfv = session::check_sfv(&job.storage, &|| counters.stop.load(Ordering::Relaxed));
+            if sfv.is_err() && counters.stop.load(Ordering::Relaxed) {
+                send(Update::Paused);
+                return Ok(());
+            }
+            sfv?;
             if verify_first {
                 verify(&job, counters, send)
                     .context("the archive is damaged; no files were extracted")?;
@@ -390,6 +396,12 @@ fn test(
             "this archive is partially extracted and cannot be tested. Resume or restore it first"
         ),
     };
+    let sfv = session::check_sfv(&job.storage, &|| counters.stop.load(Ordering::Relaxed));
+    if sfv.is_err() && counters.stop.load(Ordering::Relaxed) {
+        send(Update::Paused);
+        return Ok(());
+    }
+    sfv?;
     verify(&job, counters, send).context("the archive is damaged")?;
     send(Update::Tested(job.item_count()));
     Ok(())
@@ -438,6 +450,40 @@ mod tests {
     use std::sync::Mutex;
 
     use super::*;
+
+    #[test]
+    fn cancelled_sfv_does_not_start_extraction() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = make_zip(dir.path(), None);
+        let before = std::fs::read(&archive).unwrap();
+        // A cancellation must be observed before even a wrong checksum is read.
+        std::fs::write(dir.path().join("game.sfv"), "game.zip 00000000\n").unwrap();
+        let counters = Arc::new(Counters::default());
+        counters.stop.store(true, Ordering::Relaxed);
+        let request = extract(&archive, Some(dir.path().join("out")), false);
+        let updates = collect(&request, &counters);
+        assert_eq!(updates, ["checking", "planned", "paused"]);
+        assert!(!session::locate(&archive).unwrap().1.exists());
+        assert_eq!(std::fs::read(&archive).unwrap(), before);
+        assert!(!dir.path().join("out").exists());
+    }
+
+    #[test]
+    fn cancelled_sfv_test_pauses_without_reporting_failure_or_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = make_zip(dir.path(), None);
+        let before = std::fs::read(&archive).unwrap();
+        std::fs::write(dir.path().join("game.sfv"), "game.zip 00000000\n").unwrap();
+        let counters = Arc::new(Counters::default());
+        counters.stop.store(true, Ordering::Relaxed);
+        let request = Request::Test {
+            archive: archive.clone(),
+            password: None,
+        };
+        assert_eq!(collect(&request, &counters), ["checking", "paused"]);
+        assert!(!session::locate(&archive).unwrap().1.exists());
+        assert_eq!(std::fs::read(&archive).unwrap(), before);
+    }
 
     #[test]
     fn errors_read_as_sentences() {
