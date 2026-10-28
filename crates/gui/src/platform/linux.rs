@@ -14,3 +14,7 @@ pub fn config_dir() -> Option<PathBuf> {
     };
     Some(base.join("hatchzip"))
 }
+
+/// File managers pass the files as arguments here, so there is nothing to
+/// listen for.
+pub fn forward_opened_files(_on_open: impl Fn(PathBuf) + 'static) {}

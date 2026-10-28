@@ -36,6 +36,13 @@ slint = { version = "~1.18.1", default-features = false, features = [
     "unstable-winit-030",
 ] }
 
+# Receives the files Finder opens with HatchZip; already in the tree through
+# winit, at the same versions.
+[target."cfg(target_os = \"macos\")".dependencies]
+objc2 = "0.6.4"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSResponder"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSEnumerator", "NSURL"] }
+
 [features]
 # RAR archives, through UnRAR's C++ source and its own license; see
 # hatchzip-core. Off by default, on in the release builds.

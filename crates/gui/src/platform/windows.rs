@@ -11,3 +11,7 @@ pub fn config_dir() -> Option<PathBuf> {
     let appdata = std::env::var_os("APPDATA").filter(|v| !v.is_empty())?;
     Some(PathBuf::from(appdata).join("HatchZip"))
 }
+
+/// Explorer passes the files as arguments here, so there is nothing to
+/// listen for.
+pub fn forward_opened_files(_on_open: impl Fn(PathBuf) + 'static) {}

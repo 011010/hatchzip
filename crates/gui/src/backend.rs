@@ -78,6 +78,7 @@ impl CustomApplicationHandler for Handler {
 
 pub fn select(drops: Rc<Drops>) -> Result<()> {
     let icon = window_icon();
+    let opened = drops.clone();
     slint::BackendSelector::new()
         .backend_name("winit".into())
         .with_winit_custom_application_handler(Handler(drops))
@@ -88,7 +89,15 @@ pub fn select(drops: Rc<Drops>) -> Result<()> {
         // the app bundle instead.
         .with_winit_window_attributes_hook(move |attrs| attrs.with_window_icon(icon.clone()))
         .select()
-        .context("starting the window system")
+        .context("starting the window system")?;
+    // An archive the system opens with the running app arrives the way a
+    // dropped one does.
+    crate::platform::forward_opened_files(move |path| {
+        if let Some(f) = &*opened.on_drop.borrow() {
+            f(path);
+        }
+    });
+    Ok(())
 }
 
 fn window_icon() -> Option<Icon> {
