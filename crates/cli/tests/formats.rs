@@ -186,6 +186,33 @@ fn tar_links_are_made_after_their_targets() {
     assert_eq!(fs::read(out.join("bin/soft")).unwrap(), b"hello\n");
 }
 
+/// GNU tar stores a time before 1970 as a negative base-256 number.
+#[test]
+fn tar_keeps_a_modified_time_before_1970() {
+    let tmp = TempDir::new().unwrap();
+    let mut h = tar::Header::new_gnu();
+    h.set_size(4);
+    h.set_mode(0o644);
+    let mtime = &mut h.as_old_mut().mtime;
+    mtime[..4].fill(0xff);
+    mtime[4..].copy_from_slice(&(-152_391_233_i64).to_be_bytes());
+    let mut b = tar::Builder::new(Vec::new());
+    b.append_data(&mut h, "old.txt", &b"data"[..]).unwrap();
+    let archive = tmp.path().join("old.tar");
+    fs::write(&archive, b.into_inner().unwrap()).unwrap();
+    let out = tmp.path().join("out");
+
+    assert_ok(&extract(&archive, &out, &[]));
+    let modified = fs::metadata(out.join("old.txt"))
+        .unwrap()
+        .modified()
+        .unwrap();
+    assert_eq!(
+        modified,
+        std::time::UNIX_EPOCH - std::time::Duration::from_secs(152_391_233)
+    );
+}
+
 /// A hard link is copied where the filesystem can't link, so the space check
 /// counts it at its file's size, even when the link comes first.
 #[test]

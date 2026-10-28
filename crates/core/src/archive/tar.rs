@@ -129,10 +129,16 @@ pub(super) fn describe<R: Read>(
         Kind::Symlink => target.as_ref().map_or(0, |t| t.len() as u64),
         Kind::HardLink(_) | Kind::Dir => 0,
     };
-    let mtime = header
-        .mtime()
-        .ok()
-        .map(|s| UNIX_EPOCH + Duration::from_secs(s));
+    // GNU tar writes times before 1970 as negative base-256 numbers, which
+    // the tar crate hands back in two's complement.
+    let mtime = header.mtime().ok().and_then(|s| {
+        let secs = Duration::from_secs((s as i64).unsigned_abs());
+        if (s as i64) < 0 {
+            UNIX_EPOCH.checked_sub(secs)
+        } else {
+            UNIX_EPOCH.checked_add(secs)
+        }
+    });
     let mode = header.mode().ok();
     Ok(Some((
         Item {
