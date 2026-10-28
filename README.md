@@ -117,8 +117,8 @@ Homebrew and Scoop are live. winget is in review, and the AUR packages are comin
 
 | System | Command | Installs |
 |---|---|---|
-| Arch Linux (AUR) | `yay -S hatchzip-bin`, or `yay -S hatchzip` to build from source | App and CLI |
-| Windows (winget) | `winget install Xevrion.HatchZip` | App and CLI, same as the setup |
+| Arch Linux (AUR) | Not published yet. Until then, use the AppImage or the install script | App and CLI |
+| Windows (winget) | In review; until it is accepted, use the setup | App and CLI, same as the setup |
 | Windows (Scoop) | `scoop bucket add xevrion https://github.com/xevrion/scoop-bucket`, then `scoop install xevrion/hatchzip` | CLI |
 | macOS and Linux (Homebrew) | `brew install xevrion/tap/hatchzip` | CLI |
 | macOS (Homebrew) | `brew install --cask xevrion/tap/hatchzip` | App and CLI |
