@@ -1795,6 +1795,13 @@ extern "C" fn callback(
             let Some(tx) = sender.as_ref() else {
                 return 1;
             };
+            // A slice may not be made from a null pointer, even an empty one,
+            // and an empty chunk carries nothing to pass on.
+            if p1 == 0 || p2 <= 0 {
+                return 1;
+            }
+            // SAFETY: UnRAR passes its own output buffer and the number of
+            // bytes in it, valid until this callback returns.
             let data = unsafe { std::slice::from_raw_parts(p1 as *const u8, p2 as usize) };
             match tx.send(Msg::Data(data.to_vec())) {
                 Ok(()) => 1,
