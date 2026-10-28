@@ -535,12 +535,21 @@ fn the_space_check_for_a_tar_xz_counts_freeing_only_where_it_works() {
     );
     assert!(whole >= total as f64, "without punching it needs {whole}");
     assert!(said.contains("remains whole"), "{said}");
-    // NTFS frees in units of up to 1 MiB, which eats part of the saving on
-    // an archive this small. Punching must still need less than keeping.
-    assert!(
-        streaming < whole,
-        "with punching it should need less than {whole}, not {streaming}"
-    );
+    // NTFS frees in units of up to 1 MiB, and the plan keeps a granule at each
+    // end of the punched range: with 1 MiB blocks that eats the whole saving,
+    // so there it may need as much as keeping, never more. Elsewhere it must
+    // need less.
+    if cfg!(windows) {
+        assert!(
+            streaming <= whole,
+            "with punching it should never need more than {whole}, not {streaming}"
+        );
+    } else {
+        assert!(
+            streaming < whole,
+            "with punching it should need less than {whole}, not {streaming}"
+        );
+    }
 }
 
 /// On a filesystem that can't punch holes, the archive stays whole until
