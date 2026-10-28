@@ -495,3 +495,30 @@ fn paths_longer_than_260_characters_extract_and_resume() {
     assert_tree(&out, &files);
     assert_consumed(&archive);
 }
+
+/// Info-ZIP zip stores the UTC modification time in an extended timestamp
+/// field next to the zone-less DOS time; that one is restored.
+#[test]
+fn restores_the_extended_timestamp_mtime() {
+    let tmp = TempDir::new().unwrap();
+    let utc: u32 = 981_173_106; // 2001-02-03 04:05:06 UTC
+    let mut opts = zip::write::FullFileOptions::default().last_modified_time(
+        zip::DateTime::from_date_and_time(2001, 2, 3, 9, 35, 6).unwrap(), // local time at UTC+05:30
+    );
+    let mut ut = vec![1u8];
+    ut.extend_from_slice(&utc.to_le_bytes());
+    opts.add_extra_field(0x5455, ut, false).unwrap();
+    let mut w = ZipWriter::new(Cursor::new(Vec::new()));
+    w.start_file("a.txt", opts).unwrap();
+    w.write_all(b"a").unwrap();
+    let archive = tmp.path().join("t.zip");
+    fs::write(&archive, w.finish().unwrap().into_inner()).unwrap();
+    let out = tmp.path().join("out");
+
+    assert_ok(&extract(&archive, &out, &[]));
+    let mtime = fs::metadata(out.join("a.txt")).unwrap().modified().unwrap();
+    assert_eq!(
+        mtime,
+        std::time::UNIX_EPOCH + std::time::Duration::from_secs(utc.into())
+    );
+}
