@@ -53,21 +53,24 @@ pub struct StreamPoint {
     #[serde(default, skip_serializing_if = "CodecKind::is_gzip")]
     pub kind: CodecKind,
     /// Gzip: the point is where a gzip member's header begins, not a
-    /// deflate block boundary inside a member.
-    #[serde(default, skip_serializing_if = "is_false")]
+    /// deflate block boundary inside a member. Written even at its default,
+    /// and so are the three below: 0.1.8 reads this journal structure and
+    /// has no defaults, so a field left out makes it report the journal as
+    /// damaged. Only fields added after 0.1.8 may be omitted.
+    #[serde(default)]
     pub member_start: bool,
     /// Gzip: CRC-32 and length of the member's output before the point,
     /// which its trailer is checked against.
-    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    #[serde(default)]
     pub member_crc: u32,
-    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    #[serde(default)]
     pub member_len: u64,
     /// Gzip: the member's last 32 KiB of output before the point, which
     /// deflate back-references may reach into. It is part tar headers and
     /// part several files, so unlike a single ZIP entry's window it can't
     /// be read back from one output file. Xz needs no window: a block
     /// borrows nothing from before it.
-    #[serde(default, with = "hex", skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, with = "hex")]
     pub window: Vec<u8>,
     /// Xz: which block of the stream the point is at, where its header
     /// begins. The blocks before it never need decoding again.
@@ -93,14 +96,6 @@ impl CodecKind {
     pub fn is_gzip(&self) -> bool {
         *self == Self::Gzip
     }
-}
-
-fn is_false(b: &bool) -> bool {
-    !*b
-}
-
-fn is_zero_u32(v: &u32) -> bool {
-    *v == 0
 }
 
 fn is_zero_u64(v: &u64) -> bool {
@@ -773,5 +768,39 @@ mod hex {
             .step_by(2)
             .map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(D::Error::custom))
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 0.1.8 reads this journal structure and has no defaults for the gzip
+    /// fields, so a point must write them even at their defaults. Only the
+    /// fields added after it may stay out.
+    #[test]
+    fn a_gzip_point_writes_every_field_older_builds_read() {
+        let point = StreamPoint {
+            kind: CodecKind::Gzip,
+            member_start: false,
+            member_crc: 0,
+            member_len: 0,
+            window: Vec::new(),
+            block: 0,
+            tar_pos: 0,
+            at: TarAt::Boundary,
+        };
+        let json = serde_json::to_value(&point).unwrap();
+        for field in [
+            "member_start",
+            "member_crc",
+            "member_len",
+            "window",
+            "tar_pos",
+        ] {
+            assert!(json.get(field).is_some(), "{field} missing from {json}");
+        }
+        assert!(json.get("kind").is_none(), "kind is new and stays out");
+        assert!(json.get("block").is_none(), "block is new and stays out");
     }
 }

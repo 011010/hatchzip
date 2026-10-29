@@ -33,7 +33,9 @@ use lzma_rust2::filter::{bcj::BcjReader, delta::DeltaReader};
 use super::storage::Storage;
 use super::targz::{self, CodecKind, Event, Feed, Profile, StreamPoint, TarAt, TarStream};
 use super::xz::{Block, Check, Filter, Xz};
-use super::{Format, Item, Kind, Opened, Sink, SolidStream, SolidWalker, Unit, Worker};
+use super::{
+    Format, Item, Kind, Opened, Sink, SolidStream, SolidWalker, Unit, Unsupported, Worker,
+};
 use crate::journal::Resume;
 
 pub const NAME: &str = "tar.xz";
@@ -129,14 +131,15 @@ impl Running {
     }
 }
 
-/// What refuses an xz archive before anything is touched, except a
-/// single-block stream: that decodes fine, and is refused only for
-/// in-place extraction (see [`TarXz`]'s `Format` impl).
+/// What refuses a multi-stream, unchecked or otherwise unsupported xz
+/// archive before anything is touched, except a single-block stream and a
+/// stream whose blocks carry no check: both decode fine, and are refused
+/// only for in-place extraction (see [`TarXz`]'s `Format` impl).
 fn policy(xz: &Xz) -> Result<()> {
     let [stream] = xz.streams.as_slice() else {
         bail!(
             "the archive holds {} xz streams one after another, which is not supported. \
-             Concatenate them one archive each instead",
+             Extract them as separate archives",
             xz.streams.len()
         );
     };
@@ -144,7 +147,7 @@ fn policy(xz: &Xz) -> Result<()> {
         Check::None | Check::Crc32 | Check::Crc64 => {}
         Check::Sha256 => bail!(
             "the archive checks every xz block with SHA-256, which is not supported. \
-             xz's default --check=crc64, or --check=crc32 or --check=none, works"
+             xz's default --check=crc64, or --check=crc32, works"
         ),
         Check::Other { .. } => bail!(
             "the archive checks its xz blocks with a check of an unknown kind, which \
@@ -153,8 +156,18 @@ fn policy(xz: &Xz) -> Result<()> {
     }
     for b in &stream.blocks {
         for f in &b.filters {
-            if let Filter::Unknown { id } = *f {
-                bail!("a block of the archive uses the xz filter {id:#x}, which is not supported");
+            match *f {
+                Filter::Unknown { id } => {
+                    bail!(
+                        "a block of the archive uses the xz filter {id:#x}, which is not \
+                         supported"
+                    );
+                }
+                Filter::Lzma2 { dict_size } if dict_size > MAX_DICT => bail!(
+                    "a block of the archive names an LZMA2 dictionary beyond 1 GiB, \
+                     which is not supported"
+                ),
+                _ => {}
             }
         }
     }
@@ -180,15 +193,10 @@ impl Solid {
             Xz::parse_resumed(&mut reader, storage.original_len(), from_byte)
                 .context("reading the xz stream's structure")?
         };
-        if from.is_none() {
-            policy(&xz)?;
-        } else if xz.streams.len() > 1 {
-            bail!(
-                "the archive holds {} xz streams one after another, which is not supported; \
-                 the journal will not be resumed",
-                xz.streams.len()
-            );
-        }
+        // A resume reads the same container, so it meets the same refusals;
+        // a journal that names a check or filter this build cannot verify
+        // fails here rather than halfway into a block.
+        policy(&xz).map_err(|e| anyhow::Error::new(super::Unsupported(e)))?;
         Ok(Self {
             storage,
             xz,
@@ -219,8 +227,20 @@ pub fn open(storage: &Arc<Storage>, from: Option<&Resume>) -> Result<Opened> {
         let (items, profile) = super::scan(&solid, from)?;
         Ok((solid, items, profile))
     })();
+    // Unsupported is not damage: the archive is valid, this build just does
+    // not extract it. A parse error that says so (an oversized index) keeps
+    // the same class; everything else that stops the read is damage.
     let (mut solid, items, profile) = read
-        .map_err(|e| anyhow::Error::new(super::Damaged(e)))
+        .map_err(|e| {
+            if e.is::<Unsupported>()
+                || e.downcast_ref::<std::io::Error>()
+                    .is_some_and(|io| io.kind() == io::ErrorKind::Unsupported)
+            {
+                e
+            } else {
+                anyhow::Error::new(super::Damaged(e))
+            }
+        })
         .with_context(|| format!("checking {name} (nothing was changed)"))?;
     solid.profile = profile;
     Ok(Opened {
@@ -253,12 +273,23 @@ impl Format for TarXz {
     }
 
     fn refuses_in_place(&self) -> Option<String> {
-        let whole = self.solid.xz.streams.first()?.blocks.len() < 2;
-        whole.then(|| {
-            String::from(
+        let stream = self.solid.xz.streams.first()?;
+        let whole = stream.blocks.len() < 2;
+        let unchecked = stream.check == Check::None;
+        Some(match (whole, unchecked) {
+            (true, true) => String::from(
+                "the archive's whole tar is inside one xz block and its blocks carry no \
+                 check, so nothing of it can be freed as it is extracted",
+            ),
+            (true, false) => String::from(
                 "the archive's whole tar is inside one xz block, so nothing of the archive \
                  can be freed as it is extracted",
-            )
+            ),
+            (false, true) => String::from(
+                "the archive's xz blocks carry no check, so damage inside them could not be \
+                 detected before the bytes behind are freed",
+            ),
+            (false, false) => return None,
         })
     }
 }
@@ -312,10 +343,19 @@ impl Stage {
         // The reader starts at the file; the block owns its own slice of it.
         r.seek(SeekFrom::Start(b.data_off))
             .with_context(|| "reading the block's compressed data")?;
-        let mut chain: Box<dyn Read> = Box::new(Bytes {
-            reader: r,
-            left: b.comp_len,
-        });
+        Stage::over(
+            Bytes {
+                reader: r,
+                left: b.comp_len,
+            },
+            b,
+        )
+    }
+
+    /// The chain over any source holding exactly the block's compressed
+    /// bytes. Tests decode a fixture's block from memory through it.
+    fn over(source: impl Read + 'static, b: &Block) -> Result<Stage> {
+        let mut chain: Box<dyn Read> = Box::new(source);
         for f in b.filters.iter().rev() {
             chain = match *f {
                 Filter::Lzma2 { dict_size } => {
@@ -325,7 +365,13 @@ impl Stage {
                              which is not supported"
                         );
                     }
-                    Box::new(Lzma2Reader::new(chain, dict_size, None))
+                    // No block borrows from the blocks before it, so no back
+                    // reference reaches past its own output: the declared
+                    // dictionary is an upper bound, and a block of a few KiB
+                    // does not need (or deserve) a gigabyte of it.
+                    let dict =
+                        dict_size.min(b.uncomp_len.clamp(4 * 1024, u64::from(u32::MAX)) as u32);
+                    Box::new(Lzma2Reader::new(chain, dict, None))
                 }
                 Filter::Delta { dist } => Box::new(DeltaReader::new(chain, dist as usize)),
                 Filter::Bcj { arch, start } => Box::new(bcjer(arch, chain, start as usize)?),
@@ -396,34 +442,47 @@ impl XzFeed {
     /// gets caught, before anything can be worth the bytes it claims.
     fn finish_block(&mut self) -> Result<()> {
         let computed = std::mem::replace(&mut self.running, Running::None).finish();
-        let b = &self.blocks[self.block];
-        let stored = {
-            let mut r = self.storage.reader(None);
-            r.seek(SeekFrom::Start(b.check_off)).with_context(|| {
-                format!(
-                    "reading the check of the archive's block {}",
-                    self.block + 1
-                )
-            })?;
-            let mut out = vec![0u8; self.check.size() as usize];
-            r.read_exact(&mut out).with_context(|| {
-                format!(
-                    "reading the check of the archive's block {}",
-                    self.block + 1
-                )
-            })?;
-            out
-        };
-        if stored != computed {
-            let name = match self.check {
-                Check::Crc32 => "CRC-32",
-                Check::Crc64 => "CRC-64",
-                _ => "its",
-            };
-            bail!(
-                "the archive's block {} fails its {name} check; it is damaged",
-                self.block + 1
-            );
+        match self.check {
+            // Nothing to compare. The format refuses in-place extraction of
+            // an unchecked stream, so only a kept run gets here.
+            Check::None => {}
+            Check::Crc32 | Check::Crc64 => {
+                let b = &self.blocks[self.block];
+                let stored = {
+                    let mut r = self.storage.reader(None);
+                    r.seek(SeekFrom::Start(b.check_off)).with_context(|| {
+                        format!(
+                            "reading the check of the archive's block {}",
+                            self.block + 1
+                        )
+                    })?;
+                    let mut out = vec![0u8; self.check.size() as usize];
+                    r.read_exact(&mut out).with_context(|| {
+                        format!(
+                            "reading the check of the archive's block {}",
+                            self.block + 1
+                        )
+                    })?;
+                    out
+                };
+                if stored != computed {
+                    let name = if self.check == Check::Crc32 {
+                        "CRC-32"
+                    } else {
+                        "CRC-64"
+                    };
+                    bail!(
+                        "the archive's block {} fails its {name} check; it is damaged",
+                        self.block + 1
+                    );
+                }
+            }
+            // The policy refuses these before a byte is decoded; reaching
+            // one means the container changed under the run.
+            Check::Sha256 | Check::Other { .. } => bail!(
+                "the archive's blocks are checked with a kind HatchZip does not verify, \
+                 which is not supported"
+            ),
         }
         self.stage = None;
         self.block += 1;
@@ -671,15 +730,56 @@ mod tests {
     use std::io::Cursor;
 
     /// The fixtures come from the real xz CLI; see fixtures/xz/.
-    fn parse(name: &str) -> Xz {
-        let bytes: &[u8] = match name {
+    fn fixture(name: &str) -> &'static [u8] {
+        match name {
             "t1" => include_bytes!("fixtures/xz/xz-t1.xz"),
             "multi" => include_bytes!("fixtures/xz/xz-multi.xz"),
+            "uneven" => include_bytes!("fixtures/xz/xz-uneven.xz"),
+            "crc32" => include_bytes!("fixtures/xz/xz-crc32.xz"),
+            "nocheck" => include_bytes!("fixtures/xz/xz-nocheck.xz"),
             "sha256" => include_bytes!("fixtures/xz/xz-sha256.xz"),
+            "bcj" => include_bytes!("fixtures/xz/xz-bcj.xz"),
+            "delta" => include_bytes!("fixtures/xz/xz-delta.xz"),
             "multistream" => include_bytes!("fixtures/xz/xz-multistream.xz"),
             _ => unreachable!(),
-        };
+        }
+    }
+
+    fn parse(name: &str) -> Xz {
+        let bytes = fixture(name);
         Xz::parse(&mut Cursor::new(bytes), bytes.len() as u64).unwrap()
+    }
+
+    /// Decodes every block of a fixture through the same chain the walk
+    /// builds, and checks each block against the bytes the real xz CLI
+    /// stored at the offset the index records. Returns the output.
+    fn decode(name: &str) -> Vec<u8> {
+        let bytes = fixture(name);
+        let xz = parse(name);
+        let stream = &xz.streams[0];
+        let mut out = Vec::new();
+        for block in &stream.blocks {
+            let from = block.data_off as usize;
+            let to = from + block.comp_len as usize;
+            let mut stage = Stage::over(Cursor::new(bytes[from..to].to_vec()), block).unwrap();
+            let mut running = Running::new(stream.check);
+            let mut left = block.uncomp_len;
+            let mut buf = vec![0u8; 64 * 1024];
+            while left > 0 {
+                let want = (left as usize).min(buf.len());
+                let n = stage.read(&mut buf[..want]).unwrap();
+                assert!(n > 0, "block ended early");
+                running.update(&buf[..n]);
+                out.extend_from_slice(&buf[..n]);
+                left -= n as u64;
+            }
+            if stream.check != Check::None {
+                let at = block.check_off as usize;
+                let stored = &bytes[at..at + stream.check.size() as usize];
+                assert_eq!(running.finish(), stored, "block check");
+            }
+        }
+        out
     }
 
     #[test]
@@ -714,5 +814,36 @@ mod tests {
     fn sha256_checks_are_refused() {
         let err = policy(&parse("sha256")).unwrap_err();
         assert!(err.to_string().contains("SHA-256"), "got: {err:#}");
+    }
+
+    #[test]
+    fn an_unchecked_stream_passes_policy_because_it_extracts_while_kept() {
+        let xz = parse("nocheck");
+        assert_eq!(xz.streams[0].check, Check::None);
+        policy(&xz).unwrap();
+    }
+
+    /// Same payload through every single-block shape: the LZMA2 reader and
+    /// the container's check must reproduce what the real xz CLI wrote.
+    #[test]
+    fn real_archives_decode_through_their_block_chains() {
+        let plain = decode("t1");
+        assert_eq!(plain.len(), 8192);
+        for name in ["multi", "crc32", "nocheck"] {
+            assert_eq!(decode(name), plain, "{name} decoded differently");
+        }
+        // BCJ and Delta were made from another payload; both filters must
+        // reproduce it, and it is the one that starts like an executable.
+        let filtered = decode("bcj");
+        assert_eq!(filtered.len(), 8192);
+        assert_eq!(decode("delta"), filtered, "delta decoded differently");
+        assert!(filtered.starts_with(b"MZ"));
+    }
+
+    #[test]
+    fn uneven_blocks_decode_to_the_whole_payload() {
+        let out = decode("uneven");
+        assert_eq!(out.len(), 29_491_200);
+        assert!(out.iter().enumerate().all(|(i, b)| *b == (i % 256) as u8));
     }
 }

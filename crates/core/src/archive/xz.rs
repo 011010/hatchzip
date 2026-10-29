@@ -29,8 +29,19 @@ const ID_BCJ_FIRST: u64 = 0x04;
 const ID_BCJ_LAST: u64 = 0x0B;
 const ID_LZMA2: u64 = 0x21;
 
+/// The largest index this parser reads. A record takes at least two bytes
+/// and a real archive has a few bytes per block, so 64 MiB leaves room for
+/// millions of blocks and still bounds what a lying footer can make the
+/// parser allocate.
+const MAX_INDEX: u64 = 64 * 1024 * 1024;
+
 fn invalid(msg: &'static str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, msg)
+}
+
+/// A valid container this build refuses to read, as opposed to damage.
+fn unsupported(msg: &'static str) -> io::Error {
+    io::Error::new(io::ErrorKind::Unsupported, msg)
 }
 
 /// The check a stream stores after every block, from the low nibble of
@@ -142,7 +153,7 @@ pub(crate) struct Block {
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
 pub(crate) struct Stream {
-    /// One past the stream header's start: where this stream begins.
+    /// Where this stream's 12-byte header begins in the file.
     pub start: u64,
     pub check: Check,
     pub blocks: Vec<Block>,
@@ -263,6 +274,11 @@ fn parse_stream_end<R: Read + Seek>(
         return Err(invalid("the stream footer CRC32 does not match"));
     }
     let index_len = u64::from(le_u32(&foot[4..8])) * 4 + 4;
+    if index_len > MAX_INDEX {
+        return Err(unsupported(
+            "the index is larger than 64 MiB, which this build does not read",
+        ));
+    }
     let index_off = end
         .checked_sub(12)
         .and_then(|p| p.checked_sub(index_len))
@@ -593,10 +609,10 @@ mod tests {
     use super::*;
     use std::io::Cursor;
 
+    /// The fixtures come from the real xz CLI 5.8.4 and liblzma 5.x
+    /// (through Python's lzma module for the check variants), documented in
+    /// crates/core/src/archive/fixtures/xz/.
     fn fixture(name: &str) -> &'static [u8] {
-        // The fixtures come from the real xz CLI 5.8.4 and liblzma 5.x
-        // (through Python's lzma module), documented in
-        // crates/core/src/archive/fixtures/xz/.
         match name {
             "t1" => include_bytes!("fixtures/xz/xz-t1.xz"),
             "multi" => include_bytes!("fixtures/xz/xz-multi.xz"),
@@ -732,6 +748,20 @@ mod tests {
                 }
             );
         }
+    }
+
+    #[test]
+    fn an_index_beyond_the_cap_is_refused_as_unsupported() {
+        let bytes = fixture("multi");
+        let mut bytes = bytes.to_vec();
+        let n = bytes.len();
+        // The footer's backward size, made to claim a 64 MiB index, with the
+        // footer CRC fixed so the record itself is consistent.
+        bytes[n - 8..n - 4].copy_from_slice(&0x0100_0000u32.to_le_bytes());
+        let crc = crc32(&bytes[n - 8..n - 2]);
+        bytes[n - 12..n - 8].copy_from_slice(&crc.to_le_bytes());
+        let err = Xz::parse(&mut Cursor::new(&bytes), bytes.len() as u64).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported, "{err}");
     }
 
     #[test]

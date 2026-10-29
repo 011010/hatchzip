@@ -652,7 +652,9 @@ fn a_sha256_xz_is_refused_before_anything_is_touched() {
     let out = tmp.path().join("out");
 
     let run = extract(&archive, &out, &[]);
-    assert!(!run.status.success());
+    // Valid archive, unsupported check: not damage, and the CLI says so by
+    // its generic failure status rather than the damaged one.
+    assert_eq!(run.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&run.stderr);
     assert!(stderr.contains("SHA-256"), "{stderr}");
     assert!(stderr.contains("nothing was changed"), "{stderr}");
@@ -688,11 +690,50 @@ fn concatenated_xz_streams_are_refused() {
     let out = tmp.path().join("out");
 
     let run = extract(&archive, &out, &[]);
-    assert!(!run.status.success());
+    assert_eq!(run.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&run.stderr);
     assert!(stderr.contains("one after another"), "{stderr}");
     assert!(stderr.contains("nothing was changed"), "{stderr}");
     assert_eq!(fs::read(&archive).unwrap(), bytes);
+}
+
+/// An xz stream with no block checks decodes fine, but damage inside it
+/// could not be told from the original bytes, so an in-place run is refused
+/// and `--keep-archive` extracts it.
+#[test]
+fn an_unchecked_multi_block_tar_xz_refuses_in_place_and_extracts_when_kept() {
+    let files = files();
+    let tmp = TempDir::new().unwrap();
+    let archive = tmp.path().join("game.tar.xz");
+    let mut opts = XzOptions::with_preset(0);
+    opts.set_block_size(Some(NonZeroU64::new(BLOCK).unwrap()));
+    opts.set_check_sum_type(CheckType::None);
+    let mut w = XzWriter::new(Vec::new(), opts).unwrap();
+    w.write_all(&tar_bytes(&files)).unwrap();
+    fs::write(&archive, w.finish().unwrap()).unwrap();
+    let good = fs::read(&archive).unwrap();
+
+    let run = extract(&archive, &tmp.path().join("out"), &[]);
+    assert!(!run.status.success());
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(stderr.contains("carry no check"), "{stderr}");
+    assert!(stderr.contains("--keep-archive"), "{stderr}");
+    assert_eq!(fs::read(&archive).unwrap(), good);
+
+    let out = tmp.path().join("kept");
+    assert_ok(&hatchzip(
+        &[
+            "extract",
+            archive.to_str().unwrap(),
+            "-o",
+            out.to_str().unwrap(),
+            "--keep-archive",
+            "--yes",
+        ],
+        &[],
+    ));
+    assert_tree(&out, &files);
+    assert_eq!(fs::read(&archive).unwrap(), good);
 }
 
 /// Real-world detail: a `.tar.xz` whose stream is fine but whose content
@@ -707,4 +748,44 @@ fn an_xz_file_that_is_not_a_tar_is_refused() {
     assert!(!run.status.success());
     assert!(String::from_utf8_lossy(&run.stderr).contains("nothing was changed"));
     assert_eq!(fs::read(&archive).unwrap(), bytes);
+}
+
+/// Once the final commit is journaled, every entry is out and the archive
+/// only waits to be removed. Restore must say so instead of cutting the
+/// archive back into something that is no longer the original.
+#[test]
+fn restore_after_the_final_commit_says_everything_is_extracted() {
+    let files = files();
+    let tmp = TempDir::new().unwrap();
+    let archive = build(tmp.path(), &files);
+    let out = tmp.path().join("out");
+    let crashed = extract(
+        &archive,
+        &out,
+        &stream_env(&[("HATCHZIP_CRASH_AT", "after-journal")]),
+    );
+    assert!(!crashed.status.success(), "the run should have crashed");
+    let before = fs::read(&archive).unwrap();
+
+    let run = hatchzip(
+        &[
+            "restore",
+            archive.to_str().unwrap(),
+            "-o",
+            out.to_str().unwrap(),
+        ],
+        &[],
+    );
+    assert!(!run.status.success(), "restore should refuse");
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(stderr.contains("already extracted"), "{stderr}");
+    assert_eq!(
+        fs::read(&archive).unwrap(),
+        before,
+        "restore changed the archive"
+    );
+
+    assert_ok(&extract(&archive, &out, &stream_env(&[])));
+    assert_tree(&out, &files);
+    assert_consumed(&archive);
 }

@@ -122,6 +122,21 @@ impl std::fmt::Display for Damaged {
 
 impl std::error::Error for Damaged {}
 
+/// The archive is valid but uses something this build does not extract: an
+/// unknown or unprovided check, an unknown filter, several xz streams, or a
+/// dictionary too large to hold. Front ends report it as unsupported, never
+/// as damage.
+#[derive(Debug)]
+pub struct Unsupported(pub anyhow::Error);
+
+impl std::fmt::Display for Unsupported {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:#}", self.0)
+    }
+}
+
+impl std::error::Error for Unsupported {}
+
 /// The format name of RAR archives in the journal.
 pub const RAR: &str = "rar";
 
