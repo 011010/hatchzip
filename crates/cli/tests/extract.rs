@@ -121,6 +121,44 @@ fn resumes_after_a_crash_at_any_point() {
 }
 
 #[test]
+fn an_output_file_that_disappears_mid_run_is_extracted_again() {
+    // The second name also covers spaces, non-ASCII and a folder, in the
+    // debug-only knob's value.
+    for removed in ["game/data/big.pak", "game/naïve résumé/日本語.txt"] {
+        let tmp = TempDir::new().unwrap();
+        let files = sample_files();
+        let archive = build_zip(tmp.path(), &files);
+        let out = tmp.path().join("out");
+        // The debug-only knob removes the file after its batch is on disk
+        // and before the run checks it, as antivirus software might.
+        let env = [
+            ("HATCHZIP_BATCH_ENTRIES", "1"),
+            ("HATCHZIP_REMOVE_AFTER_EXTRACT", removed),
+        ];
+
+        let run = extract(&archive, &out, &env);
+        let stderr = String::from_utf8_lossy(&run.stderr).replace('\\', "/");
+        assert!(
+            !run.status.success(),
+            "{removed}: the run should have stopped"
+        );
+        assert!(stderr.contains(removed), "{removed}: {stderr}");
+        assert!(stderr.contains("disappeared"), "{removed}: {stderr}");
+        assert!(
+            archive.exists(),
+            "{removed}: the archive must not be consumed"
+        );
+        for p in side_files(&archive) {
+            assert!(p.exists(), "{removed}: {} is missing", p.display());
+        }
+
+        assert_ok(&extract(&archive, &out, &[]));
+        assert_tree(&out, &files);
+        assert_consumed(&archive);
+    }
+}
+
+#[test]
 fn resuming_twice_in_a_row_is_harmless() {
     let tmp = TempDir::new().unwrap();
     let files = sample_files();

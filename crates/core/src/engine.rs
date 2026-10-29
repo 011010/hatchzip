@@ -947,6 +947,17 @@ impl Run<'_> {
         }
         crash_point("after-extract");
 
+        // Other programs on the computer, antivirus software above all, can
+        // remove a file after it is written. Claiming one in the journal
+        // would shorten the archive behind the only copy left. A streamed
+        // unit with a resume point is skipped: some of its archive is
+        // already freed, so some of its output may have no other copy, and
+        // a rerun resumes past it.
+        if self.journal.resume.is_none() {
+            remove_after_extract(batch, out);
+            verify_extracted(batch, out)?;
+        }
+
         let new_len = batch.last().expect("batches are never empty").start;
         self.journal.committed_len = new_len;
         self.journal.links.extend(links);
@@ -1554,6 +1565,77 @@ impl Run<'_> {
     }
 }
 
+/// Checks that every file `batch` extracted is whole on disk under its final
+/// name. The journal is about to claim them and free the archive bytes
+/// behind them, so a file that another program removed or changed has to
+/// stop the run here: its unit keeps its place in the journal and the
+/// archive still holds it, and a rerun extracts it again.
+///
+/// Links are made at the very end, once the archive is gone, so link
+/// entries have nothing on disk yet.
+fn verify_extracted(batch: &[Unit], out: &Path) -> Result<()> {
+    for item in batch.iter().flat_map(|u| &u.items) {
+        if item.kind != Kind::File {
+            continue;
+        }
+        let dest = out.join(&item.path);
+        // Never follows a link: what matters is what sits at the name.
+        let meta = match fs::symlink_metadata(&dest) {
+            Ok(meta) => meta,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => bail!(
+                "'{}' disappeared while it was extracted. Antivirus software sometimes removes \
+                 files as they are written. The archive still holds it ({} bytes), so running \
+                 the same command again extracts it",
+                item.path.display(),
+                item.size
+            ),
+            Err(e) => {
+                return Err(e).with_context(|| {
+                    format!("checking '{}' after extracting it", item.path.display())
+                });
+            }
+        };
+        if !meta.is_file() {
+            bail!(
+                "'{}' is no longer a file after it was extracted, but the archive has a file \
+                 there. The archive still holds it, so move what is in its place away and run \
+                 the same command again",
+                item.path.display()
+            );
+        }
+        if meta.len() != item.size {
+            bail!(
+                "'{}' changed while it was extracted: the archive records {} bytes, but the \
+                 file has {}. The archive still holds it, so move it away and run the same \
+                 command again",
+                item.path.display(),
+                item.size,
+                meta.len()
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Lets the test suite remove an extracted file between the batch reaching
+/// the disk and the journal claiming it, as antivirus software might.
+fn remove_after_extract(batch: &[Unit], out: &Path) {
+    if !cfg!(debug_assertions) {
+        return;
+    }
+    let Ok(rel) = std::env::var("HATCHZIP_REMOVE_AFTER_EXTRACT") else {
+        return;
+    };
+    let rel = Path::new(&rel);
+    let extracted = batch
+        .iter()
+        .flat_map(|u| &u.items)
+        .any(|item| item.kind == Kind::File && item.path == rel);
+    if extracted {
+        let _ = fs::remove_file(out.join(rel));
+    }
+}
+
 /// A run that crashed after deleting the archive but before cleaning up only
 /// has its links and side files left to deal with.
 pub fn finish_orphaned(journal: &Journal, paths: &Paths) -> Result<()> {
@@ -1899,6 +1981,105 @@ mod tests {
             units,
             tail_start,
         }
+    }
+
+    /// An empty folder of this test's own, under the system's temporary one.
+    fn scratch(test: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("hatchzip-{test}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// What a batch claims must be on disk, whole, or the journal would
+    /// truncate the archive behind a file that another program took away.
+    #[test]
+    fn a_batch_that_is_all_on_disk_verifies() {
+        let out = scratch("verify-complete");
+        fs::create_dir_all(out.join("game")).unwrap();
+        fs::write(out.join("game/a"), b"hello").unwrap();
+        fs::write(out.join("game/empty"), b"").unwrap();
+        let batch = [unit(10, "game/a", 5), unit(20, "game/empty", 0)];
+        assert!(verify_extracted(&batch, &out).is_ok());
+        fs::remove_dir_all(&out).unwrap();
+    }
+
+    #[test]
+    fn a_missing_file_fails_verification() {
+        let out = scratch("verify-missing");
+        let err = verify_extracted(&[unit(0, "game/gone", 12)], &out)
+            .err()
+            .unwrap();
+        let text = err.to_string();
+        assert!(text.contains("game/gone"), "{text}");
+        assert!(text.contains("disappeared"), "{text}");
+        assert!(text.contains("12 bytes"), "{text}");
+        fs::remove_dir_all(&out).unwrap();
+    }
+
+    #[test]
+    fn a_file_of_the_wrong_size_fails_verification() {
+        let out = scratch("verify-size");
+        fs::create_dir_all(out.join("game")).unwrap();
+        fs::write(out.join("game/a"), b"abc").unwrap();
+        let err = verify_extracted(&[unit(0, "game/a", 5)], &out)
+            .err()
+            .unwrap();
+        let text = err.to_string();
+        assert!(text.contains("game/a"), "{text}");
+        assert!(text.contains("records 5 bytes"), "{text}");
+        assert!(text.contains("has 3"), "{text}");
+        fs::remove_dir_all(&out).unwrap();
+    }
+
+    #[test]
+    fn a_folder_at_the_name_of_a_file_fails_verification() {
+        let out = scratch("verify-folder");
+        fs::create_dir_all(out.join("game/a")).unwrap();
+        let err = verify_extracted(&[unit(0, "game/a", 5)], &out)
+            .err()
+            .unwrap();
+        assert!(err.to_string().contains("no longer a file"), "{err}");
+        fs::remove_dir_all(&out).unwrap();
+    }
+
+    /// The link points at a file of exactly the recorded size, so only a
+    /// check that never follows links can refuse it.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_at_the_name_of_a_file_fails_verification() {
+        let out = scratch("verify-link");
+        fs::write(out.join("real"), b"hello").unwrap();
+        std::os::unix::fs::symlink("real", out.join("link")).unwrap();
+        let err = verify_extracted(&[unit(0, "link", 5)], &out).err().unwrap();
+        assert!(err.to_string().contains("no longer a file"), "{err}");
+        fs::remove_dir_all(&out).unwrap();
+    }
+
+    /// Folders and links are not on disk yet when a batch commits; links are
+    /// made at the very end.
+    #[test]
+    fn other_kinds_of_entries_are_not_verified() {
+        let out = scratch("verify-kinds");
+        let item = |kind: Kind| Item {
+            path: "absent".into(),
+            size: 0,
+            kind,
+            mode: None,
+            mtime: None,
+        };
+        let batch = Unit {
+            start: 0,
+            key: 0,
+            items: vec![
+                item(Kind::Dir),
+                item(Kind::Symlink),
+                item(Kind::HardLink("absent".into())),
+            ],
+            encrypted: false,
+        };
+        assert!(verify_extracted(&[batch], &out).is_ok());
+        fs::remove_dir_all(&out).unwrap();
     }
 
     /// Committing one of two units that start at the same offset would
