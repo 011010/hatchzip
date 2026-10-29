@@ -423,7 +423,8 @@ pub fn default_output(primary: &Path) -> PathBuf {
         return primary.with_file_name(name);
     }
     for ext in [
-        ".zip", ".7z", ".tar.xz", ".tar", ".tar.gz", ".tgz", ".rar", ".exe",
+        ".zip", ".7z", ".tar.xz", ".tar.bz2", ".tbz2", ".tbz", ".tar", ".tar.gz", ".tgz", ".rar",
+        ".exe",
     ] {
         if lower.ends_with(ext) && name.len() > ext.len() {
             name.truncate(name.len() - ext.len());

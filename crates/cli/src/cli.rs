@@ -31,7 +31,7 @@ With --keep-archive, HatchZip extracts like any other tool and leaves the archiv
 unchanged; free space is then required for all extracted files.
 
 Supported: ZIP (including ZIP64 and self-extracting .exe), 7z, uncompressed tar, \
-gzip-compressed tar (.tar.gz, .tgz), split archives (.001, .002, ...) of any of \
+compressed tar (.tar.gz, .tgz, .tar.bz2, .tbz2, .tbz), split archives (.001, .002, ...) of any of \
 those",
             $formats
         )
