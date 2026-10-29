@@ -107,6 +107,177 @@ fn stream_env<'a>(extra: &[(&'a str, &'a str)]) -> Vec<(&'a str, &'a str)> {
     env
 }
 
+fn fixture_files_with_len(len: usize) -> Files {
+    let mut state = 12345u64;
+    let mut pattern: Vec<u8> = (0..262_144)
+        .map(|_| {
+            state = (state * 1_103_515_245 + 12_345) & 0x7fff_ffff;
+            (state >> 16) as u8
+        })
+        .collect();
+    for i in (0..pattern.len() - 5).step_by(64) {
+        pattern[i..i + 5].copy_from_slice(&[0xe8, 1, 0, 0, 0]);
+    }
+    let mut tool = pattern.repeat(len.div_ceil(pattern.len()));
+    tool.truncate(len);
+    let mut files = Files::new();
+    files.insert("game/tool.exe".into(), tool);
+    files.insert("game/readme.txt".into(), b"tar.xz fixture\n".to_vec());
+    files
+}
+
+fn fixture_files() -> Files {
+    fixture_files_with_len(4 * 1024 * 1024 + 4096)
+}
+
+fn fixture(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/tarxz")
+        .join(name)
+}
+
+fn copy_fixture(dir: &Path, name: &str) -> PathBuf {
+    let archive = dir.join("game.tar.xz");
+    fs::copy(fixture(name), &archive).unwrap();
+    archive
+}
+
+fn copy_split_fixture(dir: &Path) -> Vec<PathBuf> {
+    (1..=3)
+        .map(|i| {
+            let path = dir.join(format!("game.tar.xz.{i:03}"));
+            fs::copy(fixture(&format!("split.tar.xz.{i:03}")), &path).unwrap();
+            path
+        })
+        .collect()
+}
+
+#[test]
+fn real_xz_multiblock_filters_extract_byte_identical() {
+    for name in ["multi.tar.xz", "bcj.tar.xz", "delta.tar.xz"] {
+        let tmp = TempDir::new().unwrap();
+        let archive = copy_fixture(tmp.path(), name);
+        let out = tmp.path().join("out");
+        assert_ok(&extract(&archive, &out, &stream_env(&[])));
+        assert_tree(&out, &fixture_files());
+        assert_consumed(&archive);
+    }
+}
+
+#[test]
+fn real_xz_default_multithreaded_blocks_extract() {
+    let tmp = TempDir::new().unwrap();
+    let archive = copy_fixture(tmp.path(), "default.tar.xz");
+    let out = tmp.path().join("out");
+    assert_ok(&extract(&archive, &out, &stream_env(&[])));
+    assert_tree(&out, &fixture_files_with_len(25 * 1024 * 1024));
+    assert_consumed(&archive);
+}
+
+#[test]
+fn real_xz_single_block_kept_and_multistream_refused() {
+    let tmp = TempDir::new().unwrap();
+    let archive = copy_fixture(tmp.path(), "single.tar.xz");
+    let original = fs::read(&archive).unwrap();
+    let out = tmp.path().join("out");
+    let refused = extract(&archive, &out, &[]);
+    assert!(!refused.status.success());
+    assert_eq!(fs::read(&archive).unwrap(), original);
+    assert!(!out.exists());
+    assert_no_side_files(&archive);
+    assert_ok(&hatchzip(
+        &[
+            "extract",
+            archive.to_str().unwrap(),
+            "-o",
+            out.to_str().unwrap(),
+            "--keep-archive",
+            "--keep-free",
+            "0",
+            "--yes",
+        ],
+        &[],
+    ));
+    assert_tree(&out, &fixture_files());
+    assert_eq!(fs::read(&archive).unwrap(), original);
+    assert_no_side_files(&archive);
+
+    let tmp = TempDir::new().unwrap();
+    let archive = copy_fixture(tmp.path(), "multistream.tar.xz");
+    let original = fs::read(&archive).unwrap();
+    let out = tmp.path().join("out");
+    let refused = extract(&archive, &out, &[]);
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("one after another"));
+    assert_eq!(fs::read(&archive).unwrap(), original);
+    assert!(!out.exists());
+    assert_no_side_files(&archive);
+}
+
+#[test]
+fn real_xz_filter_blocks_survive_crashes() {
+    let files = fixture_files();
+    for name in ["multi.tar.xz", "bcj.tar.xz", "delta.tar.xz"] {
+        crash_at_every_point(|dir| copy_fixture(dir, name), &files, &[0, 2]);
+    }
+}
+
+#[test]
+fn real_xz_default_blocks_survive_crashes() {
+    let files = fixture_files_with_len(25 * 1024 * 1024);
+    crash_at_every_point(|dir| copy_fixture(dir, "default.tar.xz"), &files, &[0]);
+}
+
+#[test]
+fn real_xz_split_volumes_extract_and_resume() {
+    {
+        let tmp = TempDir::new().unwrap();
+        let volumes = copy_split_fixture(tmp.path());
+        let out = tmp.path().join("out");
+        assert_ok(&extract(&volumes[2], &out, &stream_env(&[])));
+        assert_tree(&out, &fixture_files());
+        assert_consumed(&volumes[0]);
+        for volume in &volumes {
+            assert!(!volume.exists(), "{} remains", volume.display());
+        }
+    }
+    for point in [
+        "stream-after-sync",
+        "stream-after-journal",
+        "stream-after-punch",
+    ] {
+        let tmp = TempDir::new().unwrap();
+        let volumes = copy_split_fixture(tmp.path());
+        let archive = &volumes[0];
+        let original: Vec<u8> = volumes.iter().flat_map(|p| fs::read(p).unwrap()).collect();
+        let out = tmp.path().join("out");
+        let crashed = extract(
+            archive,
+            &out,
+            &stream_env(&[("HATCHZIP_CRASH_AT", point), ("HATCHZIP_CRASH_AFTER", "2")]),
+        );
+        assert!(!crashed.status.success(), "{point} should have crashed");
+        let current: Vec<u8> = volumes.iter().flat_map(|p| fs::read(p).unwrap()).collect();
+        assert_eq!(
+            current.len(),
+            original.len(),
+            "{point}: volume lengths changed"
+        );
+        let offset = resume_byte(archive).expect("a durable resume point") as usize;
+        assert_eq!(
+            &current[offset..],
+            &original[offset..],
+            "{point}: changed past the resume point"
+        );
+        assert_ok(&extract(archive, &out, &stream_env(&[])));
+        assert_tree(&out, &fixture_files());
+        assert_consumed(archive);
+        for volume in &volumes {
+            assert!(!volume.exists(), "{} remains", volume.display());
+        }
+    }
+}
+
 /// Bytes the archive occupies on disk, where the system can say.
 #[cfg(unix)]
 fn allocated(path: &Path) -> Option<u64> {
