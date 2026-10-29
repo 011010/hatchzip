@@ -1,7 +1,8 @@
 # xz fixtures
 
-Made on macOS with the real `xz` CLI, version 5.8.4, from deterministic
-inputs: an 8 KiB pseudo-random payload for most files, and a repeating
+Made on macOS with the real `xz` CLI, version 5.8.4, and, for the check
+variants (CRC32, none, SHA-256), Python 3's `lzma` module, which is the same
+liblzma. Deterministic inputs: an 8 KiB pseudo-random payload for most files, and a repeating
 0..255 pattern for `xz-uneven.xz`. The exact command lines were not
 recorded. The table lists the properties `xz -lvv` reports today, which is
 what the parser tests assert; if a fixture is ever regenerated, keep them.
