@@ -213,6 +213,38 @@ fn tar_keeps_a_modified_time_before_1970() {
     );
 }
 
+/// A pax archive keeps a time the header can't hold in an `mtime` record,
+/// with 0 in the header.
+#[test]
+fn tar_reads_the_modified_time_from_a_pax_record() {
+    let tmp = TempDir::new().unwrap();
+    let mut b = tar::Builder::new(Vec::new());
+    let record = b"20 mtime=-152391233\n";
+    let mut pax = tar::Header::new_ustar();
+    pax.set_entry_type(tar::EntryType::XHeader);
+    pax.set_size(record.len() as u64);
+    b.append_data(&mut pax, "PaxHeaders/old.txt", &record[..])
+        .unwrap();
+    let mut h = tar::Header::new_ustar();
+    h.set_size(4);
+    h.set_mode(0o644);
+    h.set_mtime(0);
+    b.append_data(&mut h, "old.txt", &b"data"[..]).unwrap();
+    let archive = tmp.path().join("pax.tar");
+    fs::write(&archive, b.into_inner().unwrap()).unwrap();
+    let out = tmp.path().join("out");
+
+    assert_ok(&extract(&archive, &out, &[]));
+    let modified = fs::metadata(out.join("old.txt"))
+        .unwrap()
+        .modified()
+        .unwrap();
+    assert_eq!(
+        modified,
+        std::time::UNIX_EPOCH - std::time::Duration::from_secs(152_391_233)
+    );
+}
+
 /// A hard link is copied where the filesystem can't link, so the space check
 /// counts it at its file's size, even when the link comes first.
 #[test]

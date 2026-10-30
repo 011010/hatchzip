@@ -39,7 +39,7 @@ pub fn open(storage: &Arc<Storage>, tail: Option<Arc<Tail>>) -> Result<Opened> {
         .entries_with_seek()
         .context("reading the tar headers")?
     {
-        let e = entry.context("reading the tar headers")?;
+        let mut e = entry.context("reading the tar headers")?;
         // The unit starts where the previous entry ended, so any long-name
         // or pax records in between belong to it, and so does an entry that
         // is skipped.
@@ -49,7 +49,7 @@ pub fn open(storage: &Arc<Storage>, tail: Option<Arc<Tail>>) -> Result<Opened> {
             .checked_next_multiple_of(512)
             .and_then(|n| n.checked_add(e.raw_file_position()))
             .ok_or_else(|| anyhow!("reading the tar headers: an entry size is invalid"))?;
-        let Some((item, target)) = describe(&e)? else {
+        let Some((item, target)) = describe(&mut e)? else {
             continue;
         };
         units.push(Unit {
@@ -84,8 +84,9 @@ pub fn open(storage: &Arc<Storage>, tail: Option<Arc<Tail>>) -> Result<Opened> {
 /// refuse and accept exactly the same entries. A hard link's size is left
 /// at 0 for [`size_links`] to fill in.
 pub(super) fn describe<R: Read>(
-    e: &::tar::Entry<'_, R>,
+    e: &mut ::tar::Entry<'_, R>,
 ) -> Result<Option<(Item, Option<Vec<u8>>)>> {
+    let pax_mtime = pax_mtime(e);
     let header = e.header();
     let name = String::from_utf8_lossy(&e.path_bytes()).into_owned();
     let kind = match header.entry_type() {
@@ -131,10 +132,9 @@ pub(super) fn describe<R: Read>(
     };
     // GNU tar writes times before 1970 as negative base-256 numbers, which
     // the tar crate hands back in two's complement.
-    let mtime = header
-        .mtime()
-        .ok()
-        .and_then(|s| fsutil::from_epoch_secs(s as i64));
+    let mtime = pax_mtime
+        .or_else(|| header.mtime().ok().map(|s| s as i64))
+        .and_then(fsutil::from_epoch_secs);
     let mode = header.mode().ok();
     Ok(Some((
         Item {
@@ -146,6 +146,20 @@ pub(super) fn describe<R: Read>(
         },
         target,
     )))
+}
+
+/// The pax `mtime` record, in whole seconds rounded down. Pax archives keep
+/// a time the header field can't hold (before 1970, after 2242) only there.
+fn pax_mtime<R: Read>(e: &mut ::tar::Entry<'_, R>) -> Option<i64> {
+    let extensions = e.pax_extensions().ok()??;
+    let value = extensions
+        .filter_map(|x| x.ok())
+        .find(|x| x.key_bytes() == b"mtime")?
+        .value()
+        .ok()?
+        .parse::<f64>()
+        .ok()?;
+    value.is_finite().then(|| value.floor() as i64)
 }
 
 /// Gives every hard link the size of the file it points to. Links are

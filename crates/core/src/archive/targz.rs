@@ -349,12 +349,12 @@ impl Walker {
         }
         let mut archive = ::tar::Archive::new(Cursor::new(held));
         let mut entries = archive.entries().context("reading the tar headers")?;
-        let e = entries
+        let mut e = entries
             .next()
             .ok_or_else(|| anyhow!("reading the tar headers: an entry is incomplete"))?
             .context("reading the tar headers")?;
         let size = e.size();
-        let described = super::tar::describe(&e)?;
+        let described = super::tar::describe(&mut e)?;
         let data_start = self.tar_pos;
         let span = size
             .checked_next_multiple_of(512)
