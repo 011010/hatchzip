@@ -55,13 +55,17 @@ pub const ACTIONS: &[Action] = &[
 /// With RAR support, `.rar` and `.r00`, the second volume of an old-style
 /// set; any volume opens the whole set.
 #[cfg(not(feature = "rar"))]
-pub const EXTENSIONS: &[&str] = &["zip", "7z", "tar", "tgz", "gz", "001"];
+pub const EXTENSIONS: &[&str] = &["zip", "7z", "tar", "tgz", "gz", "bz2", "tbz2", "tbz", "001"];
 #[cfg(feature = "rar")]
-pub const EXTENSIONS: &[&str] = &["zip", "7z", "tar", "tgz", "gz", "001", "rar", "r00"];
+pub const EXTENSIONS: &[&str] = &[
+    "zip", "7z", "tar", "tgz", "gz", "bz2", "tbz2", "tbz", "001", "rar", "r00",
+];
 
 /// Every extension any build registers, so that unregistering from a build
 /// without RAR support still removes what a build with it wrote.
-pub const ALL_EXTENSIONS: &[&str] = &["zip", "7z", "tar", "tgz", "gz", "001", "rar", "r00"];
+pub const ALL_EXTENSIONS: &[&str] = &[
+    "zip", "7z", "tar", "tgz", "gz", "bz2", "tbz2", "tbz", "001", "rar", "r00",
+];
 
 /// Where the per-user menu entries live. [`Dirs::current`] is the real
 /// location; tests point it somewhere temporary.
