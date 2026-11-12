@@ -282,8 +282,9 @@ fn a_7z_whose_sizes_overflow_is_refused() {
 }
 
 /// The last block's coder takes no input, so it has no packed stream, and
-/// its start would be looked up one past the last stream. sevenz-rust2
-/// allows that for a block holding no files.
+/// its start would be looked up one past the last stream. Since 0.24.2
+/// sevenz-rust2 refuses such a block on open; before, it opened the archive
+/// and the header check caught it later.
 #[test]
 fn a_7z_block_without_packed_streams_is_refused() {
     let tmp = TempDir::new().unwrap();
@@ -295,7 +296,11 @@ fn a_7z_block_without_packed_streams_is_refused() {
     h.splice(at..at + 2, [0x11, 0x00, 0x00, 0x01]);
     let archive = tmp.path().join("noinput.7z");
     fs::write(&archive, sevenz_with_header_last(&[&[1; 16]], &h)).unwrap();
-    refused(&archive, &tmp.path().join("out"), "header is inconsistent");
+    refused(
+        &archive,
+        &tmp.path().join("out"),
+        "Block has no packed streams",
+    );
 }
 
 /// A coder this build has no decoder for is found while decoding, which is
