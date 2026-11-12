@@ -99,6 +99,56 @@ fn without_the_flag_the_archives_stay_where_they_landed() {
     assert!(!out.join("first").exists());
 }
 
+fn kept_parent_is_not_rescanned(relative: bool, case_alias: bool) {
+    let tmp = TempDir::new().unwrap();
+    let out = tmp.path().join("out");
+    fs::create_dir(&out).unwrap();
+    let inner = zip_bytes(&[("first.txt", b"one")]);
+    let outer = zip_bytes(&[("inner.zip", &inner)]);
+    let archive = out.join("Parent.zip");
+    fs::write(&archive, &outer).unwrap();
+    let name = if case_alias {
+        "out/PARENT.ZIP"
+    } else {
+        "out/Parent.zip"
+    };
+    if !tmp.path().join(name).exists() {
+        // This variant only applies where both spellings name the same file.
+        return;
+    }
+    let given = if relative {
+        std::path::PathBuf::from(name)
+    } else {
+        tmp.path().join(name)
+    };
+    let run = std::process::Command::new(env!("CARGO_BIN_EXE_hatchzip"))
+        .current_dir(tmp.path())
+        .env("HATCHZIP_STATE_DIR", state_dir())
+        .args(["extract", "--nested", "--keep-archive", "--keep-free", "0"])
+        .arg(given)
+        .args(["-o", "out"])
+        .output()
+        .unwrap();
+    assert_ok(&run);
+    assert_eq!(fs::read(&archive).unwrap(), outer);
+    assert_eq!(fs::read(out.join("inner.zip")).unwrap(), inner);
+    assert_eq!(fs::read(out.join("inner/first.txt")).unwrap(), b"one");
+    assert!(
+        !out.join("Parent").exists(),
+        "the given parent must not be extracted again as a nested archive"
+    );
+}
+
+#[test]
+fn a_kept_parent_given_by_relative_path_is_not_nested() {
+    kept_parent_is_not_rescanned(true, false);
+}
+
+#[test]
+fn a_kept_parent_given_with_another_case_is_not_nested() {
+    kept_parent_is_not_rescanned(false, true);
+}
+
 /// A link inside the output can point anywhere; the scan must not follow it.
 #[cfg(unix)]
 #[test]

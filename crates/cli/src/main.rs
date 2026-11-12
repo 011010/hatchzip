@@ -673,12 +673,21 @@ fn extract_all(target: Target, mut opts: Options) -> Result<u8> {
         }
     }
     if opts.nested {
+        // Kept parents can still be inside these folders. Resolve their
+        // paths so relative names and different casing cannot add them again.
+        // Removed parents no longer have a path for the scan to find.
+        let given: Vec<_> = archives
+            .iter()
+            .filter_map(|a| locate(a).ok())
+            .filter_map(|(primary, _)| primary.canonicalize().ok())
+            .collect();
         // One level only: the folders these extract into are not scanned.
         let mut nested: Vec<PathBuf> = Vec::new();
         for out in &outputs {
             say!("Looking for archives inside {}…", out.display());
             for path in hatchzip_core::archive::find_nested(out) {
-                if !nested.contains(&path) && !archives.contains(&path) {
+                let is_given = path.canonicalize().is_ok_and(|p| given.contains(&p));
+                if !nested.contains(&path) && !is_given {
                     nested.push(path);
                 }
             }
